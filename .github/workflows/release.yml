@@ -1,0 +1,46 @@
+name: release
+
+# Tag-driven release: `git tag v0.1.0 && git push --tags` builds all platform
+# binaries and attaches them to a GitHub Release. install.sh/install.ps1
+# download these assets from the `latest` release.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify tag matches package.json version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(bun -e 'console.log(require("./package.json").version)')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag != package.json $pkg"; exit 1
+          fi
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build release binaries
+        run: bun scripts/build-release.ts
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
