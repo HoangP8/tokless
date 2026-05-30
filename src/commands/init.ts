@@ -91,34 +91,58 @@ export async function runInit(opts: InitOptions = {}): Promise<number> {
   }
 
   // 3) Wire each (agent, tool) pair where the tool has a wireFor entry.
+  const failures: Record<string, string[]> = {};
   const wireBar = new Progress("");
   wireBar.start(wireIds.length);
   for (const agentId of wireIds) {
     const agent = getAgent(agentId)!;
     wireBar.begin(agent.label);
+    const failed: string[] = [];
     try {
       await withSilencedLogs(async () => {
         for (const tool of tools) {
           const fn = tool.wireFor[agentId];
-          if (fn) await fn({ dryRun: opts.dryRun });
+          if (!fn) continue;
+          let ok = false;
+          try {
+            ok = await fn({ dryRun: opts.dryRun });
+          } catch {
+            ok = false;
+          }
+          // On a real run, confirm the agent can actually see the tool.
+          // Skipped under TOKLESS_TEST: the suite asserts shapes directly.
+          if (ok && !opts.dryRun && process.env.TOKLESS_TEST !== "1") {
+            const verify = tool.verifyFor?.[agentId];
+            if (verify) ok = (await verify()) === true;
+          }
+          if (!ok) failed.push(tool.label);
         }
       });
-      wireBar.complete();
+      if (failed.length === 0) wireBar.complete();
+      else wireBar.fail(`${failed.length} tool(s) not wired`);
     } catch (err) {
       wireBar.fail((err as Error).message.split("\n")[0]);
+      failed.push("(aborted)");
     }
+    if (failed.length > 0) failures[agentId] = failed;
   }
   wireBar.done();
   setQuiet(false);
 
   console.log("");
-  console.log(
-    "  " +
-      c.green(sym.check) +
-      " Equipped " +
-      c.bold(wireIds.map((id) => getAgent(id)!.label).join(", ")) +
-      ".",
-  );
+  const fullyOk = wireIds.filter((id) => !failures[id]);
+  if (fullyOk.length > 0) {
+    console.log(
+      "  " + c.green(sym.check) + " Equipped " +
+        c.bold(fullyOk.map((id) => getAgent(id)!.label).join(", ")) + ".",
+    );
+  }
+  for (const [id, failed] of Object.entries(failures)) {
+    console.log(
+      "  " + c.yellow(sym.warn) + ` ${getAgent(id as AgentId)!.label}: ` +
+        `${failed.join(", ")} not wired. Run ${c.cyan("tokless doctor")} for details.`,
+    );
+  }
   console.log("");
-  return 0;
+  return Object.keys(failures).length > 0 ? 1 : 0;
 }
