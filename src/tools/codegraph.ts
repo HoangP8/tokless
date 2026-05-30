@@ -4,7 +4,7 @@ import { run, which } from "../util/exec.js";
 import { log } from "../util/logger.js";
 import { agentPaths, home } from "../util/paths.js";
 import { npmGlobalInstall } from "../util/npm-install.js";
-import { stringifyJson } from "../util/jsonc.js";
+import { stringifyJson, parseJsonc } from "../util/jsonc.js";
 import { upsertBlock, removeBlock } from "../util/toml.js";
 import type { ToolManifest, RunOpts } from "../core/tool-manifest.js";
 
@@ -43,13 +43,24 @@ function callRealInstall(opts: RunOpts): Promise<boolean> {
     realInstallDone = (async () => {
       const helpRes = await run("codegraph", ["install", "--help"], { capture: true });
       const hasYes = helpRes.stdout.includes("--yes") || helpRes.stderr.includes("--yes");
-      const args = ["install", ...(hasYes ? ["--yes"] : [])];
+      const hasTarget = helpRes.stdout.includes("--target") || helpRes.stderr.includes("--target");
+      const args = [
+        "install",
+        ...(hasYes ? ["--yes"] : []),
+        ...(hasTarget ? ["--target", "all"] : []),
+      ];
       const r = await run("codegraph", args, { capture: true });
       return r.code === 0;
     })();
   }
   return realInstallDone;
 }
+
+const verifyByAgent = {
+  claude: verifyClaude,
+  opencode: verifyOpenCode,
+  codex: verifyCodex,
+};
 
 // Test-mode shim writes the same per-agent files real `codegraph install` would.
 function testShim(agent: "claude" | "opencode" | "codex"): boolean {
@@ -63,7 +74,7 @@ function testShim(agent: "claude" | "opencode" | "codex"): boolean {
   } else if (agent === "opencode") {
     const op = agentPaths.opencode();
     fs.mkdirSync(op.dir, { recursive: true });
-    const current = fs.existsSync(op.config) ? JSON.parse(fs.readFileSync(op.config, "utf8")) : {};
+    const current = fs.existsSync(op.config) ? parseJsonc<any>(fs.readFileSync(op.config, "utf8")) : {};
     current.mcp = current.mcp || {};
     current.mcp.codegraph = { type: "local", command: ["codegraph", "serve", "--mcp"], enabled: true };
     fs.writeFileSync(op.config, stringifyJson(current), "utf8");
@@ -83,7 +94,9 @@ function testShim(agent: "claude" | "opencode" | "codex"): boolean {
 function wire(agent: "claude" | "opencode" | "codex") {
   return async (opts: RunOpts): Promise<boolean> => {
     if (process.env.TOKLESS_TEST === "1") return testShim(agent);
-    return callRealInstall(opts);
+    if (opts.dryRun) return callRealInstall(opts);
+    const ran = await callRealInstall(opts);
+    return ran && verifyByAgent[agent]();
   };
 }
 
@@ -103,7 +116,7 @@ async function unwireOpenCode(_opts: RunOpts): Promise<boolean> {
   const op = agentPaths.opencode();
   if (!fs.existsSync(op.config)) return true;
   try {
-    const cfg = JSON.parse(fs.readFileSync(op.config, "utf8"));
+    const cfg = parseJsonc<any>(fs.readFileSync(op.config, "utf8"));
     if (cfg?.mcp?.codegraph) {
       delete cfg.mcp.codegraph;
       fs.writeFileSync(op.config, stringifyJson(cfg), "utf8");
@@ -132,7 +145,7 @@ function verifyOpenCode(): boolean {
   const op = agentPaths.opencode();
   if (!fs.existsSync(op.config)) return false;
   try {
-    const cfg = JSON.parse(fs.readFileSync(op.config, "utf8"));
+    const cfg = parseJsonc<any>(fs.readFileSync(op.config, "utf8"));
     return !!cfg?.mcp?.codegraph;
   } catch { return false; }
 }
