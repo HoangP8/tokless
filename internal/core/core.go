@@ -53,10 +53,13 @@ type ToolManifest struct {
 	Homepage    string
 	InstallHint string
 	Channel     Channel
-	Install     func(opts RunOpts) (bool, error)
-	WireFor     map[string]AgentFn
-	UnwireFor   map[string]AgentFn
-	VerifyFor   map[string]VerifyFn
+	// NotTrackable marks tools with no standalone binary (installed per-agent),
+	// so version checks (doctor/update) skip them instead of looping forever.
+	NotTrackable bool
+	Install      func(opts RunOpts) (bool, error)
+	WireFor      map[string]AgentFn
+	UnwireFor    map[string]AgentFn
+	VerifyFor    map[string]VerifyFn
 }
 
 // registries are global and populated at startup by agents/tools packages.

@@ -31,6 +31,10 @@ func RunUpdate(opts InitOptions) int {
 
 	var changed []string
 	for _, t := range core.ListTools() {
+		if t.NotTrackable {
+			util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" "+padEnd(t.ID, 14)+" "+padEnd("per-agent", 10)+"   managed per-agent"))
+			continue
+		}
 		info, has := versions[t.ID]
 		installed := util.C.Gray("not on PATH")
 		if has && info.Installed != nil {

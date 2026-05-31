@@ -33,12 +33,13 @@ func opencodePluginInstalled() bool {
 }
 
 var caveman = &core.ToolManifest{
-	ID:          "caveman",
-	Label:       "Caveman",
-	Description: "Skill that compresses agent prompts using primitive English.",
-	Homepage:    "https://github.com/JuliusBrussee/caveman",
-	InstallHint: "Installed per-agent by Caveman's own CLI.",
-	Channel:     core.ChannelGitHub,
+	ID:           "caveman",
+	Label:        "Caveman",
+	Description:  "Skill that compresses agent prompts using primitive English.",
+	Homepage:     "https://github.com/JuliusBrussee/caveman",
+	InstallHint:  "Installed per-agent by Caveman's own CLI.",
+	Channel:      core.ChannelGitHub,
+	NotTrackable: true,
 	Install: func(opts core.RunOpts) (bool, error) {
 		opts.Reportf("installed per agent", 1)
 		return true, nil

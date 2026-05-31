@@ -10,6 +10,7 @@ import (
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/commands"
+	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -178,6 +179,30 @@ func TestInitIdempotent(t *testing.T) {
 		if h != hashes1[i] {
 			content1, _ := os.ReadFile(p)
 			t.Errorf("file %s changed after second run! Hash 1: %s, Hash 2: %s\nContent:\n%s", p, hashes1[i], h, string(content1))
+		}
+	}
+}
+
+func TestCavemanNotTrackable(t *testing.T) {
+	caveman := core.GetTool("caveman")
+	if caveman == nil {
+		t.Fatalf("expected tool 'caveman' to be registered, but it was nil")
+	}
+	if !caveman.NotTrackable {
+		t.Errorf("expected tool 'caveman' to have NotTrackable set to true, but got false")
+	}
+
+	trackableTools := map[string]bool{
+		"rtk":          true,
+		"codegraph":    true,
+		"context-mode": true,
+	}
+
+	for _, tool := range core.ListTools() {
+		if trackableTools[tool.ID] {
+			if tool.NotTrackable {
+				t.Errorf("expected tool %q to have NotTrackable set to false, but got true", tool.ID)
+			}
 		}
 	}
 }
