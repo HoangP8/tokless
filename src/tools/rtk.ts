@@ -90,7 +90,6 @@ function testShim(agent: AgentId): void {
     fs.mkdirSync(dir, { recursive: true });
     const f = path.join(dir, "RTK.md");
     if (!fs.existsSync(f)) fs.writeFileSync(f, "# RTK\nInstalled by tokless.\n");
-    // rtk's functional artifact is the PreToolUse hook in settings.json.
     const settingsPath = path.join(dir, "settings.json");
     if (!claudeSettingsHasRtkHook(settingsPath)) {
       const settings = fs.existsSync(settingsPath)
@@ -118,7 +117,6 @@ interface ClaudeSettings {
   [k: string]: unknown;
 }
 
-// True when ~/.claude/settings.json contains rtk's PreToolUse hook.
 function claudeSettingsHasRtkHook(settingsPath: string): boolean {
   if (!fs.existsSync(settingsPath)) return false;
   try {

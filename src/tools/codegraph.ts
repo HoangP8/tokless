@@ -32,7 +32,6 @@ async function ensureInstalled(opts: RunOpts): Promise<boolean> {
 }
 
 // `codegraph install` configures every agent CodeGraph supports in one call.
-// We invoke it once per tokless run and reuse the result for each agent.
 let realInstallDone: Promise<boolean> | null = null;
 function callRealInstall(opts: RunOpts): Promise<boolean> {
   if (opts.dryRun) {

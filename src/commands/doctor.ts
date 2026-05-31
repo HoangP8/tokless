@@ -1,5 +1,4 @@
-// `tokless doctor` — for each detected agent, ask each tool with a verifyFor
-// entry whether it's currently wired. Print one line per agent + an update hint.
+// `tokless doctor` — for each detected agent, ask each tool with a verify.
 
 import "../bootstrap.js";
 import { c, sym } from "../util/colors.js";

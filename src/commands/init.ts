@@ -109,8 +109,6 @@ export async function runInit(opts: InitOptions = {}): Promise<number> {
           } catch {
             ok = false;
           }
-          // On a real run, confirm the agent can actually see the tool.
-          // Skipped under TOKLESS_TEST: the suite asserts shapes directly.
           if (ok && !opts.dryRun && process.env.TOKLESS_TEST !== "1") {
             const verify = tool.verifyFor?.[agentId];
             if (verify) ok = (await verify()) === true;

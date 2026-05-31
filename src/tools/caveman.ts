@@ -22,15 +22,12 @@ async function exec(bin: string, args: string[], opts: RunOpts, dryHint: string)
   return true;
 }
 
-// caveman's OpenCode installer copies command files into ~/.config/opencode/commands
-// but does not create that directory first, so it ENOENTs on a fresh config.
 function ensureOpencodeCommandsDir(): void {
   try {
     fs.mkdirSync(path.join(agentPaths.opencode().dir, "commands"), { recursive: true });
   } catch { /* best effort */ }
 }
 
-// The functional artifact: caveman's OpenCode plugin entrypoint.
 function opencodePluginInstalled(): boolean {
   return fs.existsSync(path.join(agentPaths.opencode().dir, "plugins", "caveman", "plugin.js"));
 }
@@ -61,8 +58,6 @@ const caveman: ToolManifest = {
         opts,
         "npx -y github:JuliusBrussee/caveman -- --only opencode",
       );
-      // caveman's installer exits non-zero on its own missing optional command
-      // file, but the functional plugin still lands. Trust the artifact.
       if (opts.dryRun || process.env.TOKLESS_TEST === "1") return ran;
       return ran || opencodePluginInstalled();
     },
