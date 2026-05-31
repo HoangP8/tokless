@@ -141,8 +141,7 @@ async function wireCodex(opts: RunOpts, deps: Deps = defaultDeps): Promise<boole
     log.err("codex CLI not on PATH — install codex first.");
     return false;
   }
-  // Idempotency: if the plugin is already installed, re-running marketplace/add
-  // would rewrite the marketplace `last_updated` timestamp on every run.
+
   if (verifyCodex()) return true;
   const probe = await deps.run("codex", ["plugin", "--help"], { capture: true });
   if (probe.code === 0) {
@@ -184,7 +183,7 @@ function enableCodexFeatureFlags(deps: Deps, pluginHooks: boolean): void {
   const raw = deps.fs.existsSync(cx.config) ? deps.fs.readFileSync(cx.config, "utf8") : "";
   const fields: Record<string, boolean> = { hooks: true };
   if (pluginHooks) fields.plugin_hooks = true;
-  deps.fs.writeFileSync(cx.config, upsertBlock(raw, { header: "features", fields }), "utf8");
+  deps.fs.writeFileSync(cx.config, upsertBlock(raw, { header: "features", fields }, { merge: true }), "utf8");
 }
 
 // Idempotent merge into the user's hooks.json. Keeps unrelated entries.
@@ -214,7 +213,6 @@ function isOursForEvent(entry: unknown, eventName: string): boolean {
   );
 }
 
-// Literal copy of README "Manual fallback" hooks.json.
 const CODEX_HOOK_ENTRIES = {
   PreToolUse: {
     matcher:

@@ -58,8 +58,16 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function upsertBlock(src: string, block: TomlBlock): string {
-  const rendered = renderBlock(block);
+export function upsertBlock(src: string, block: TomlBlock, opts?: { merge?: boolean }): string {
+  let effective = block;
+  if (opts?.merge) {
+    const range = findBlockRange(src, block.header);
+    if (range) {
+      const existing = parseScalarFields(src.slice(range.start, range.end));
+      effective = { header: block.header, fields: { ...existing, ...block.fields } };
+    }
+  }
+  const rendered = renderBlock(effective);
   const range = findBlockRange(src, block.header);
   if (!range) {
     const sep = src.length === 0 || src.endsWith("\n\n") ? "" : src.endsWith("\n") ? "\n" : "\n\n";
@@ -69,6 +77,22 @@ export function upsertBlock(src: string, block: TomlBlock): string {
   const after = src.slice(range.end);
   const beforeNorm = before.endsWith("\n") ? before : before + "\n";
   return beforeNorm + rendered + (after.startsWith("\n") ? after : after === "" ? "" : "\n" + after);
+}
+
+function parseScalarFields(blockText: string): Record<string, TomlValue> {
+  const out: Record<string, TomlValue> = {};
+  const lines = blockText.split("\n");
+  for (const line of lines) {
+    const m = /^\s*([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const key = m[1];
+    const raw = m[2];
+    if (raw.startsWith("[") || raw.startsWith("{")) continue; // skip arrays/inline tables
+    if (raw === "true" || raw === "false") out[key] = raw === "true";
+    else if (/^-?\d+(\.\d+)?$/.test(raw)) out[key] = Number(raw);
+    else if (raw.startsWith('"') && raw.endsWith('"')) out[key] = raw.slice(1, -1);
+  }
+  return out;
 }
 
 export function removeBlock(src: string, header: string): string {
