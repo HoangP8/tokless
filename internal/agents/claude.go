@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 
 	"github.com/HoangP8/tokless/internal/core"
@@ -104,14 +105,21 @@ var claude = &core.AgentManifest{
 	CLIBin:    "claude",
 	ConfigDir: func() string { return util.ClaudeCodePaths().Dir },
 	Detect: func() core.Detection {
-		if util.Which("claude") != "" {
-			return core.Detection{Installed: true, Source: "cli"}
-		}
-		if util.Exists(util.ClaudeCodePaths().Dir) {
-			return core.Detection{Installed: true, Source: "config"}
-		}
-		return core.Detection{Installed: false, Source: ""}
+		return detectAgent("claude", util.ClaudeCodePaths().Dir)
 	},
+}
+
+// detectAgent anchors "installed" to the CLI on PATH. A leftover config dir is
+// NOT enough in production (wiring needs the CLI). In TOKLESS_TEST mode the
+// sandbox has no fake CLIs, so a config dir stands in for an installed agent.
+func detectAgent(cli, configDir string) core.Detection {
+	if util.Which(cli) != "" {
+		return core.Detection{Installed: true, Source: "cli"}
+	}
+	if os.Getenv("TOKLESS_TEST") == "1" && util.Exists(configDir) {
+		return core.Detection{Installed: true, Source: "config"}
+	}
+	return core.Detection{Installed: false, Source: ""}
 }
 
 // shared helpers

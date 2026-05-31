@@ -51,8 +51,7 @@ case ":${PATH}:" in
     ;;
 esac
 
-# Run tokless now. Piped installs have the pipe as stdin, so reconnect the
-# keyboard via /dev/tty to drive the interactive agent picker. No TTY -> hint.
+# Run now, reconnecting the keyboard via /dev/tty so the picker works under a pipe.
 if [ -r /dev/tty ]; then
   printf '\n'
   "${DEST}/tokless" </dev/tty || true

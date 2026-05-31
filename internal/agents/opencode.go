@@ -100,12 +100,6 @@ var opencode = &core.AgentManifest{
 	CLIBin:    "opencode",
 	ConfigDir: func() string { return util.OpenCodePathsResolved().Dir },
 	Detect: func() core.Detection {
-		if util.Which("opencode") != "" {
-			return core.Detection{Installed: true, Source: "cli"}
-		}
-		if util.Exists(util.OpenCodePathsResolved().Dir) {
-			return core.Detection{Installed: true, Source: "config"}
-		}
-		return core.Detection{Installed: false, Source: ""}
+		return detectAgent("opencode", util.OpenCodePathsResolved().Dir)
 	},
 }

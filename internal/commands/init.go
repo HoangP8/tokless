@@ -107,13 +107,15 @@ func RunInit(opts InitOptions) int {
 		util.L.Raw("")
 		var optsList []util.MultiSelectOption
 		for _, a := range allAgents {
-			hint := util.C.Gray("not installed")
+			opt := util.MultiSelectOption{Value: a.ID, Label: a.Label}
 			if installedIDs[a.ID] {
-				hint = util.C.Gray("installed")
+				opt.Hint = util.C.Gray("installed")
+				opt.Selected = true
+			} else {
+				opt.Disabled = true
+				opt.DisabledReason = "not installed"
 			}
-			optsList = append(optsList, util.MultiSelectOption{
-				Value: a.ID, Label: a.Label, Hint: hint, Selected: installedIDs[a.ID],
-			})
+			optsList = append(optsList, opt)
 		}
 		requested = util.MultiSelect("Which AI agent(s) to wire up?", optsList)
 	}

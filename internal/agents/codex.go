@@ -35,13 +35,7 @@ var codex = &core.AgentManifest{
 	CLIBin:    "codex",
 	ConfigDir: func() string { return util.CodexPathsResolved().Dir },
 	Detect: func() core.Detection {
-		if util.Which("codex") != "" {
-			return core.Detection{Installed: true, Source: "cli"}
-		}
-		if util.Exists(util.CodexPathsResolved().Dir) {
-			return core.Detection{Installed: true, Source: "config"}
-		}
-		return core.Detection{Installed: false, Source: ""}
+		return detectAgent("codex", util.CodexPathsResolved().Dir)
 	},
 }
 
