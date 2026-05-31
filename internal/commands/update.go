@@ -76,11 +76,42 @@ func RunUpdate(opts InitOptions) int {
 	}
 
 	util.L.Raw("  " + util.C.Bold("Upgrading: "+joinComma(changed)))
-	next := opts
-	next.Yes = true
-	next.Upgrade = true
-	if opts.Tools == nil {
-		next.Tools = changed
+	util.L.Raw("")
+	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless")) + util.C.Gray("  global token-saver for AI agents"))
+
+	if !opts.DryRun {
+		util.EnsureNodeForTools()
 	}
-	return RunInit(next)
+	allTools := core.ListTools()
+	var tools []*core.ToolManifest
+	for _, t := range allTools {
+		if contains(changed, t.ID) {
+			tools = append(tools, t)
+		}
+	}
+	bar := util.NewProgress("")
+	bar.Start(len(tools))
+	for _, tool := range tools {
+		bar.Begin(tool.Label)
+		report := func(phase string, frac float64) { bar.Step(phase, frac) }
+		err := util.WithSilencedLogs(func() error {
+			_, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, Report: report})
+			return e
+		})
+		if err != nil {
+			bar.Fail(firstLine(err.Error()))
+		} else {
+			bar.Complete("")
+		}
+	}
+	bar.Done("")
+
+	// Upgrade mutated installed versions; drop cached latest so next read is fresh.
+	if !opts.DryRun {
+		util.BustVersionCache()
+	}
+	util.L.Raw("")
+	util.L.Ok("Updated " + joinComma(changed) + ".")
+	util.L.Raw("")
+	return 0
 }

@@ -146,17 +146,39 @@ func GatherVersions() map[string]VersionInfo {
 			"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm"},
 		}
 	}
-	if c := loadCache(); c != nil {
-		return c.Map
-	}
+	// Latest (slow, network) is cached; installed (fast, local) is always live.
+	latest := cachedLatest()
 	out := map[string]VersionInfo{}
-	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: githubLatestRelease("rtk-ai/rtk"), Channel: "github"}
-	out["caveman"] = VersionInfo{Installed: nil, Latest: githubLatestRelease("JuliusBrussee/caveman"), Channel: "github"}
-	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: npmLatest("@colbymchenry/codegraph"), Channel: "npm"}
-	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: npmLatest("context-mode"), Channel: "npm"}
-	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: npmLatest("tokless"), Channel: "npm"}
-	saveCache(out)
+	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github"}
+	out["caveman"] = VersionInfo{Installed: nil, Latest: latest["caveman"], Channel: "github"}
+	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm"}
+	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm"}
+	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm"}
 	return out
+}
+
+// cachedLatest returns the latest-version lookups, cached to disk (6h TTL).
+func cachedLatest() map[string]*string {
+	if c := loadCache(); c != nil {
+		m := map[string]*string{}
+		for k, v := range c.Map {
+			m[k] = v.Latest
+		}
+		return m
+	}
+	m := map[string]*string{
+		"rtk":          githubLatestRelease("rtk-ai/rtk"),
+		"caveman":      githubLatestRelease("JuliusBrussee/caveman"),
+		"codegraph":    npmLatest("@colbymchenry/codegraph"),
+		"context-mode": npmLatest("context-mode"),
+		"tokless":      npmLatest("tokless"),
+	}
+	store := map[string]VersionInfo{}
+	for k, v := range m {
+		store[k] = VersionInfo{Latest: v}
+	}
+	saveCache(store)
+	return m
 }
 
 func parseSemverParts(s string) []int {
