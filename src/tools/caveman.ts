@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import { run } from "../util/exec.js";
 import { log } from "../util/logger.js";
+import { agentPaths } from "../util/paths.js";
 import type { ToolManifest, RunOpts } from "../core/tool-manifest.js";
 
 // caveman delegates entirely to its own per-agent installers.
@@ -17,6 +20,19 @@ async function exec(bin: string, args: string[], opts: RunOpts, dryHint: string)
     return false;
   }
   return true;
+}
+
+// caveman's OpenCode installer copies command files into ~/.config/opencode/commands
+// but does not create that directory first, so it ENOENTs on a fresh config.
+function ensureOpencodeCommandsDir(): void {
+  try {
+    fs.mkdirSync(path.join(agentPaths.opencode().dir, "commands"), { recursive: true });
+  } catch { /* best effort */ }
+}
+
+// The functional artifact: caveman's OpenCode plugin entrypoint.
+function opencodePluginInstalled(): boolean {
+  return fs.existsSync(path.join(agentPaths.opencode().dir, "plugins", "caveman", "plugin.js"));
 }
 
 const caveman: ToolManifest = {
@@ -37,20 +53,30 @@ const caveman: ToolManifest = {
         opts,
         "claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman",
       ),
-    opencode: (opts) =>
-      exec(
+    opencode: async (opts) => {
+      if (!opts.dryRun && process.env.TOKLESS_TEST !== "1") ensureOpencodeCommandsDir();
+      const ran = await exec(
         "npx",
         ["-y", "github:JuliusBrussee/caveman", "--", "--only", "opencode"],
         opts,
         "npx -y github:JuliusBrussee/caveman -- --only opencode",
-      ),
+      );
+      // caveman's installer exits non-zero on its own missing optional command
+      // file, but the functional plugin still lands. Trust the artifact.
+      if (opts.dryRun || process.env.TOKLESS_TEST === "1") return ran;
+      return ran || opencodePluginInstalled();
+    },
     codex: (opts) =>
       exec(
         "npx",
-        ["skills", "add", "JuliusBrussee/caveman", "-a", "codex"],
+        ["-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex", "-y"],
         opts,
-        "npx skills add JuliusBrussee/caveman -a codex",
+        "npx -y skills add JuliusBrussee/caveman -a codex -y",
       ),
+  },
+
+  verifyFor: {
+    opencode: () => opencodePluginInstalled(),
   },
 
   unwireFor: {
