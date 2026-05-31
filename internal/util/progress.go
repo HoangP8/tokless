@@ -24,7 +24,6 @@ type Progress struct {
 	out     *os.File
 }
 
-
 func NewProgress(title string) *Progress {
 	return &Progress{title: title, tty: stdoutIsTTY(), out: os.Stdout}
 }

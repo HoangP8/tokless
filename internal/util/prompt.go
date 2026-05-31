@@ -18,13 +18,10 @@ type MultiSelectOption struct {
 	DisabledReason string
 }
 
-func stdinIsTTY() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
+func stdinIsTTY() bool { return isTerminal(os.Stdin.Fd()) }
+
+// IsInteractive reports whether we can run an interactive prompt (stdin is a TTY).
+func IsInteractive() bool { return stdinIsTTY() }
 
 // rawMode toggles terminal raw mode via stty; returns a restore func.
 func rawMode() (func(), bool) {

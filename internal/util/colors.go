@@ -5,13 +5,10 @@ import (
 	"os"
 )
 
-func stdoutIsTTY() bool {
-	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
+func stdoutIsTTY() bool { return isTerminal(os.Stdout.Fd()) }
+
+// StdoutIsTTY reports whether stdout is a real terminal.
+func StdoutIsTTY() bool { return stdoutIsTTY() }
 
 // colorsEnabled gates all ANSI output.
 var colorsEnabled = stdoutIsTTY() && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"

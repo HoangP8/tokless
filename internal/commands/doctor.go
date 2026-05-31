@@ -100,10 +100,4 @@ func doctorSummary(r agentReport) {
 	util.L.Raw("  " + mark + " " + padEnd(r.label, 14) + " " + status)
 }
 
-func stdoutTTY() bool {
-	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
+func stdoutTTY() bool { return util.StdoutIsTTY() }
