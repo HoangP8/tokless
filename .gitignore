@@ -10,3 +10,6 @@ testbed/
 # stray artifacts from `npx skills` (caveman codex) when run in-repo
 .agents/
 skills-lock.json
+
+# local testing guide (not published)
+TESTING.md
