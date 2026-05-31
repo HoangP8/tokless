@@ -10,9 +10,9 @@ import (
 func toolVersionNote(tool *core.ToolManifest) string {
 	if tool.NotTrackable {
 		if v := util.LatestVersionFor(tool.ID); v != nil {
-			return "v" + *v + "  skill"
+			return "v" + *v
 		}
-		return "skill"
+		return ""
 	}
 	if v := util.InstalledVersionFor(tool.ID); v != nil {
 		return "v" + *v

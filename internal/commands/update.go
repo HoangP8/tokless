@@ -36,7 +36,7 @@ func RunUpdate(opts InitOptions) int {
 			if info, ok := versions[t.ID]; ok && info.Latest != nil {
 				ver = "v" + *info.Latest
 			}
-			util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" "+padEnd(t.ID, 14)+padEnd(ver, 10)+"   skill (per-agent)"))
+			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(t.ID, 14)+" "+ver))
 			continue
 		}
 		info, has := versions[t.ID]
