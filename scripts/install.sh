@@ -28,7 +28,8 @@ url="https://github.com/${OWNER}/${REPO}/releases/latest/download/${asset}"
 # Download + install.
 mkdir -p "$DEST"
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
-if ! curl -fSL -o "$tmp" "$url" 2>/dev/null || [ ! -s "$tmp" ]; then
+printf '\033[36m↓\033[0m Downloading %s…\n' "$asset"
+if ! curl -fSL --progress-bar -o "$tmp" "$url" || [ ! -s "$tmp" ]; then
   err "Download failed ($asset). See https://github.com/${OWNER}/${REPO}/releases"
   exit 1
 fi

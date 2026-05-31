@@ -1,0 +1,46 @@
+<output>
+<compartments>
+<compartment start="308" end="317" title="Setup CI and PR templates">
+Added CI workflow to run tests on every push and pull request, and created structured templates for issues and pull requests to maintain project discipline. The CI configuration runs all three test layers (unit, integration, real-CLI) in a single pipeline.
+</compartment>
+<compartment start="318" end="322" title="Simplify contribution templates">
+Simplified issue and PR templates to be minimal and plain-text to reduce overhead for contributors.
+</compartment>
+<compartment start="323" end="328" title="Remove issue templates and PR templates">
+Removed issue and PR templates entirely to favor a simple, plain-text communication style, keeping only the essential GitHub workflows (CI and Release).
+</compartment>
+<compartment start="329" end="332" title="Clarify nano-llm example">
+Confirmed `nano-llm-cache` in `CONTRIBUTING.md` is a non-functional placeholder for instructional purposes only. Decided to keep the existing example name as it clearly serves as a template, rather than a shipping tool.
+</compartment>
+<compartment start="333" end="369" title="Final project audit and cleanup">
+Conducted a final audit of all tools and agents against upstream documentation to ensure wiring correctness. Analyzed potential 5th tool candidates but determined that the current four-tool set is optimal for launch, as candidates either overlap existing tools, touch agent reasoning, or introduce unwanted dependencies. Finalized project documentation for launch.
+</compartment>
+</compartments>
+<facts>
+<WORKFLOW_RULES>
+* Run CI tests automatically on every pull request and push to the main branch.
+* Trigger production releases by pushing a version tag (e.g., v0.1.0); the CI workflow builds binaries and publishes them to GitHub Releases.
+* Add new tools or agents by creating a single manifest file and registering it in the core index.
+* Always cite the upstream README URL for every config shape written to guarantee consistency with source-of-truth.
+* Perform file edits via merge-and-mutate to preserve existing user configurations.
+</WORKFLOW_RULES>
+<ARCHITECTURE_DECISIONS>
+* Use bare binaries instead of npx for tool execution to avoid network-freshness overhead and improve reliability.
+* Implement tool wiring via pure iteration over registries to ensure horizontal scalability without hardcoded branching.
+* Embed version constants via build-time injection to support self-contained binary distribution.
+* Install tools via platform-native channels (npm/npx for npm-based tools) and use the laddered npm-install helper to bypass local metadata cache skew.
+</ARCHITECTURE_DECISIONS>
+<CONSTRAINTS>
+* Do not inject markers or invented fields into configuration files; rely on command-prefix or key-name detection for idempotency.
+* Run installs without sudo; prefer user-local installation directories (~/.local/bin or similar) that are pre-configured on standard PATHs.
+</CONSTRAINTS>
+<USER_DIRECTIVES>
+* Use a curl-only installation model with pre-compiled, self-contained binaries to provide the shortest, most professional install path.
+* Keep all documentation concise, professional, and free of fluff.
+* Prioritize universal tool reliability across all supported agents (Claude Code, OpenCode, Codex).
+</USER_DIRECTIVES>
+</facts>
+<meta>
+<messages_processed>308-369</messages_processed>
+</meta>
+</output>
