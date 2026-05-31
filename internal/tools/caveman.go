@@ -39,7 +39,10 @@ var caveman = &core.ToolManifest{
 	Homepage:    "https://github.com/JuliusBrussee/caveman",
 	InstallHint: "Installed per-agent by Caveman's own CLI.",
 	Channel:     core.ChannelGitHub,
-	Install:     func(core.RunOpts) (bool, error) { return true, nil },
+	Install: func(opts core.RunOpts) (bool, error) {
+		opts.Reportf("installed per agent", 1)
+		return true, nil
+	},
 	WireFor: map[string]core.AgentFn{
 		"claude": func(opts core.RunOpts) (bool, error) {
 			return cavemanExec("sh",

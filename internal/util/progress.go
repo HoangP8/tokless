@@ -10,27 +10,28 @@ import (
 
 var frames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-// Progress renders a single-line spinner + step list.
 type Progress struct {
 	title   string
-	idx     int
-	total   int
 	current string
+	phase   string
+	frac    float64
+	start   time.Time
 	frame   int
+	active  bool
 	mu      sync.Mutex
 	stop    chan struct{}
 	tty     bool
+	out     *os.File
 }
 
+
 func NewProgress(title string) *Progress {
-	return &Progress{title: title, tty: stdoutIsTTY()}
+	return &Progress{title: title, tty: stdoutIsTTY(), out: os.Stdout}
 }
 
 func (p *Progress) Start(total int) {
-	p.total = total
-	p.idx = 0
 	if p.title != "" {
-		fmt.Println("\n  " + C.Bold(C.Cyan(p.title)))
+		fmt.Fprintln(p.out, "\n  "+C.Bold(C.Cyan(p.title)))
 	}
 	if p.tty {
 		p.stop = make(chan struct{})
@@ -47,16 +48,40 @@ func (p *Progress) spin() {
 			return
 		case <-t.C:
 			p.mu.Lock()
-			p.frame = (p.frame + 1) % len(frames)
-			p.repaint()
+			if p.active {
+				p.frame = (p.frame + 1) % len(frames)
+				p.repaint()
+			}
 			p.mu.Unlock()
 		}
 	}
 }
 
+// Begin starts a new item at 0% and resets its phase/elapsed.
 func (p *Progress) Begin(label string) {
 	p.mu.Lock()
 	p.current = label
+	p.phase = ""
+	p.frac = 0
+	p.start = time.Now()
+	p.active = true
+	if p.tty {
+		p.repaint()
+	}
+	p.mu.Unlock()
+}
+
+// Step updates the active item's phase label and 0..1 fraction.
+func (p *Progress) Step(phase string, frac float64) {
+	p.mu.Lock()
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 1 {
+		frac = 1
+	}
+	p.phase = phase
+	p.frac = frac
 	if p.tty {
 		p.repaint()
 	}
@@ -70,51 +95,51 @@ func padEnd(s string, n int) string {
 	return s + strings.Repeat(" ", n-len(s))
 }
 
-func (p *Progress) pctBar(pct int) string {
+func fracBar(frac float64) string {
 	width := 16
-	filled := pct * width / 100
+	filled := int(frac*float64(width) + 0.5)
 	if filled > width {
 		filled = width
 	}
 	return C.Green(strings.Repeat("█", filled)) + C.Gray(strings.Repeat("░", width-filled))
 }
 
+func elapsed(d time.Duration) string {
+	s := int(d.Seconds())
+	if s <= 0 {
+		return ""
+	}
+	return C.Gray(fmt.Sprintf(" %ds", s))
+}
+
 func (p *Progress) Complete(note string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.idx++
+	p.active = false
 	p.clearLine()
-	pct := 100
-	if p.total > 0 {
-		pct = p.idx * 100 / p.total
-	}
 	noteStr := ""
 	if note != "" {
 		noteStr = C.Gray(" " + note)
 	}
-	fmt.Printf("  %s %s %s%s\n", C.Green(Sym.Check), padEnd(p.current, 22),
-		C.Gray(fmt.Sprintf("[%s] %d%%", p.pctBar(pct), pct)), noteStr)
+	fmt.Fprintf(p.out, "  %s %s %s%s\n", C.Green(Sym.Check), padEnd(p.current, 16),
+		C.Gray(fmt.Sprintf("[%s] 100%%", fracBar(1))), noteStr)
 }
 
 func (p *Progress) Fail(reason string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.idx++
+	p.active = false
 	p.clearLine()
-	fmt.Printf("  %s %s %s\n", C.Red(Sym.Cross), padEnd(p.current, 22), C.Red(reason))
+	fmt.Fprintf(p.out, "  %s %s %s\n", C.Red(Sym.Cross), padEnd(p.current, 16), C.Red(reason))
 }
 
 func (p *Progress) Skip(note string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.idx++
+	p.active = false
 	p.clearLine()
-	pct := 100
-	if p.total > 0 {
-		pct = p.idx * 100 / p.total
-	}
-	fmt.Printf("  %s %s %s\n", C.Gray(Sym.Bullet), padEnd(p.current, 22),
-		C.Gray(fmt.Sprintf("[%s] %d%%  %s", p.pctBar(pct), pct, note)))
+	fmt.Fprintf(p.out, "  %s %s %s\n", C.Gray(Sym.Bullet), padEnd(p.current, 16),
+		C.Gray(fmt.Sprintf("[%s] 100%%  %s", fracBar(1), note)))
 }
 
 func (p *Progress) Done(summary string) {
@@ -123,29 +148,31 @@ func (p *Progress) Done(summary string) {
 		p.stop = nil
 	}
 	p.mu.Lock()
+	p.active = false
 	p.clearLine()
 	p.mu.Unlock()
 	if summary != "" {
-		fmt.Println("  " + C.Gray(summary))
+		fmt.Fprintln(p.out, "  "+C.Gray(summary))
 	}
 }
 
 func (p *Progress) repaint() {
-	if !p.tty || p.current == "" {
+	if !p.tty || p.current == "" || !p.active {
 		return
 	}
-	pct := 0
-	if p.total > 0 {
-		pct = p.idx * 100 / p.total
+	pct := int(p.frac*100 + 0.5)
+	phase := ""
+	if p.phase != "" {
+		phase = C.Gray("  " + p.phase)
 	}
-	line := fmt.Sprintf("  %s %s %s", C.Cyan(frames[p.frame]), padEnd(p.current, 22),
-		C.Gray(fmt.Sprintf("[%s] %d%%", p.pctBar(pct), pct)))
-	fmt.Fprint(os.Stdout, "\r\x1b[2K"+line)
+	line := fmt.Sprintf("  %s %s %s%s%s", C.Cyan(frames[p.frame]), padEnd(p.current, 16),
+		C.Gray(fmt.Sprintf("[%s] %3d%%", fracBar(p.frac), pct)), phase, elapsed(time.Since(p.start)))
+	fmt.Fprint(p.out, "\r\x1b[2K"+line)
 }
 
 func (p *Progress) clearLine() {
 	if p.tty {
-		fmt.Fprint(os.Stdout, "\r\x1b[2K")
+		fmt.Fprint(p.out, "\r\x1b[2K")
 	}
 }
 

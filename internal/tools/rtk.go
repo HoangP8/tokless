@@ -47,7 +47,9 @@ func rtkEnsureInstalled(opts core.RunOpts) (bool, error) {
 		}
 		return true, nil
 	}
+	opts.Reportf("checking", 0.1)
 	if util.Which("rtk") != "" && !opts.Upgrade {
+		opts.Reportf("already installed", 1)
 		return true, nil
 	}
 	if opts.DryRun {
@@ -58,7 +60,8 @@ func rtkEnsureInstalled(opts core.RunOpts) (bool, error) {
 		}
 		return true, nil
 	}
-	if asset := rtkAssetForThisPlatform(); asset != "" && rtkInstallPrebuilt(asset) {
+	if asset := rtkAssetForThisPlatform(); asset != "" && rtkInstallPrebuilt(asset, opts) {
+		opts.Reportf("ready", 1)
 		return true, nil
 	}
 	if !util.IsWin && util.Which("curl") != "" && util.Which("sh") != "" {
@@ -80,10 +83,11 @@ func rtkEnsureInstalled(opts core.RunOpts) (bool, error) {
 	return false, nil
 }
 
-func rtkInstallPrebuilt(asset string) bool {
+func rtkInstallPrebuilt(asset string, opts core.RunOpts) bool {
 	url := "https://github.com/rtk-ai/rtk/releases/latest/download/" + asset
 	dest := filepath.Join(util.Home(), ".local", "bin")
 	_ = os.MkdirAll(dest, 0o755)
+	opts.Reportf("downloading binary", 0.3)
 	util.L.Sub("downloading " + asset + "…")
 	if util.IsWin {
 		ps := strings.Join([]string{
@@ -98,6 +102,7 @@ func rtkInstallPrebuilt(asset string) bool {
 	if util.Run("sh", []string{"-c", "curl -fsSL '" + url + "' -o '" + tmp + "'"}, util.RunOptions{}).Code != 0 {
 		return false
 	}
+	opts.Reportf("extracting", 0.8)
 	ex := util.Run("sh", []string{"-c", "tar -xzf '" + tmp + "' -C '" + dest + "' && rm -f '" + tmp + "' && chmod +x '" + dest + "/rtk'"}, util.RunOptions{})
 	return ex.Code == 0
 }

@@ -52,8 +52,9 @@ func RunInit(opts InitOptions) int {
 	toolBar.Start(len(tools))
 	for _, tool := range tools {
 		toolBar.Begin(tool.Label)
+		report := func(phase string, frac float64) { toolBar.Step(phase, frac) }
 		err := util.WithSilencedLogs(func() error {
-			_, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: opts.Upgrade})
+			_, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: opts.Upgrade, Report: report})
 			return e
 		})
 		if err != nil {

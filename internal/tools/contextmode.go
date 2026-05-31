@@ -18,11 +18,18 @@ func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would: npm install -g context-mode@latest (cache-skew-resistant)")
 		return true, nil
 	}
+	opts.Reportf("checking", 0.1)
+	if util.Which("context-mode") != "" && !opts.Upgrade {
+		opts.Reportf("already installed", 1)
+		return true, nil
+	}
+	opts.Reportf("npm install -g", 0.4)
 	v, ok := util.NpmGlobalInstall("context-mode", "latest")
 	if !ok {
 		util.L.Err("context-mode install failed across all strategies (npm + tarball fallback).")
 		return false, nil
 	}
+	opts.Reportf("ready", 1)
 	util.L.Sub(util.C.Dim("context-mode @" + v + " installed"))
 	return true, nil
 }

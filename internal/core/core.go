@@ -4,6 +4,13 @@ package core
 type RunOpts struct {
 	DryRun  bool
 	Upgrade bool
+	Report  func(phase string, frac float64)
+}
+
+func (o RunOpts) Reportf(phase string, frac float64) {
+	if o.Report != nil {
+		o.Report(phase, frac)
+	}
 }
 
 // Channel is where a tool is distributed from.

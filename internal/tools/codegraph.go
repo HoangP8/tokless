@@ -28,14 +28,20 @@ func codegraphEnsureInstalled(opts core.RunOpts) (bool, error) {
 		}
 		return true, nil
 	}
+	opts.Reportf("checking", 0.1)
 	if util.Which("codegraph") != "" && !opts.Upgrade {
+		opts.Reportf("already installed", 1)
 		return true, nil
 	}
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would install @colbymchenry/codegraph globally")
 		return true, nil
 	}
+	opts.Reportf("npm install -g", 0.4)
 	_, ok := util.NpmGlobalInstall("@colbymchenry/codegraph", "latest")
+	if ok {
+		opts.Reportf("ready", 1)
+	}
 	return ok, nil
 }
 
