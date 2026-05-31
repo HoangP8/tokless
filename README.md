@@ -1,19 +1,25 @@
-# tokless
+<div align="center"><h1>tokless: save tokens on AI coding agents, without hurting performance</h1></div>
 
-One command to install a full set of token-saving tools into your AI coding agents — Claude Code, OpenCode, and Codex — cutting token use without hurting how the agent performs.
+## Introduction
+
+A unified CLI to install and update every token-saving plugin for your AI coding agents — fast, efficient, and without hurting how the agent performs.
+
+**Supported agents**
+
+- Claude Code
+- OpenCode
+- Codex
+
+**Supported tools** — each installed from its official source and wired per its own docs:
 
 | Tool | What it does |
 | ---- | ------------ |
-| [RTK](https://github.com/rtk-ai/rtk) | Compresses noisy bash/tool output before it reaches the model |
-| [Caveman](https://github.com/JuliusBrussee/caveman) | Trims the agent's prose to terse, token-efficient output |
-| [CodeGraph](https://github.com/colbymchenry/codegraph) | MCP server — the agent queries a code graph instead of reading whole files |
-| [Context-Mode](https://github.com/mksglu/context-mode) | MCP server — runs data-heavy work in a sandbox, returns only the relevant slice |
-
-Each tool is installed from its **official source** and wired into each agent exactly as that tool's own docs prescribe. tokless only ever *adds* its entries — your existing config is merged, never overwritten — and re-running is idempotent.
+| [RTK](https://github.com/rtk-ai/rtk) | Shrinks noisy bash/tool output before the model sees it |
+| [Caveman](https://github.com/JuliusBrussee/caveman) | Makes the agent answer in terse, token-light prose |
+| [CodeGraph](https://github.com/colbymchenry/codegraph) | Lets the agent query a code graph instead of reading whole files |
+| [Context-Mode](https://github.com/mksglu/context-mode) | Runs data-heavy work in a sandbox, returns only what matters |
 
 ## Install
-
-A single self-contained binary. No Node, no npm, no Python to install first — the runtime is embedded.
 
 ```bash
 # macOS / Linux
@@ -24,10 +30,6 @@ curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/instal
 # Windows (PowerShell)
 irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
 ```
-
-The binary installs to `~/.local/bin` (macOS/Linux). If that's already on your `PATH` — the default on most systems — `tokless` works immediately. Otherwise the installer adds one line to your shell rc so new terminals pick it up.
-
-If a tool needs a runtime you don't have (e.g. `npm` for the MCP servers), tokless asks before installing it — nothing is installed behind your back.
 
 ## Commands
 
@@ -53,8 +55,4 @@ tokless --agents opencode --dry-run  # preview, no writes
 tokless doctor
 ```
 
-After running it, restart your agents so they pick up the new MCP servers and config.
-
-## License
-
-MIT © [HoangP8](https://github.com/HoangP8)
+After running it, restart your agents so they pick up the new config.
