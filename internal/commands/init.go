@@ -108,9 +108,7 @@ func RunInit(opts InitOptions) int {
 		var optsList []util.MultiSelectOption
 		for _, a := range allAgents {
 			opt := util.MultiSelectOption{Value: a.ID, Label: a.Label}
-			if installedIDs[a.ID] {
-				opt.Selected = true
-			} else {
+			if !installedIDs[a.ID] {
 				opt.Disabled = true
 				opt.DisabledReason = "not installed"
 				opt.Hint = a.Homepage

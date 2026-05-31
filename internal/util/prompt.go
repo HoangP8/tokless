@@ -100,32 +100,41 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		firstRender = false
 		fmt.Fprint(os.Stdout, "\x1b[0J")
 		var b strings.Builder
+
 		b.WriteString(C.Bold(C.Cyan("?")) + " " + C.Bold(question) + "\r\n")
-		b.WriteString("  " + C.Gray("↑/↓ move · <space> select · <a> all · <enter> confirm") + "\r\n")
+		b.WriteString("   " + C.Dim("↑/↓ move · <space> select · <a> all · <enter> confirm") + "\r\n")
+
 		for i, it := range items {
 			pointer := " "
 			if i == cursor {
 				pointer = C.Cyan(Sym.Pointer)
 			}
-			box := C.Gray(Sym.Unselected)
-			if it.Selected {
-				box = C.Green(Sym.Selected)
-			}
-			label := it.Label
+
+			var box, text string
 			if it.Disabled {
 				reason := it.DisabledReason
 				if reason == "" {
-					reason = "unavailable"
+					reason = "not installed"
 				}
-				label = C.Gray(it.Label + " (" + reason + ")")
-			} else if it.Selected {
-				label = C.Bold(C.Cyan(it.Label))
+				box = C.Dim(Sym.Unselected)
+				text = C.Dim(it.Label + " · " + reason)
+				if it.Hint != "" {
+					text += C.Dim(" · ") + C.Gray(it.Hint)
+				}
+			} else {
+				if it.Selected {
+					box = C.Green(Sym.Selected)
+					text = C.Bold(it.Label)
+				} else {
+					box = C.Gray(Sym.Unselected)
+					text = it.Label
+				}
+				if it.Hint != "" {
+					text += C.Dim("  " + it.Hint)
+				}
 			}
-			hint := ""
-			if it.Hint != "" {
-				hint = C.Gray(" — " + it.Hint)
-			}
-			b.WriteString("  " + pointer + " " + box + " " + label + hint + "\r\n")
+
+			b.WriteString(" " + pointer + " " + box + "  " + text + "\r\n")
 		}
 		fmt.Fprint(os.Stdout, b.String())
 	}
