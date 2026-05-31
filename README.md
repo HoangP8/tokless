@@ -1,4 +1,14 @@
-<div align="center"><h1>tokless: save tokens on AI coding agents, without hurting performance</h1></div>
+<div align="center">
+
+<h1>tokless</h1>
+
+**Save tokens on AI coding agents — no performance loss.**
+
+![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version)
+![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
+</div>
 
 ## Introduction
 
@@ -18,6 +28,8 @@ A unified CLI to install and update every token-saving plugin for your AI coding
 | [Caveman](https://github.com/JuliusBrussee/caveman) | Makes the agent answer in terse, token-light prose |
 | [CodeGraph](https://github.com/colbymchenry/codegraph) | Lets the agent query a code graph instead of reading whole files |
 | [Context-Mode](https://github.com/mksglu/context-mode) | Runs data-heavy work in a sandbox, returns only what matters |
+
+Each tool targets a different source of token waste, so they complement each other with no overlap or conflict.
 
 ## Install
 
