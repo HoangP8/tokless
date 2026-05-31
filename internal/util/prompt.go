@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 )
 
 // MultiSelectOption is one selectable row.
@@ -93,6 +94,13 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 
 	const headerLines = 2
 
+	labelW := 0
+	for _, it := range items {
+		if n := utf8.RuneCountInString(it.Label); n > labelW {
+			labelW = n
+		}
+	}
+
 	render := func() {
 		if !firstRender {
 			fmt.Fprintf(os.Stdout, "\x1b[%dA", len(items)+headerLines)
@@ -102,39 +110,35 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		var b strings.Builder
 
 		b.WriteString(C.Bold(C.Cyan("?")) + " " + C.Bold(question) + "\r\n")
-		b.WriteString("   " + C.Dim("↑/↓ move · <space> select · <a> all · <enter> confirm") + "\r\n")
+		b.WriteString("  " + C.Dim("↑/↓ move · <space> select · <a> all · <enter> confirm") + "\r\n")
 
 		for i, it := range items {
 			pointer := " "
 			if i == cursor {
 				pointer = C.Cyan(Sym.Pointer)
 			}
+			pad := strings.Repeat(" ", labelW-utf8.RuneCountInString(it.Label))
 
-			var box, text string
+			var box, label, tag, extra string
 			if it.Disabled {
-				reason := it.DisabledReason
-				if reason == "" {
-					reason = "not installed"
-				}
-				box = C.Dim(Sym.Unselected)
-				text = C.Dim(it.Label + " · " + reason)
+				box = C.Dim("·")
+				label = C.Dim(it.Label)
+				tag = C.Yellow("[MISSING]")
 				if it.Hint != "" {
-					text += C.Dim(" · ") + C.Gray(it.Hint)
+					extra = "  " + C.Dim(it.Hint)
 				}
 			} else {
 				if it.Selected {
 					box = C.Green(Sym.Selected)
-					text = C.Bold(it.Label)
+					label = C.Bold(it.Label)
 				} else {
 					box = C.Gray(Sym.Unselected)
-					text = it.Label
+					label = it.Label
 				}
-				if it.Hint != "" {
-					text += C.Dim("  " + it.Hint)
-				}
+				tag = C.Green("[READY]")
 			}
 
-			b.WriteString(" " + pointer + " " + box + "  " + text + "\r\n")
+			b.WriteString(" " + pointer + " " + box + "  " + label + pad + "  " + tag + extra + "\r\n")
 		}
 		fmt.Fprint(os.Stdout, b.String())
 	}

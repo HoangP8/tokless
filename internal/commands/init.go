@@ -115,7 +115,7 @@ func RunInit(opts InitOptions) int {
 			}
 			optsList = append(optsList, opt)
 		}
-		requested = util.MultiSelect("Which AI agent(s) to wire up?", optsList)
+		requested = util.MultiSelect("Select agents to install tokless", optsList)
 	}
 
 	var wireIDs, skipped []string

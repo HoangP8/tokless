@@ -101,7 +101,7 @@ func LocateClaudeCaveman() string {
 var claude = &core.AgentManifest{
 	ID:        "claude",
 	Label:     "Claude Code",
-	Homepage:  "https://claude.com/claude-code",
+	Homepage:  "https://github.com/anthropics/claude-code",
 	CLIBin:    "claude",
 	ConfigDir: func() string { return util.ClaudeCodePaths().Dir },
 	Detect: func() core.Detection {
