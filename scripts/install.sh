@@ -37,9 +37,9 @@ chmod +x "$tmp"
 install -m 0755 "$tmp" "${DEST}/tokless"
 ok "installed tokless $("${DEST}/tokless" --version 2>/dev/null) → ${DEST}/tokless"
 
-# Ensure ~/.local/bin is on PATH for new shells. If it already is, done.
+# Ensure ~/.local/bin is on PATH for new shells.
 case ":${PATH}:" in
-  *":${DEST}:"*) ok "Run: tokless" ;;
+  *":${DEST}:"*) : ;;
   *)
     case "$(basename "${SHELL:-bash}")" in
       zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
@@ -47,6 +47,15 @@ case ":${PATH}:" in
     esac
     line="export PATH=\"${DEST}:\$PATH\""
     grep -qF "$DEST" "$rc" 2>/dev/null || printf '\n# tokless\n%s\n' "$line" >> "$rc"
-    ok "Added to PATH in ${rc}. Open a new terminal, or run: ${line}"
+    ok "Added ${DEST} to PATH in ${rc}."
     ;;
 esac
+
+# Run tokless now. Piped installs have the pipe as stdin, so reconnect the
+# keyboard via /dev/tty to drive the interactive agent picker. No TTY -> hint.
+if [ -r /dev/tty ]; then
+  printf '\n'
+  "${DEST}/tokless" </dev/tty || true
+else
+  ok "Run: tokless"
+fi
