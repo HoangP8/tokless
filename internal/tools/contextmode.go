@@ -111,7 +111,55 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	}
 	copyOpenCodeAgentsMd(op.Dir)
 	runPostinstallInOpenCodeCache()
+	pruneOldContextModeCache()
 	return true, nil
+}
+
+// pruneOldContextModeCache keeps only the newest populated context-mode version
+// in OpenCode's plugin cache and removes older versions + any empty dir.
+func pruneOldContextModeCache() {
+	cacheRoot := filepath.Join(util.Home(), ".cache", "opencode", "packages")
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		return
+	}
+	type ver struct {
+		dir string
+		v   string
+	}
+	var populated []ver
+	var empties []string
+	for _, e := range entries {
+		d := e.Name()
+		if d != "context-mode" && !strings.HasPrefix(d, "context-mode@") {
+			continue
+		}
+		full := filepath.Join(cacheRoot, d)
+		if util.Exists(filepath.Join(full, "node_modules", "context-mode", "package.json")) {
+			v := strings.TrimPrefix(d, "context-mode@")
+			populated = append(populated, ver{full, v})
+		} else {
+			empties = append(empties, full)
+		}
+	}
+	for _, d := range empties {
+		_ = os.RemoveAll(d)
+	}
+	if len(populated) <= 1 {
+		return
+	}
+	best := 0
+	for i := 1; i < len(populated); i++ {
+		if util.SemverGte(populated[i].v, populated[best].v) {
+			best = i
+		}
+	}
+	for i, p := range populated {
+		if i != best {
+			_ = os.RemoveAll(p.dir)
+		}
+	}
+	util.L.Sub(util.C.Dim("pruned old context-mode cache → kept @" + populated[best].v))
 }
 
 func runPostinstallInOpenCodeCache() {
