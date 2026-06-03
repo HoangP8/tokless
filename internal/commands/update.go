@@ -114,6 +114,11 @@ func RunUpdate(opts InitOptions) int {
 	}
 	bar.Done("")
 
+	// Re-pin upgraded tools' per-agent config to the freshly installed version.
+	if !opts.DryRun {
+		resyncWiring(tools)
+	}
+
 	// Upgrade mutated installed versions; drop cached latest so next read is fresh.
 	if !opts.DryRun {
 		util.BustVersionCache()
@@ -122,4 +127,27 @@ func RunUpdate(opts InitOptions) int {
 	util.L.Ok("Updated " + joinComma(changed) + ".")
 	util.L.Raw("")
 	return 0
+}
+
+// resyncWiring re-runs WireFor for each upgraded tool only on agents where it is
+// already wired (gated by VerifyFor), syncing version pins without newly wiring.
+func resyncWiring(tools []*core.ToolManifest) {
+	agents := core.ListAgents()
+	for _, tool := range tools {
+		for _, agent := range agents {
+			wire, ok := tool.WireFor[agent.ID]
+			if !ok || !agent.Detect().Installed {
+				continue
+			}
+			if verify, vok := tool.VerifyFor[agent.ID]; vok {
+				if r := verify(); r == nil || !*r {
+					continue
+				}
+			}
+			_ = util.WithSilencedLogs(func() error {
+				_, e := wire(core.RunOpts{Upgrade: true})
+				return e
+			})
+		}
+	}
 }
