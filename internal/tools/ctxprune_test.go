@@ -42,26 +42,24 @@ func mcpKeys(cfg *util.OrderedMap) []string {
 	return mm.Keys()
 }
 
-// The critical UPDATE case: an existing old pin must be replaced by the new pin,
-// leaving exactly one context-mode entry.
-func TestApplyContextModePin_ReplacesOldPin(t *testing.T) {
-	cfg := util.TryParseJsonc(`{"plugin":["context-mode@1.0.157"]}`)
-	applyContextModePin(cfg, "context-mode@1.0.162")
+func TestSetContextModePlugin_ReplacesStalePin(t *testing.T) {
+	cfg := util.TryParseJsonc(`{"plugin":["context-mode@1.0.162"]}`)
+	setContextModePlugin(cfg)
 	got := pluginStrings(t, cfg)
-	if len(got) != 1 || got[0] != "context-mode@1.0.162" {
-		t.Fatalf("expected [context-mode@1.0.162], got %v", got)
+	if len(got) != 1 || got[0] != "context-mode" {
+		t.Fatalf("expected bare [context-mode], got %v", got)
 	}
 }
 
-func TestApplyContextModePin_ReplacesBareAndDropsMcp(t *testing.T) {
+func TestSetContextModePlugin_KeepsOrderAndDropsMcp(t *testing.T) {
 	cfg := util.TryParseJsonc(`{
-		"plugin":["other@1.0.0","context-mode"],
+		"plugin":["other@1.0.0","context-mode@1.0.157"],
 		"mcp":{"context-mode":{"type":"local"},"codegraph":{"type":"local"}}
 	}`)
-	applyContextModePin(cfg, "context-mode@1.0.162")
+	setContextModePlugin(cfg)
 
 	got := pluginStrings(t, cfg)
-	want := []string{"other@1.0.0", "context-mode@1.0.162"}
+	want := []string{"other@1.0.0", "context-mode"}
 	if len(got) != len(want) {
 		t.Fatalf("plugin mismatch: got %v want %v", got, want)
 	}
@@ -76,37 +74,37 @@ func TestApplyContextModePin_ReplacesBareAndDropsMcp(t *testing.T) {
 	}
 }
 
-func TestApplyContextModePin_AppendsWhenMissing(t *testing.T) {
+func TestSetContextModePlugin_AppendsWhenMissing(t *testing.T) {
 	cfg := util.TryParseJsonc(`{"plugin":["other@1.0.0"]}`)
-	applyContextModePin(cfg, "context-mode@1.0.162")
+	setContextModePlugin(cfg)
 	got := pluginStrings(t, cfg)
-	if len(got) != 2 || got[1] != "context-mode@1.0.162" {
-		t.Fatalf("expected pin appended after other, got %v", got)
+	if len(got) != 2 || got[1] != "context-mode" {
+		t.Fatalf("expected bare context-mode appended after other, got %v", got)
 	}
 }
 
-func TestApplyContextModePin_EmptyConfig(t *testing.T) {
+func TestSetContextModePlugin_EmptyConfig(t *testing.T) {
 	cfg := util.NewOrderedMap()
-	applyContextModePin(cfg, "context-mode@1.0.162")
+	setContextModePlugin(cfg)
 	got := pluginStrings(t, cfg)
-	if len(got) != 1 || got[0] != "context-mode@1.0.162" {
-		t.Fatalf("expected [context-mode@1.0.162] on empty config, got %v", got)
+	if len(got) != 1 || got[0] != "context-mode" {
+		t.Fatalf("expected [context-mode] on empty config, got %v", got)
 	}
 }
 
-func TestApplyContextModePin_RemovesMcpKeyEntirelyWhenOnlyEntry(t *testing.T) {
+func TestSetContextModePlugin_RemovesMcpKeyEntirelyWhenOnlyEntry(t *testing.T) {
 	cfg := util.TryParseJsonc(`{"plugin":[],"mcp":{"context-mode":{"type":"local"}}}`)
-	applyContextModePin(cfg, "context-mode@1.0.162")
+	setContextModePlugin(cfg)
 	if _, ok := cfg.Get("mcp"); ok {
 		t.Fatalf("mcp key should be removed entirely when context-mode was its only entry")
 	}
 }
 
-func TestApplyContextModePin_Idempotent(t *testing.T) {
-	cfg := util.TryParseJsonc(`{"plugin":["a@1","context-mode@1.0.157","b@2"]}`)
-	applyContextModePin(cfg, "context-mode@1.0.162")
+func TestSetContextModePlugin_Idempotent(t *testing.T) {
+	cfg := util.TryParseJsonc(`{"plugin":["a@1","context-mode","b@2"]}`)
+	setContextModePlugin(cfg)
 	first := pluginStrings(t, cfg)
-	applyContextModePin(cfg, "context-mode@1.0.162")
+	setContextModePlugin(cfg)
 	second := pluginStrings(t, cfg)
 
 	if countContextMode(second) != 1 {
@@ -115,7 +113,7 @@ func TestApplyContextModePin_Idempotent(t *testing.T) {
 	if len(first) != len(second) {
 		t.Fatalf("non-idempotent: %v then %v", first, second)
 	}
-	if second[0] != "a@1" || second[len(second)-1] != "context-mode@1.0.162" {
+	if second[0] != "a@1" || second[len(second)-1] != "context-mode" {
 		t.Fatalf("unexpected ordering after idempotent re-apply: %v", second)
 	}
 }
@@ -130,7 +128,7 @@ func TestCleanAllContextModeCache(t *testing.T) {
 	dirs := []string{
 		"context-mode@latest",   // empty culprit
 		"context-mode@1.0.146",  // old populated
-		"context-mode@1.0.162",  // current populated
+		"context-mode@1.0.162",  // dangling/unpublished pin
 		"context-mode",          // bare
 		"oh-my-opencode@1.1.1",  // unrelated — must survive
 		"context-mode-helper@1", // different package, must survive (no @ boundary)
@@ -154,19 +152,5 @@ func TestCleanAllContextModeCache(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(cache, d)); err != nil {
 			t.Fatalf("%s must survive (only context-mode itself is cleaned)", d)
 		}
-	}
-}
-
-func TestCtxResolvePin_TestModeDeterministic(t *testing.T) {
-	t.Setenv("TOKLESS_TEST", "1")
-
-	t.Setenv("TOKLESS_TEST_CTX_VERSION", "1.0.162")
-	if got := ctxResolvePin(); got != "context-mode@1.0.162" {
-		t.Fatalf("with version env: got %q want context-mode@1.0.162", got)
-	}
-
-	t.Setenv("TOKLESS_TEST_CTX_VERSION", "")
-	if got := ctxResolvePin(); got != "context-mode" {
-		t.Fatalf("without version env: got %q want bare context-mode (no network in test)", got)
 	}
 }

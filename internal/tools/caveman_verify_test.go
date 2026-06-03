@@ -63,8 +63,13 @@ func TestRegisterCavemanOpencodeIdempotent(t *testing.T) {
 	if !strings.Contains(string(second), "keep@1.0.0") {
 		t.Fatal("existing plugin entry was lost")
 	}
-	if !strings.Contains(string(second), "caveman-shrink") {
-		t.Fatal("caveman-shrink mcp not registered")
+	if !strings.Contains(string(second), "caveman/plugin.js") {
+		t.Fatal("caveman plugin entry not registered")
+	}
+	// caveman-shrink is a proxy needing a manual upstream; registering it bare
+	// causes "-32000 Connection closed", so we must NOT write it.
+	if strings.Contains(string(second), "caveman-shrink") {
+		t.Fatal("caveman-shrink must NOT be registered (breaks with -32000)")
 	}
 }
 

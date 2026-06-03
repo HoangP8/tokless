@@ -58,12 +58,13 @@ func RunDoctor(offline bool) int {
 		} else {
 			util.L.Raw("")
 		}
+		listToolVersions(tools, v)
+		util.L.Raw("")
 		if outdated > 0 {
 			util.L.Warn(plural(outdated) + " available — run " + util.C.Cyan("tokless update"))
 		} else {
 			util.L.Ok("All up to date.")
 		}
-		listToolVersions(tools, v)
 	}
 
 	broken := 0

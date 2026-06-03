@@ -84,7 +84,7 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	op := util.OpenCodePathsResolved()
 	_ = util.EnsureDir(op.Dir)
 	cfg := loadOrdered(op.Config)
-	applyContextModePin(cfg, ctxResolvePin())
+	setContextModePlugin(cfg)
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
 	if isTest() {
 		return true, nil
@@ -95,7 +95,7 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-func applyContextModePin(cfg *util.OrderedMap, pin string) {
+func setContextModePlugin(cfg *util.OrderedMap) {
 	plugins := getArr(cfg, "plugin")
 	kept := make([]any, 0, len(plugins))
 	for _, p := range plugins {
@@ -104,7 +104,7 @@ func applyContextModePin(cfg *util.OrderedMap, pin string) {
 		}
 		kept = append(kept, p)
 	}
-	kept = append(kept, pin)
+	kept = append(kept, "context-mode")
 	cfg.Set("plugin", kept)
 	if mv, ok := cfg.Get("mcp"); ok {
 		if mm, ok := mv.(*util.OrderedMap); ok {
@@ -118,24 +118,7 @@ func applyContextModePin(cfg *util.OrderedMap, pin string) {
 	}
 }
 
-// ctxResolvePin pins the installed version; it only moves on `tokless update`.
-func ctxResolvePin() string {
-	if isTest() {
-		if v := os.Getenv("TOKLESS_TEST_CTX_VERSION"); v != "" {
-			return "context-mode@" + v
-		}
-		return "context-mode"
-	}
-	if v := util.NpmInstalledVersionOf("context-mode"); v != "" {
-		return "context-mode@" + v
-	}
-	if v := util.NpmDistTagLatest("context-mode"); v != "" {
-		return "context-mode@" + v
-	}
-	return "context-mode"
-}
-
-// cleanAllContextModeCache clears stale cached versions so the pin fetches fresh.
+// cleanAllContextModeCache clears stale/dangling cached dirs so bare @latest refetches.
 func cleanAllContextModeCache() {
 	cacheRoot := filepath.Join(util.Home(), ".cache", "opencode", "packages")
 	entries, err := os.ReadDir(cacheRoot)

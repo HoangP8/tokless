@@ -59,25 +59,11 @@ func registerCavemanOpencode() {
 	}
 	cfg.Set("plugin", plugins)
 
-	mcp, _ := cfg.Get("mcp")
-	mm, ok := mcp.(*util.OrderedMap)
-	if !ok {
-		mm = util.NewOrderedMap()
-	}
-	if _, exists := mm.Get("caveman-shrink"); !exists {
-		entry := util.NewOrderedMap()
-		entry.Set("type", "local")
-		entry.Set("command", []any{"npx", "-y", "caveman-shrink"})
-		entry.Set("enabled", true)
-		mm.Set("caveman-shrink", entry)
-	}
-	cfg.Set("mcp", mm)
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
 	writeCavemanAgentsMd(op.Dir)
 }
 
-// unregisterCavemanOpencode removes caveman's plugin entry, mcp.caveman-shrink,
-// and AGENTS.md ruleset — the inverse of registerCavemanOpencode.
+// unregisterCavemanOpencode removes caveman's plugin entry.
 func unregisterCavemanOpencode() {
 	op := util.OpenCodePathsResolved()
 	if raw, ok := util.ReadFileSafe(op.Config); ok {
@@ -226,13 +212,6 @@ func opencodePluginInstalled() bool {
 				if s, ok := p.(string); ok && strings.Contains(strings.ToLower(s), "caveman") {
 					return true
 				}
-			}
-		}
-	}
-	if mv, ok := cfg.Get("mcp"); ok {
-		if mm, ok := mv.(*util.OrderedMap); ok {
-			if _, has := mm.Get("caveman-shrink"); has {
-				return true
 			}
 		}
 	}

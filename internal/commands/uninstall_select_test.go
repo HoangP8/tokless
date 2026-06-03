@@ -72,11 +72,10 @@ func opencodePlugins(t *testing.T, path string) []string {
 	return out
 }
 
-// The reliability guarantee: after `tokless update` bumps context-mode, the
-// opencode.json pin must move from the old version to the freshly installed one.
-func TestResyncWiring_RepinsContextModeToNewVersion(t *testing.T) {
+// The reliability guarantee: after `tokless update`, resync re-wires context-mode
+// on a wired agent, normalizing any stale pin back to the bare @latest entry.
+func TestResyncWiring_NormalizesContextModeToBare(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
-	t.Setenv("TOKLESS_TEST_CTX_VERSION", "1.0.162")
 	home := t.TempDir()
 	ocDir := filepath.Join(home, ".config", "opencode")
 	if err := os.MkdirAll(ocDir, 0o755); err != nil {
@@ -87,22 +86,21 @@ func TestResyncWiring_RepinsContextModeToNewVersion(t *testing.T) {
 	defer util.SetHomeOverride("")
 
 	ocJSON := filepath.Join(ocDir, "opencode.json")
-	if err := os.WriteFile(ocJSON, []byte(`{"plugin":["context-mode@1.0.157"]}`), 0o644); err != nil {
+	if err := os.WriteFile(ocJSON, []byte(`{"plugin":["context-mode@1.0.162"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	resyncWiring([]*core.ToolManifest{ctxToolForTest(t)})
 
 	got := opencodePlugins(t, ocJSON)
-	if len(got) != 1 || got[0] != "context-mode@1.0.162" {
-		t.Fatalf("resync must re-pin to new version: got %v want [context-mode@1.0.162]", got)
+	if len(got) != 1 || got[0] != "context-mode" {
+		t.Fatalf("resync must normalize to bare: got %v want [context-mode]", got)
 	}
 }
 
 // resync must NOT newly wire context-mode into an agent that never had it.
 func TestResyncWiring_SkipsUnwiredAgent(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
-	t.Setenv("TOKLESS_TEST_CTX_VERSION", "1.0.162")
 	home := t.TempDir()
 	ocDir := filepath.Join(home, ".config", "opencode")
 	if err := os.MkdirAll(ocDir, 0o755); err != nil {
