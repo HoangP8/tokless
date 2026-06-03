@@ -157,6 +157,22 @@ func GatherVersions() map[string]VersionInfo {
 	return out
 }
 
+// NpmDistTagLatest returns the npm "latest" dist-tag version (live), "" if offline.
+func NpmDistTagLatest(pkg string) string {
+	if v := npmLatest(pkg); v != nil {
+		return *v
+	}
+	return ""
+}
+
+// NpmInstalledVersionOf returns the globally installed npm version, "" if absent.
+func NpmInstalledVersionOf(pkg string) string {
+	if v := npmInstalledVersion(pkg); v != nil {
+		return *v
+	}
+	return ""
+}
+
 // LatestVersionFor returns one tool's latest available version (cached).
 func LatestVersionFor(id string) *string {
 	return cachedLatest()[id]

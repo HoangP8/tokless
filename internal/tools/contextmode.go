@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -83,18 +84,28 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	op := util.OpenCodePathsResolved()
 	_ = util.EnsureDir(op.Dir)
 	cfg := loadOrdered(op.Config)
+	applyContextModePin(cfg, ctxResolvePin())
+	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	if isTest() {
+		return true, nil
+	}
+	copyOpenCodeAgentsMd(op.Dir)
+	cleanAllContextModeCache()
+	runPostinstallInOpenCodeCache()
+	return true, nil
+}
+
+func applyContextModePin(cfg *util.OrderedMap, pin string) {
 	plugins := getArr(cfg, "plugin")
-	found := false
+	kept := make([]any, 0, len(plugins))
 	for _, p := range plugins {
 		if s, ok := p.(string); ok && pluginIsContextMode(s) {
-			found = true
-			break
+			continue
 		}
+		kept = append(kept, p)
 	}
-	if !found {
-		plugins = append(plugins, "context-mode")
-	}
-	cfg.Set("plugin", plugins)
+	kept = append(kept, pin)
+	cfg.Set("plugin", kept)
 	if mv, ok := cfg.Get("mcp"); ok {
 		if mm, ok := mv.(*util.OrderedMap); ok {
 			if _, has := mm.Get("context-mode"); has {
@@ -105,61 +116,43 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 			}
 		}
 	}
-	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
-	if isTest() {
-		return true, nil
-	}
-	copyOpenCodeAgentsMd(op.Dir)
-	runPostinstallInOpenCodeCache()
-	pruneOldContextModeCache()
-	return true, nil
 }
 
-// pruneOldContextModeCache keeps only the newest populated context-mode version
-// in OpenCode's plugin cache and removes older versions + any empty dir.
-func pruneOldContextModeCache() {
+// ctxResolvePin pins the installed version; it only moves on `tokless update`.
+func ctxResolvePin() string {
+	if isTest() {
+		if v := os.Getenv("TOKLESS_TEST_CTX_VERSION"); v != "" {
+			return "context-mode@" + v
+		}
+		return "context-mode"
+	}
+	if v := util.NpmInstalledVersionOf("context-mode"); v != "" {
+		return "context-mode@" + v
+	}
+	if v := util.NpmDistTagLatest("context-mode"); v != "" {
+		return "context-mode@" + v
+	}
+	return "context-mode"
+}
+
+// cleanAllContextModeCache clears stale cached versions so the pin fetches fresh.
+func cleanAllContextModeCache() {
 	cacheRoot := filepath.Join(util.Home(), ".cache", "opencode", "packages")
 	entries, err := os.ReadDir(cacheRoot)
 	if err != nil {
 		return
 	}
-	type ver struct {
-		dir string
-		v   string
-	}
-	var populated []ver
-	var empties []string
+	n := 0
 	for _, e := range entries {
 		d := e.Name()
-		if d != "context-mode" && !strings.HasPrefix(d, "context-mode@") {
-			continue
-		}
-		full := filepath.Join(cacheRoot, d)
-		if util.Exists(filepath.Join(full, "node_modules", "context-mode", "package.json")) {
-			v := strings.TrimPrefix(d, "context-mode@")
-			populated = append(populated, ver{full, v})
-		} else {
-			empties = append(empties, full)
+		if d == "context-mode" || strings.HasPrefix(d, "context-mode@") {
+			_ = os.RemoveAll(filepath.Join(cacheRoot, d))
+			n++
 		}
 	}
-	for _, d := range empties {
-		_ = os.RemoveAll(d)
+	if n > 0 {
+		util.L.Sub(util.C.Dim("cleaned " + strconv.Itoa(n) + " old context-mode cache dir(s)"))
 	}
-	if len(populated) <= 1 {
-		return
-	}
-	best := 0
-	for i := 1; i < len(populated); i++ {
-		if util.SemverGte(populated[i].v, populated[best].v) {
-			best = i
-		}
-	}
-	for i, p := range populated {
-		if i != best {
-			_ = os.RemoveAll(p.dir)
-		}
-	}
-	util.L.Sub(util.C.Dim("pruned old context-mode cache → kept @" + populated[best].v))
 }
 
 func runPostinstallInOpenCodeCache() {
