@@ -54,6 +54,17 @@ func registerCavemanOpencode() {
 			break
 		}
 	}
+	if mv, ok := cfg.Get("mcp"); ok {
+		if mm, ok := mv.(*util.OrderedMap); ok {
+			if _, has := mm.Get("caveman-shrink"); has {
+				mm.Delete("caveman-shrink")
+				if mm.Len() == 0 {
+					cfg.Delete("mcp")
+				}
+			}
+		}
+	}
+
 	if !has {
 		plugins = append(plugins, cavemanOpencodePluginRel)
 	}
