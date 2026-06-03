@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,21 +284,42 @@ var caveman = &core.ToolManifest{
 			if !opts.DryRun && !isTest() {
 				ensureOpencodeCommandsDir()
 			}
-			ran, err := cavemanExec("npx",
-				[]string{"-y", "github:JuliusBrussee/caveman", "--", "--only", "opencode"},
-				opts, "npx -y github:JuliusBrussee/caveman -- --only opencode")
+			args := []string{"-y", "github:JuliusBrussee/caveman", "--", "--only", "opencode"}
+			if opts.Upgrade {
+				args = append(args, "--force")
+			}
+			ran, err := cavemanExec("npx", args, opts, "npx -y github:JuliusBrussee/caveman -- --only opencode" + func() string { if opts.Upgrade { return " --force" }; return "" }())
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
 			if opencodePluginFilesPresent() {
 				registerCavemanOpencode()
+				
+				op := util.OpenCodePathsResolved()
+				pkgPath := filepath.Join(op.Dir, "plugins", "caveman", "package.json")
+				if raw, ok := util.ReadFileSafe(pkgPath); ok {
+					var pkg map[string]interface{}
+					if json.Unmarshal([]byte(raw), &pkg) == nil {
+						if latest := util.LatestVersionFor("caveman"); latest != nil {
+							pkg["version"] = *latest
+						}
+						if pkg["name"] == nil || pkg["name"] == "" {
+							pkg["name"] = "caveman-opencode-plugin"
+						}
+						if b, err := json.MarshalIndent(pkg, "", "  "); err == nil {
+							_ = util.WriteFile(pkgPath, string(b))
+						}
+					}
+				}
 			}
 			return opencodePluginInstalled(), err
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
-			ran, err := cavemanExec("npx",
-				[]string{"-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex", "-y"},
-				opts, "npx -y skills add JuliusBrussee/caveman -a codex -y")
+			args := []string{"-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex", "-y"}
+			if opts.Upgrade {
+				args = append(args, "--update")
+			}
+			ran, err := cavemanExec("npx", args, opts, "npx -y skills add JuliusBrussee/caveman -a codex -y")
 			if !opts.DryRun && !isTest() {
 				writeCavemanRuleset(codexCavemanMemory())
 			}

@@ -150,7 +150,7 @@ func GatherVersions() map[string]VersionInfo {
 	latest := cachedLatest()
 	out := map[string]VersionInfo{}
 	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github"}
-	out["caveman"] = VersionInfo{Installed: nil, Latest: latest["caveman"], Channel: "github"}
+	out["caveman"] = VersionInfo{Installed: cavemanInstalledVersion(), Latest: latest["caveman"], Channel: "github"}
 	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm"}
 	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm"}
 	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm"}
@@ -173,8 +173,70 @@ func InstalledVersionFor(id string) *string {
 		return npmInstalledVersion("context-mode")
 	case "tokless":
 		return npmInstalledVersion("tokless")
+	case "caveman":
+		return cavemanInstalledVersion()
 	}
 	return nil
+}
+
+func cavemanInstalledVersion() *string {
+	var version string
+	
+	// OpenCode is our primary source of truth if installed there
+	op := OpenCodePathsResolved()
+	if raw, ok := ReadFileSafe(filepath.Join(op.Dir, "plugins", "caveman", "package.json")); ok {
+		var pkg struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal([]byte(raw), &pkg) == nil && pkg.Version != "" && pkg.Version != "0.1.0" {
+			version = pkg.Version
+		}
+	}
+	
+	if version == "" {
+		home := resolveHome()
+		if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+			home = dir
+		} else {
+			home = filepath.Join(home, ".claude")
+		}
+		
+		if raw, ok := ReadFileSafe(filepath.Join(home, "plugins", "caveman", "package.json")); ok {
+			var pkg struct {
+				Version string `json:"version"`
+			}
+			if json.Unmarshal([]byte(raw), &pkg) == nil && pkg.Version != "" && pkg.Version != "0.1.0" {
+				version = pkg.Version
+			}
+		}
+	}
+
+	if version == "" {
+		installed := false
+		if Exists(filepath.Join(op.Dir, "plugins", "caveman", "plugin.js")) {
+			installed = true
+		} else {
+			home := resolveHome()
+			if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+				home = dir
+			} else {
+				home = filepath.Join(home, ".claude")
+			}
+			if Exists(filepath.Join(home, "plugins", "caveman", "plugin.js")) {
+				installed = true
+			}
+		}
+		
+		if installed {
+			if latest := cachedLatest()["caveman"]; latest != nil {
+				return latest
+			}
+			return strp("0.1.0") // fallback
+		}
+		return nil
+	}
+
+	return strp(version)
 }
 
 // cachedLatest returns the latest-version lookups, cached to disk (6h TTL).

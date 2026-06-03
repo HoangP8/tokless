@@ -103,11 +103,11 @@ func listToolVersions(tools []*core.ToolManifest, v map[string]util.VersionInfo)
 		info := v[tool.ID]
 		switch {
 		case tool.NotTrackable:
-			ver := "skill"
-			if info.Latest != nil {
-				ver = "v" + *info.Latest
+			installed := util.C.Gray("not on PATH")
+			if info.Installed != nil {
+				installed = "v" + *info.Installed
 			}
-			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+ver))
+			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+installed))
 		case info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
 			util.L.Raw("  " + util.C.Yellow("↑") + " " + util.C.Gray(padEnd(tool.ID, 14)+padEnd("v"+*info.Installed, 10)+"→ ") + util.C.Green("v"+*info.Latest))
 		case info.Installed != nil:

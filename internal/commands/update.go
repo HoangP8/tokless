@@ -31,25 +31,20 @@ func RunUpdate(opts InitOptions) int {
 
 	var changed []string
 	for _, t := range core.ListTools() {
-		if t.NotTrackable {
-			ver := "skill"
-			if info, ok := versions[t.ID]; ok && info.Latest != nil {
-				ver = "v" + *info.Latest
-			}
-			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(t.ID, 14)+" "+ver))
-			continue
-		}
 		info, has := versions[t.ID]
 		installed := util.C.Gray("not on PATH")
 		if has && info.Installed != nil {
 			installed = "v" + *info.Installed
 		}
+		
 		latest := util.C.Gray("?")
 		if has && info.Latest != nil {
 			latest = "v" + *info.Latest
 		}
+
 		mark := util.C.Gray(util.Sym.Bullet)
 		suffix := util.C.Gray(" (pinned)")
+
 		switch {
 		case has && info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
 			mark = util.C.Yellow("↑")
@@ -63,6 +58,7 @@ func RunUpdate(opts InitOptions) int {
 			mark = util.C.Green(util.Sym.Check)
 			suffix = util.C.Gray(" (up to date)")
 		}
+
 		util.L.Raw("  " + mark + " " + padEnd(t.ID, 14) + " " + padEnd(installed, 10) + " → " + padEnd(latest, 10) + suffix)
 	}
 	util.L.Raw("")
