@@ -33,13 +33,15 @@ Each tool targets a different source of token waste, so they complement each oth
 
 ## Install
 
+### macOS / Linux
+
 ```bash
-# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash
 ```
 
+### Windows (PowerShell)
+
 ```powershell
-# Windows (PowerShell)
 irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
 ```
 
