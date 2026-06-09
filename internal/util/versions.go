@@ -25,13 +25,21 @@ type cacheShape struct {
 }
 
 func cachePath() string {
-	return filepath.Join(resolveHome(), ".cache", "tokless", "versions.json")
+	home := resolveHome()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "tokless", "versions.json")
 }
 
 const cacheTTL = 6 * time.Hour
 
 func loadCache() *cacheShape {
-	b, err := os.ReadFile(cachePath())
+	p := cachePath()
+	if p == "" {
+		return nil
+	}
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return nil
 	}
@@ -46,14 +54,24 @@ func loadCache() *cacheShape {
 }
 
 func saveCache(m map[string]VersionInfo) {
-	_ = os.MkdirAll(filepath.Dir(cachePath()), 0o755)
+	p := cachePath()
+	if p == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	b, _ := json.MarshalIndent(cacheShape{Ts: time.Now().UnixMilli(), Map: m}, "", "  ")
-	_ = os.WriteFile(cachePath(), b, 0o644)
+	_ = os.WriteFile(p, b, 0o644)
 }
 
 func fetchJSON(u string, out any) bool {
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(u)
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("User-Agent", "tokless")
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
@@ -179,64 +197,102 @@ func InstalledVersionFor(id string) *string {
 	return nil
 }
 
-func cavemanInstalledVersion() *string {
-	var version string
-	
-	// OpenCode is our primary source of truth if installed there
-	op := OpenCodePathsResolved()
-	if raw, ok := ReadFileSafe(filepath.Join(op.Dir, "plugins", "caveman", "package.json")); ok {
+const cavemanVersionMarker = ".tokless-version"
+
+// cavemanVersionDirs lists per-agent caveman install dirs, priority order.
+func cavemanVersionDirs() []string {
+	home := resolveHome()
+	claude := filepath.Join(home, ".claude")
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		claude = d
+	}
+	return []string{
+		filepath.Join(OpenCodePathsResolved().Dir, "plugins", "caveman"),
+		filepath.Join(claude, "plugins", "caveman"),
+		filepath.Join(home, ".agents", "skills", "caveman"),
+	}
+}
+
+// cavemanInstalled reports whether a caveman install exists in dir.
+func cavemanInstalled(dir string) bool {
+	return Exists(filepath.Join(dir, "plugin.js")) ||
+		Exists(filepath.Join(dir, "SKILL.md")) ||
+		Exists(filepath.Join(dir, "package.json"))
+}
+
+func readCavemanMarker(dir string) string {
+	if raw, ok := ReadFileSafe(filepath.Join(dir, cavemanVersionMarker)); ok {
+		return strings.TrimSpace(raw)
+	}
+	return ""
+}
+
+func readCavemanPkgVersion(dir string) string {
+	if raw, ok := ReadFileSafe(filepath.Join(dir, "package.json")); ok {
 		var pkg struct {
 			Version string `json:"version"`
 		}
 		if json.Unmarshal([]byte(raw), &pkg) == nil && pkg.Version != "" && pkg.Version != "0.1.0" {
-			version = pkg.Version
+			return pkg.Version
 		}
 	}
-	
+	return ""
+}
+
+// StampCavemanVersion records version into every present caveman dir.
+func StampCavemanVersion(version string) {
 	if version == "" {
-		home := resolveHome()
-		if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-			home = dir
-		} else {
-			home = filepath.Join(home, ".claude")
+		return
+	}
+	for _, dir := range cavemanVersionDirs() {
+		if cavemanInstalled(dir) {
+			_ = os.WriteFile(filepath.Join(dir, cavemanVersionMarker), []byte(version+"\n"), 0o644)
 		}
-		
-		if raw, ok := ReadFileSafe(filepath.Join(home, "plugins", "caveman", "package.json")); ok {
-			var pkg struct {
-				Version string `json:"version"`
-			}
-			if json.Unmarshal([]byte(raw), &pkg) == nil && pkg.Version != "" && pkg.Version != "0.1.0" {
-				version = pkg.Version
-			}
+	}
+}
+
+func cavemanInstalledVersion() *string {
+	presentDir := ""
+	for _, dir := range cavemanVersionDirs() {
+		if v := readCavemanMarker(dir); v != "" {
+			return strp(v)
+		}
+		if v := readCavemanPkgVersion(dir); v != "" {
+			return strp(v)
+		}
+		if presentDir == "" && cavemanInstalled(dir) {
+			presentDir = dir
 		}
 	}
 
-	if version == "" {
-		installed := false
-		if Exists(filepath.Join(op.Dir, "plugins", "caveman", "plugin.js")) {
-			installed = true
-		} else {
-			home := resolveHome()
-			if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-				home = dir
-			} else {
-				home = filepath.Join(home, ".claude")
-			}
-			if Exists(filepath.Join(home, "plugins", "caveman", "plugin.js")) {
-				installed = true
-			}
+	if presentDir != "" {
+		if latest := cachedLatest()["caveman"]; latest != nil {
+			_ = os.WriteFile(filepath.Join(presentDir, cavemanVersionMarker), []byte(*latest+"\n"), 0o644)
+			return latest
 		}
-		
-		if installed {
-			if latest := cachedLatest()["caveman"]; latest != nil {
-				return latest
-			}
-			return strp("0.1.0") // fallback
-		}
-		return nil
 	}
+	return nil
+}
 
-	return strp(version)
+var toolIDs = []string{"rtk", "caveman", "codegraph", "context-mode", "tokless"}
+
+var latestFetcher = fetchLatestFor
+
+// fetchLatestFor resolves one tool's latest upstream version (nil on failure).
+func fetchLatestFor(id string) *string {
+	switch id {
+	case "rtk":
+		return githubLatestRelease("rtk-ai/rtk")
+	case "caveman":
+		return githubLatestRelease("JuliusBrussee/caveman")
+	case "codegraph":
+		return npmLatest("@colbymchenry/codegraph")
+	case "context-mode":
+		return npmLatest("context-mode")
+	case "tokless":
+		return npmLatest("tokless")
+	}
+	return nil
 }
 
 // cachedLatest returns the latest-version lookups, cached to disk (6h TTL).
@@ -248,26 +304,39 @@ func cachedLatest() map[string]*string {
 		}
 		return m
 	}
+
+	result := map[string]*string{}
 	if c := loadCache(); c != nil {
-		m := map[string]*string{}
 		for k, v := range c.Map {
-			m[k] = v.Latest
+			if v.Latest != nil {
+				result[k] = v.Latest
+			}
 		}
-		return m
 	}
-	m := map[string]*string{
-		"rtk":          githubLatestRelease("rtk-ai/rtk"),
-		"caveman":      githubLatestRelease("JuliusBrussee/caveman"),
-		"codegraph":    npmLatest("@colbymchenry/codegraph"),
-		"context-mode": npmLatest("context-mode"),
-		"tokless":      npmLatest("tokless"),
+
+	// Fetch any tool still missing a known-good latest version.
+	fetched := false
+	for _, id := range toolIDs {
+		if result[id] != nil {
+			continue
+		}
+		if v := latestFetcher(id); v != nil {
+			result[id] = v
+			fetched = true
+		}
 	}
-	store := map[string]VersionInfo{}
-	for k, v := range m {
-		store[k] = VersionInfo{Latest: v}
+
+	// Persist only on change (never store nils).
+	if fetched {
+		store := map[string]VersionInfo{}
+		for k, v := range result {
+			if v != nil {
+				store[k] = VersionInfo{Latest: v}
+			}
+		}
+		saveCache(store)
 	}
-	saveCache(store)
-	return m
+	return result
 }
 
 func parseSemverParts(s string) []int {
