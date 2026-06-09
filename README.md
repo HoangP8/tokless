@@ -4,6 +4,8 @@
 
 **Save tokens on AI coding agents — no performance loss.**
 
+One tool, no config — works the moment it lands.
+
 ![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -12,7 +14,7 @@
 
 ## Introduction
 
-A unified CLI to install and update every token-saving plugin for your AI coding agents — fast, efficient, and without hurting how the agent performs.
+A unified CLI to install and update every token-saving plugin — RTK, Caveman, CodeGraph, and Context-Mode — for your AI coding agents, fast, efficient, and without hurting how the agent performs.
 
 **Supported agents**
 
@@ -32,6 +34,12 @@ A unified CLI to install and update every token-saving plugin for your AI coding
 Each tool targets a different source of token waste, so they complement each other with no overlap or conflict.
 
 ## Install
+
+<div align="center">
+
+<img src="assets/install.svg" alt="tokless install: run one curl command, then pick which agents to wire" width="100%" />
+
+</div>
 
 ### macOS / Linux
 
