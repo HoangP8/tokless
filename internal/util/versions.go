@@ -202,13 +202,22 @@ const cavemanVersionMarker = ".tokless-version"
 // cavemanVersionDirs lists per-agent caveman install dirs, priority order.
 func cavemanVersionDirs() []string {
 	home := resolveHome()
+
 	claude := filepath.Join(home, ".claude")
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		claude = d
 	}
+
+	codex := filepath.Join(home, ".codex")
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		codex = d
+	}
+
 	return []string{
 		filepath.Join(OpenCodePathsResolved().Dir, "plugins", "caveman"),
+		filepath.Join(claude, "plugins", "marketplaces", "caveman"),
 		filepath.Join(claude, "plugins", "caveman"),
+		filepath.Join(codex, "skills", "caveman"),
 		filepath.Join(home, ".agents", "skills", "caveman"),
 	}
 }
