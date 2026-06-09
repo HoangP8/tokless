@@ -64,7 +64,7 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		util.L.Err("claude CLI not on PATH — install Claude Code first (https://claude.com/claude-code).")
 		return false, nil
 	}
-	args := append([]string{"mcp", "add", "context-mode", "--", spawn.Command}, spawn.Args...)
+	args := append([]string{"mcp", "add", "--scope", "user", "context-mode", "--", spawn.Command}, spawn.Args...)
 	r := util.Run("claude", args, util.RunOptions{Capture: true})
 	if r.Code != 0 {
 		util.L.Err("claude mcp add failed: " + clip(r.Stderr))
