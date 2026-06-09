@@ -23,7 +23,12 @@ type registryDoc struct {
 // resolveFromRegistry resolves the version and tarball URL for a package spec.
 func resolveFromRegistry(pkg, spec string) (string, string, bool) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(registryURL + url.QueryEscape(pkg))
+	req, err := http.NewRequest(http.MethodGet, registryURL+url.QueryEscape(pkg), nil)
+	if err != nil {
+		return "", "", false
+	}
+	req.Header.Set("User-Agent", "tokless")
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", false
 	}
@@ -50,48 +55,72 @@ func resolveFromRegistry(pkg, spec string) (string, string, bool) {
 	return version, vInfo.Dist.Tarball, true
 }
 
+var npmResolve = resolveFromRegistry
+var npmRun = func(args []string) ExecResult {
+	return Run("npm", args, RunOptions{Capture: true})
+}
+var npmReadInstalled = func(pkg string) *string {
+	return npmInstalledVersion(pkg)
+}
+
+// buildNpmAttempts orders install attempts strongest-first.
+func buildNpmAttempts(pkg, resolvedVersion, tarball, cacheDir string) [][]string {
+	token := pkg + "@latest"
+	if resolvedVersion != "" {
+		token = pkg + "@" + resolvedVersion
+	}
+	online := []string{"--prefer-online"}
+	if cacheDir != "" {
+		online = append(online, "--cache", cacheDir)
+	}
+	attempts := [][]string{
+		append([]string{"install", "-g", token}, online...),
+		append([]string{"install", "-g", token, "--registry", registryURL}, online...),
+	}
+	if tarball != "" {
+		attempts = append(attempts, append([]string{"install", "-g", tarball}, online...))
+	}
+	attempts = append(attempts, []string{"install", "-g", token})
+	return attempts
+}
+
+func installSucceeded(target string, actual *string) (string, bool) {
+	if actual == nil {
+		return target, true
+	}
+	if target == "" || *actual == target {
+		return *actual, true
+	}
+	return "", false
+}
+
 // NpmGlobalInstall installs an npm package globally.
 func NpmGlobalInstall(pkg, spec string) (string, bool) {
 	if spec == "" {
 		spec = "latest"
 	}
-	var target string
-	var tarball string
-	resolvedVersion, tb, ok := resolveFromRegistry(pkg, spec)
-	if ok {
-		target = resolvedVersion
-		tarball = tb
-	} else {
-		target = spec
+
+	resolvedVersion, tarball, ok := npmResolve(pkg, spec)
+	target := resolvedVersion
+	if !ok {
+		if spec != "latest" {
+			target = spec
+		}
 	}
 
-	atSpec := pkg + "@" + spec
 	cacheDir := freshCacheDir()
-
-	attempts := [][]string{
-		{"install", "-g", atSpec},
-		{"install", "-g", atSpec, "--prefer-online"},
-		{"install", "-g", atSpec, "--registry", registryURL, "--cache", cacheDir, "--prefer-online"},
-	}
-	if ok && tarball != "" {
-		attempts = append(attempts, []string{"install", "-g", tarball})
+	if cacheDir != "" {
+		defer cleanupDir(cacheDir)
 	}
 
-	for _, args := range attempts {
-		r := Run("npm", args, RunOptions{Capture: true})
-		// Clean up the cache directory if this attempt used it.
-		var hasCache bool
-		for _, arg := range args {
-			if arg == cacheDir {
-				hasCache = true
-				break
-			}
+	for _, args := range buildNpmAttempts(pkg, resolvedVersion, tarball, cacheDir) {
+		r := npmRun(args)
+		if r.Code != 0 {
+			continue
 		}
-		if hasCache {
-			cleanupDir(cacheDir)
-		}
-		if r.Code == 0 {
-			return target, true
+		actual := npmReadInstalled(pkg)
+		if v, good := installSucceeded(target, actual); good {
+			return v, true
 		}
 	}
 	return "", false
