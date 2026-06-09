@@ -36,14 +36,14 @@ func RunUpdate(opts InitOptions) int {
 		if has && info.Installed != nil {
 			installed = "v" + *info.Installed
 		}
-		
+
 		latest := util.C.Gray("?")
 		if has && info.Latest != nil {
 			latest = "v" + *info.Latest
 		}
 
 		mark := util.C.Gray(util.Sym.Bullet)
-		suffix := util.C.Gray(" (pinned)")
+		suffix := util.C.Gray(" (latest unknown)")
 
 		switch {
 		case has && info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
