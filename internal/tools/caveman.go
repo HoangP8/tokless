@@ -30,6 +30,12 @@ func ensureOpencodeCommandsDir() {
 	_ = os.MkdirAll(filepath.Join(util.OpenCodePathsResolved().Dir, "commands"), 0o755)
 }
 
+func stampCavemanVersion() {
+	if v := util.LatestVersionFor("caveman"); v != nil {
+		util.StampCavemanVersion(*v)
+	}
+}
+
 const cavemanOpencodePluginRel = "./plugins/caveman/plugin.js"
 
 func registerCavemanOpencode() {
@@ -277,6 +283,7 @@ var caveman = &core.ToolManifest{
 				opts, "claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman")
 			if !opts.DryRun && !isTest() {
 				writeCavemanRuleset(claudeCavemanMemory())
+				stampCavemanVersion()
 			}
 			return ran, err
 		},
@@ -288,13 +295,18 @@ var caveman = &core.ToolManifest{
 			if opts.Upgrade {
 				args = append(args, "--force")
 			}
-			ran, err := cavemanExec("npx", args, opts, "npx -y github:JuliusBrussee/caveman -- --only opencode" + func() string { if opts.Upgrade { return " --force" }; return "" }())
+			ran, err := cavemanExec("npx", args, opts, "npx -y github:JuliusBrussee/caveman -- --only opencode"+func() string {
+				if opts.Upgrade {
+					return " --force"
+				}
+				return ""
+			}())
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
 			if opencodePluginFilesPresent() {
 				registerCavemanOpencode()
-				
+
 				op := util.OpenCodePathsResolved()
 				pkgPath := filepath.Join(op.Dir, "plugins", "caveman", "package.json")
 				if raw, ok := util.ReadFileSafe(pkgPath); ok {
@@ -311,6 +323,7 @@ var caveman = &core.ToolManifest{
 						}
 					}
 				}
+				stampCavemanVersion()
 			}
 			return opencodePluginInstalled(), err
 		},
@@ -322,6 +335,7 @@ var caveman = &core.ToolManifest{
 			ran, err := cavemanExec("npx", args, opts, "npx -y skills add JuliusBrussee/caveman -a codex -y")
 			if !opts.DryRun && !isTest() {
 				writeCavemanRuleset(codexCavemanMemory())
+				stampCavemanVersion()
 			}
 			return ran, err
 		},
