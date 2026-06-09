@@ -180,25 +180,22 @@ func claudeSettingsHasRtkHook(settingsPath string) bool {
 
 func rtkWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
+		args := []string{"init", "-g"}
+		switch agent {
+		case "opencode":
+			args = append(args, "--opencode")
+		case "codex":
+			args = append(args, "--codex")
+		default: // claude
+			args = append(args, "--auto-patch")
+		}
 		if opts.DryRun {
-			flag := ""
-			if agent == "opencode" {
-				flag = " --opencode"
-			} else if agent == "codex" {
-				flag = " --codex"
-			}
-			util.L.Sub("[dry-run] would run: rtk init -g" + flag)
+			util.L.Sub("[dry-run] would run: rtk " + strings.Join(args, " "))
 			return true, nil
 		}
 		if os.Getenv("TOKLESS_TEST") == "1" {
 			rtkTestShim(agent)
 			return true, nil
-		}
-		args := []string{"init", "-g"}
-		if agent == "opencode" {
-			args = append(args, "--opencode")
-		} else if agent == "codex" {
-			args = append(args, "--codex")
 		}
 		r := util.Run("rtk", args, util.RunOptions{Capture: true})
 		if r.Code != 0 {
@@ -230,7 +227,7 @@ var rtk = &core.ToolManifest{
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
 			dir := filepath.Join(util.Home(), ".claude")
-			return core.BoolPtr(claudeSettingsHasRtkHook(filepath.Join(dir, "settings.json")) || util.Exists(filepath.Join(dir, "RTK.md")))
+			return core.BoolPtr(claudeSettingsHasRtkHook(filepath.Join(dir, "settings.json")))
 		},
 		"opencode": func() *bool {
 			return core.BoolPtr(util.Exists(filepath.Join(util.Home(), ".config", "opencode", "plugins", "rtk.ts")))
