@@ -17,7 +17,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	if _, ok := cfg.Get("$schema"); !ok {
 		cfg.Set("$schema", "https://opencode.ai/config.json")
 	}
-	mcp := getOrCreateMap(cfg, "mcp")
+	mcp := util.GetOrCreateMap(cfg, "mcp")
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {

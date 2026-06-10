@@ -13,17 +13,6 @@ func writeIfMissing(path, content string) {
 	}
 }
 
-func getOrCreateMapT(m *util.OrderedMap, key string) *util.OrderedMap {
-	if v, ok := m.Get(key); ok {
-		if om, ok := v.(*util.OrderedMap); ok {
-			return om
-		}
-	}
-	om := util.NewOrderedMap()
-	m.Set(key, om)
-	return om
-}
-
 // clip trims and caps stderr for log lines (mirrors .slice(0,200)).
 func clip(s string) string {
 	s = strings.TrimSpace(s)

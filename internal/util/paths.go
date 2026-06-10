@@ -143,3 +143,15 @@ func CodexPathsResolved() CodexPaths {
 		Instructions: filepath.Join(dir, "AGENTS.md"),
 	}
 }
+
+// GetOrCreateMap returns the OrderedMap at key, creating one if absent.
+func GetOrCreateMap(m *OrderedMap, key string) *OrderedMap {
+	if v, ok := m.Get(key); ok {
+		if om, ok := v.(*OrderedMap); ok {
+			return om
+		}
+	}
+	om := NewOrderedMap()
+	m.Set(key, om)
+	return om
+}

@@ -51,7 +51,7 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		cp := util.ClaudeCodePaths()
 		_ = util.EnsureDir(cp.Dir)
 		cfg := loadOrdered(cp.GlobalJSON)
-		servers := getOrCreateMapT(cfg, "mcpServers")
+		servers := util.GetOrCreateMap(cfg, "mcpServers")
 		entry := util.NewOrderedMap()
 		entry.Set("type", "stdio")
 		entry.Set("command", spawn.Command)
@@ -268,7 +268,7 @@ func mergeCodexHooks(existing *util.OrderedMap) *util.OrderedMap {
 	if out == nil {
 		out = util.NewOrderedMap()
 	}
-	hooks := getOrCreateMapT(out, "hooks")
+	hooks := util.GetOrCreateMap(out, "hooks")
 	for _, event := range codexHookEvents {
 		var arr []any
 		if v, ok := hooks.Get(event); ok {

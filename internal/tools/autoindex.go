@@ -15,7 +15,7 @@ func wireClaudeAutoIndex() {
 	cp := util.ClaudeCodePaths()
 	_ = util.EnsureDir(cp.Dir)
 	cfg := loadOrdered(cp.Settings)
-	hooks := getOrCreateMapT(cfg, "hooks")
+	hooks := util.GetOrCreateMap(cfg, "hooks")
 	if claudeHasAutoIndex(hooks) {
 		return
 	}
@@ -81,7 +81,7 @@ func wireCodexAutoIndex() {
 	_ = util.EnsureDir(cx.Dir)
 	hooksPath := filepath.Join(cx.Dir, "hooks.json")
 	cfg := loadOrdered(hooksPath)
-	hooks := getOrCreateMapT(cfg, "hooks")
+	hooks := util.GetOrCreateMap(cfg, "hooks")
 	var ss []any
 	if v, ok := hooks.Get("SessionStart"); ok {
 		if existing, ok := v.([]any); ok {
