@@ -127,7 +127,7 @@ func rtkTestShim(agent string) {
 					cfg = m
 				}
 			}
-			hooks := getOrCreateMapT(cfg, "hooks")
+			hooks := util.GetOrCreateMap(cfg, "hooks")
 			var pre []any
 			if v, ok := hooks.Get("PreToolUse"); ok {
 				if arr, ok := v.([]any); ok {

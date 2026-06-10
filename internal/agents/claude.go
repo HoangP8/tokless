@@ -18,7 +18,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	if cfg == nil {
 		cfg = util.NewOrderedMap()
 	}
-	servers := getOrCreateMap(cfg, "mcpServers")
+	servers := util.GetOrCreateMap(cfg, "mcpServers")
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
@@ -123,17 +123,6 @@ func detectAgent(cli, configDir string) core.Detection {
 }
 
 // shared helpers
-
-func getOrCreateMap(m *util.OrderedMap, key string) *util.OrderedMap {
-	if v, ok := m.Get(key); ok {
-		if om, ok := v.(*util.OrderedMap); ok {
-			return om
-		}
-	}
-	om := util.NewOrderedMap()
-	m.Set(key, om)
-	return om
-}
 
 func toAnySlice(ss []string) []any {
 	out := make([]any, len(ss))
