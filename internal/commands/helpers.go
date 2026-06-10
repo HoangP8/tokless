@@ -31,7 +31,7 @@ func plural(n int) string {
 	if n == 1 {
 		return "1 tool"
 	}
-	return itoa(n) + " tool(s)"
+	return itoa(n) + " tools"
 }
 
 func itoa(n int) string {
