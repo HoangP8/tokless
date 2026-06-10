@@ -96,7 +96,7 @@ func anyArrEq(a any, b []string) bool {
 var opencode = &core.AgentManifest{
 	ID:        "opencode",
 	Label:     "OpenCode",
-	Homepage:  "https://github.com/sst/opencode",
+	Homepage:  "https://github.com/anomalyco/opencode",
 	CLIBin:    "opencode",
 	ConfigDir: func() string { return util.OpenCodePathsResolved().Dir },
 	Detect: func() core.Detection {
