@@ -59,6 +59,7 @@ irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 |
 tokless              Install + wire everything (default; safe to re-run)
 tokless update       Show the version diff and upgrade the four tools
 tokless doctor       Show what's wired up; warn about anything broken
+tokless index        Build per-project indexes (codegraph) in the current dir
 tokless uninstall    Remove everything tokless ever touched
 tokless self-update  Update the tokless CLI itself
 ```
@@ -67,6 +68,7 @@ Flags:
 
 ```
 --agents <list>   Limit to a subset: claude,opencode,codex
+--tools <list>    Limit to a subset: rtk,caveman,codegraph,context-mode
 --dry-run         Show what would change without writing anything
 --verbose         Show every step
 ```
