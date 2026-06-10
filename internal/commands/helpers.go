@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
@@ -34,24 +35,7 @@ func plural(n int) string {
 	return itoa(n) + " tool(s)"
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	if neg {
-		b = append([]byte{'-'}, b...)
-	}
-	return string(b)
-}
+func itoa(n int) string { return strconv.Itoa(n) }
 
 func joinComma(ss []string) string { return strings.Join(ss, ", ") }
 
