@@ -143,3 +143,12 @@ func CodexPathsResolved() CodexPaths {
 		Instructions: filepath.Join(dir, "AGENTS.md"),
 	}
 }
+
+// ToAnySlice converts a string slice to an any slice.
+func ToAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}

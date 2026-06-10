@@ -28,7 +28,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	command := append([]string{spawn.Command}, spawn.Args...)
 	desired := util.NewOrderedMap()
 	desired.Set("type", "local")
-	desired.Set("command", toAnySlice(command))
+	desired.Set("command", util.ToAnySlice(command))
 	desired.Set("enabled", true)
 
 	if existing, ok := mcp.Get(toolID); ok {

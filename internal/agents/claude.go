@@ -29,7 +29,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	desired := util.NewOrderedMap()
 	desired.Set("type", "stdio")
 	desired.Set("command", spawn.Command)
-	desired.Set("args", toAnySlice(spawn.Args))
+	desired.Set("args", util.ToAnySlice(spawn.Args))
 
 	if existing, ok := servers.Get(toolID); ok {
 		if claudeMcpEqual(existing, desired) {
@@ -133,14 +133,6 @@ func getOrCreateMap(m *util.OrderedMap, key string) *util.OrderedMap {
 	om := util.NewOrderedMap()
 	m.Set(key, om)
 	return om
-}
-
-func toAnySlice(ss []string) []any {
-	out := make([]any, len(ss))
-	for i, s := range ss {
-		out[i] = s
-	}
-	return out
 }
 
 func jsonStr(v any) string {
