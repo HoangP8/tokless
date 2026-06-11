@@ -320,6 +320,10 @@ var caveman = &core.ToolManifest{
 	},
 	WireFor: map[string]core.AgentFn{
 		"claude": func(opts core.RunOpts) (bool, error) {
+			if !opts.DryRun && !isTest() && util.Which("claude") == "" {
+				util.L.Err("caveman needs the claude CLI (`claude plugin …`); Claude Desktop alone is not enough — install the CLI and re-run")
+				return false, nil
+			}
 			ran, err := cavemanExec("claude",
 				[]string{"plugin", "marketplace", "add", "JuliusBrussee/caveman"},
 				opts, "claude plugin marketplace add JuliusBrussee/caveman && claude plugin install caveman@caveman")
