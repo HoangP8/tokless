@@ -48,9 +48,53 @@ func EnsureProcessPath() []string {
 
 func EnsurePersistentPath() []string {
 	if IsWin {
-		return []string{}
+		return ensurePersistentPathWindows()
 	}
 	return ensurePersistentPathUnix()
+}
+
+func ensurePersistentPathWindows() []string {
+	var missing []string
+	for _, dir := range ExpectedBinDirs() {
+		if Exists(dir) {
+			missing = append(missing, dir)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	ps := `$ErrorActionPreference='Stop'
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$cur = ''
+if ($null -ne $k.GetValue('Path')) {
+  $cur = $k.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+}
+$parts = $cur -split ';' | Where-Object { $_ -ne '' }
+$expanded = $parts | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') }
+$add = @(` + psQuoteList(missing) + `)
+$new = $parts
+$changed = $false
+foreach ($d in $add) {
+  if ($expanded -notcontains $d.TrimEnd('\')) { $new += $d; $changed = $true }
+}
+if ($changed) {
+  $k.SetValue('Path', ($new -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+  Write-Output 'changed'
+}
+$k.Close()`
+	r := Run("powershell", []string{"-NoProfile", "-Command", ps}, RunOptions{Capture: true})
+	if r.Code != 0 || !strings.Contains(r.Stdout, "changed") {
+		return nil
+	}
+	return missing
+}
+
+func psQuoteList(dirs []string) string {
+	quoted := make([]string, len(dirs))
+	for i, d := range dirs {
+		quoted[i] = "'" + strings.ReplaceAll(d, "'", "''") + "'"
+	}
+	return strings.Join(quoted, ",")
 }
 
 func ensurePersistentPathUnix() []string {

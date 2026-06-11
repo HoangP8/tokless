@@ -19,11 +19,18 @@ try {
     exit 1
 }
 
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$destDir*") {
-    [Environment]::SetEnvironmentVariable("Path", "$destDir;$userPath", "User")
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+$userPath = ""
+if ($null -ne $key.GetValue("Path")) {
+    $userPath = $key.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+}
+$expanded = ($userPath -split ";") | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd("\") }
+if ($expanded -notcontains $destDir.TrimEnd("\")) {
+    $newPath = if ($userPath) { "$destDir;$userPath" } else { $destDir }
+    $key.SetValue("Path", $newPath, [Microsoft.Win32.RegistryValueKind]::ExpandString)
     $env:Path = "$destDir;$env:Path"
 }
+$key.Close()
 
 $v = & $dest --version 2>$null
 Write-Host "✔ tokless $v ready → $dest" -ForegroundColor Green
