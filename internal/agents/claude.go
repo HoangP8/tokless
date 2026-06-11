@@ -98,6 +98,10 @@ func LocateClaudeCaveman() string {
 	return filepath.Join(ensureClaudeSkillDir(), "caveman")
 }
 
+func claudeKnownBinDirs() []string {
+	return []string{filepath.Join(util.Home(), ".local", "bin")}
+}
+
 var claude = &core.AgentManifest{
 	ID:        "claude",
 	Label:     "Claude Code",
@@ -105,15 +109,12 @@ var claude = &core.AgentManifest{
 	CLIBin:    "claude",
 	ConfigDir: func() string { return util.ClaudeCodePaths().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("claude", util.ClaudeCodePaths().Dir)
+		return detectAgent("claude", util.ClaudeCodePaths().Dir, claudeKnownBinDirs())
 	},
 }
 
-// detectAgent anchors "installed" to the CLI on PATH. A leftover config dir is
-// NOT enough in production (wiring needs the CLI). In TOKLESS_TEST mode the
-// sandbox has no fake CLIs, so a config dir stands in for an installed agent.
-func detectAgent(cli, configDir string) core.Detection {
-	if util.Which(cli) != "" {
+func detectAgent(cli, configDir string, knownDirs []string) core.Detection {
+	if util.FindBinary(cli, knownDirs) != "" {
 		return core.Detection{Installed: true, Source: "cli"}
 	}
 	if os.Getenv("TOKLESS_TEST") == "1" && util.Exists(configDir) {

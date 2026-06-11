@@ -1,6 +1,9 @@
 package agents
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -93,6 +96,20 @@ func anyArrEq(a any, b []string) bool {
 	return true
 }
 
+func opencodeKnownBinDirs() []string {
+	dirs := []string{
+		filepath.Join(util.Home(), ".opencode", "bin"),
+		filepath.Join(util.Home(), ".local", "bin"),
+	}
+	if util.IsWin {
+		dirs = append(dirs, filepath.Join(util.Home(), "scoop", "shims"))
+		if pd := os.Getenv("ProgramData"); pd != "" {
+			dirs = append(dirs, filepath.Join(pd, "chocolatey", "bin"))
+		}
+	}
+	return dirs
+}
+
 var opencode = &core.AgentManifest{
 	ID:        "opencode",
 	Label:     "OpenCode",
@@ -100,6 +117,6 @@ var opencode = &core.AgentManifest{
 	CLIBin:    "opencode",
 	ConfigDir: func() string { return util.OpenCodePathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("opencode", util.OpenCodePathsResolved().Dir)
+		return detectAgent("opencode", util.OpenCodePathsResolved().Dir, opencodeKnownBinDirs())
 	},
 }

@@ -88,6 +88,44 @@ func Which(bin string) string {
 	return ""
 }
 
+func FindBinary(bin string, extraDirs []string) string {
+	if p := Which(bin); p != "" {
+		return p
+	}
+	names := []string{bin}
+	if IsWin {
+		names = []string{bin + ".exe", bin + ".cmd", bin + ".bat", bin}
+	}
+	for _, dir := range extraDirs {
+		if dir == "" {
+			continue
+		}
+		for _, n := range names {
+			p := filepath.Join(dir, n)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+				PrependProcessPath(dir)
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// PrependProcessPath puts dir at the front of this process's PATH (idempotent).
+func PrependProcessPath(dir string) {
+	sep := ":"
+	if IsWin {
+		sep = ";"
+	}
+	cur := os.Getenv("PATH")
+	for _, d := range strings.Split(cur, sep) {
+		if d == dir {
+			return
+		}
+	}
+	os.Setenv("PATH", dir+sep+cur)
+}
+
 // WhichAny returns the first found bin and its path.
 func WhichAny(bins []string) (string, string) {
 	for _, b := range bins {
