@@ -116,10 +116,11 @@ func rtkTestShim(agent string) {
 		writeIfMissing(filepath.Join(dir, "AGENTS.md"), stub)
 		writeIfMissing(filepath.Join(dir, "RTK.md"), stub)
 	case "claude":
-		dir := filepath.Join(util.Home(), ".claude")
+		cp := util.ClaudeCodePaths()
+		dir := cp.Dir
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "RTK.md"), "# RTK\nInstalled by tokless.\n")
-		settingsPath := filepath.Join(dir, "settings.json")
+		settingsPath := cp.Settings
 		if !claudeSettingsHasRtkHook(settingsPath) {
 			cfg := util.NewOrderedMap()
 			if raw, ok := util.ReadFileSafe(settingsPath); ok {
@@ -145,7 +146,7 @@ func rtkTestShim(agent string) {
 			_ = util.WriteFile(settingsPath, util.StringifyJSON(cfg))
 		}
 	case "opencode":
-		dir := filepath.Join(util.Home(), ".config", "opencode", "plugins")
+		dir := util.OpenCodePathsResolved().PluginsDir
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk plugin shim (tokless test mode)\nexport const Plugin = async () => ({});\n")
 	}
@@ -226,11 +227,10 @@ var rtk = &core.ToolManifest{
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
-			dir := filepath.Join(util.Home(), ".claude")
-			return core.BoolPtr(claudeSettingsHasRtkHook(filepath.Join(dir, "settings.json")))
+			return core.BoolPtr(claudeSettingsHasRtkHook(util.ClaudeCodePaths().Settings))
 		},
 		"opencode": func() *bool {
-			return core.BoolPtr(util.Exists(filepath.Join(util.Home(), ".config", "opencode", "plugins", "rtk.ts")))
+			return core.BoolPtr(util.Exists(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "rtk.ts")))
 		},
 		"codex": func() *bool {
 			return core.BoolPtr(util.Exists(filepath.Join(util.CodexPathsResolved().Dir, "RTK.md")))

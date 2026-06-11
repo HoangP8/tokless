@@ -6,10 +6,7 @@ import (
 	"runtime"
 )
 
-var (
-	IsWin = runtime.GOOS == "windows"
-	IsMac = runtime.GOOS == "darwin"
-)
+var IsWin = runtime.GOOS == "windows"
 
 var homeOverride string
 
@@ -17,6 +14,11 @@ var homeOverride string
 func SetHomeOverride(p string) { homeOverride = p }
 
 func resolveHome() string {
+	if IsWin {
+		if h, err := os.UserHomeDir(); err == nil && h != "" {
+			return h
+		}
+	}
 	if h := os.Getenv("HOME"); h != "" {
 		return h
 	}
@@ -31,34 +33,15 @@ func Home() string {
 	return resolveHome()
 }
 
-func AppDataDir() string {
-	h := resolveHome()
-	if IsWin {
-		if a := os.Getenv("APPDATA"); a != "" {
-			return a
-		}
-		return filepath.Join(h, "AppData", "Roaming")
-	}
-	if IsMac {
-		return filepath.Join(h, "Library", "Application Support")
+// opencodeConfigDir mirrors opencode's own resolution (xdg-basedir under Bun):
+func opencodeConfigDir() string {
+	if d := os.Getenv("OPENCODE_CONFIG_DIR"); d != "" {
+		return d
 	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
-		return x
+		return filepath.Join(x, "opencode")
 	}
-	return filepath.Join(h, ".config")
-}
-
-func ConfigRoot() string {
-	if homeOverride != "" {
-		if IsWin {
-			return filepath.Join(homeOverride, "AppData", "Roaming")
-		}
-		if IsMac {
-			return filepath.Join(homeOverride, "Library", "Application Support")
-		}
-		return filepath.Join(homeOverride, ".config")
-	}
-	return AppDataDir()
+	return filepath.Join(Home(), ".config", "opencode")
 }
 
 func EnsureDir(p string) error { return os.MkdirAll(p, 0o755) }
@@ -90,12 +73,18 @@ type ClaudePaths struct {
 
 func ClaudeCodePaths() ClaudePaths {
 	h := Home()
+	dir := filepath.Join(h, ".claude")
+	globalJSON := filepath.Join(h, ".claude.json")
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		dir = d
+		globalJSON = filepath.Join(d, ".claude.json")
+	}
 	return ClaudePaths{
-		Dir:          filepath.Join(h, ".claude"),
-		Settings:     filepath.Join(h, ".claude", "settings.json"),
-		GlobalJSON:   filepath.Join(h, ".claude.json"),
-		Instructions: filepath.Join(h, ".claude", "CLAUDE.md"),
-		SkillsDir:    filepath.Join(h, ".claude", "skills"),
+		Dir:          dir,
+		Settings:     filepath.Join(dir, "settings.json"),
+		GlobalJSON:   globalJSON,
+		Instructions: filepath.Join(dir, "CLAUDE.md"),
+		SkillsDir:    filepath.Join(dir, "skills"),
 	}
 }
 
@@ -105,7 +94,7 @@ type OpenCodePaths struct {
 }
 
 func OpenCodePathsResolved() OpenCodePaths {
-	dir := filepath.Join(ConfigRoot(), "opencode")
+	dir := opencodeConfigDir()
 	candidates := []string{
 		filepath.Join(dir, "opencode.jsonc"),
 		filepath.Join(dir, "opencode.json"),

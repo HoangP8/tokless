@@ -13,6 +13,8 @@ func TestClaudeAutoIndexMergeIdempotentUnwire(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("HOME", dir)
 	defer os.Unsetenv("HOME")
+	util.SetHomeOverride(dir)
+	defer util.SetHomeOverride("")
 	cp := util.ClaudeCodePaths()
 	os.MkdirAll(cp.Dir, 0o755)
 	os.WriteFile(cp.Settings, []byte(`{"model":"sonnet","hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"echo user"}]}]}}`), 0o644)

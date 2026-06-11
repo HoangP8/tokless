@@ -67,7 +67,7 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	bar.Done("")
 
 	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {
-		cacheDir := filepath.Join(os.Getenv("HOME"), ".cache", "tokless")
+		cacheDir := filepath.Join(util.Home(), ".cache", "tokless")
 		if util.Exists(cacheDir) {
 			_ = os.RemoveAll(cacheDir)
 		}

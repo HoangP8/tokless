@@ -16,6 +16,8 @@ func TestUninstallSelectiveFlags(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	util.SetHomeOverride(dir)
+	defer util.SetHomeOverride("")
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
 	oc := filepath.Join(dir, ".config", "opencode")
 	os.MkdirAll(oc, 0o755)
