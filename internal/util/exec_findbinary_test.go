@@ -48,7 +48,11 @@ func TestFindBinaryWindowsExe(t *testing.T) {
 		t.Errorf("Expected FindBinary to return %s, got %s", claudeExePath, resExe)
 	}
 
-	// Test .cmd
+	// Test .cmd — reset PATH first: the .exe sub-test's FindBinary prepended
+	// extraDirExe to PATH, and on case-insensitive filesystems (macOS, real
+	// Windows) Which's PATHEXT probe ("claude.EXE") would match claude.exe
+	// there before this sub-test's dir is ever consulted.
+	t.Setenv("PATH", emptyDir)
 	extraDirCmd := t.TempDir()
 	claudeCmdPath := filepath.Join(extraDirCmd, "claude.cmd")
 	os.WriteFile(claudeCmdPath, []byte("dummy"), 0755)

@@ -40,6 +40,7 @@ func TestInitSandboxWiring(t *testing.T) {
 
 	util.SetHomeOverride(tempdir)
 	t.Setenv("HOME", tempdir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
 
 	code := commands.RunInit(commands.InitOptions{
@@ -135,6 +136,7 @@ func TestInitIdempotent(t *testing.T) {
 
 	util.SetHomeOverride(tempdir)
 	t.Setenv("HOME", tempdir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
 
 	// First Run

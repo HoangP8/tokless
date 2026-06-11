@@ -158,6 +158,7 @@ func TestCleanAllContextModeCache(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	util.SetHomeOverride(home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	defer util.SetHomeOverride("")
 
 	cache := filepath.Join(home, ".cache", "opencode", "packages")

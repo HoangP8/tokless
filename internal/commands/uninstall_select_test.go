@@ -85,6 +85,7 @@ func TestResyncWiring_RepinsContextModeVersion(t *testing.T) {
 	}
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	defer util.SetHomeOverride("")
 
 	ocJSON := filepath.Join(ocDir, "opencode.json")
@@ -110,6 +111,7 @@ func TestResyncWiring_SkipsUnwiredAgent(t *testing.T) {
 	}
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	defer util.SetHomeOverride("")
 
 	ocJSON := filepath.Join(ocDir, "opencode.json")

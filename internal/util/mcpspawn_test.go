@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -63,6 +64,11 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 }
 
 func TestPickMcpSpawnIsWinFalse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Emulates unix semantics (":"-separated PATH, extensionless
+		// executables) — impossible on a real Windows host.
+		t.Skip("unix-semantics emulation not runnable on windows")
+	}
 	origIsWin := IsWin
 	defer func() { IsWin = origIsWin }()
 

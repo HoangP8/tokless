@@ -232,14 +232,16 @@ func TestCavemanRulesetAllAgents(t *testing.T) {
 }
 
 func TestCavemanMemoryPaths(t *testing.T) {
+	// filepath.Join-built expectations keep this portable (backslashes on
+	// Windows).
 	os.Setenv("CODEX_HOME", "/tmp/cxh")
 	defer os.Unsetenv("CODEX_HOME")
-	if got := codexCavemanMemory(); got != "/tmp/cxh/AGENTS.md" {
-		t.Fatalf("codex memory path wrong: %s", got)
+	if got, want := codexCavemanMemory(), filepath.Join("/tmp/cxh", "AGENTS.md"); got != want {
+		t.Fatalf("codex memory path wrong: %s (want %s)", got, want)
 	}
 	os.Setenv("CLAUDE_CONFIG_DIR", "/tmp/clh")
 	defer os.Unsetenv("CLAUDE_CONFIG_DIR")
-	if got := claudeCavemanMemory(); got != "/tmp/clh/CLAUDE.md" {
-		t.Fatalf("claude memory path wrong: %s", got)
+	if got, want := claudeCavemanMemory(), filepath.Join("/tmp/clh", "CLAUDE.md"); got != want {
+		t.Fatalf("claude memory path wrong: %s (want %s)", got, want)
 	}
 }
