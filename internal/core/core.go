@@ -26,7 +26,7 @@ const (
 // Detection is the result of probing whether an agent is present.
 type Detection struct {
 	Installed bool
-	Source    string // "cli" | "config" | ""
+	Source    string // "cli" | "desktop" | "config" | ""
 }
 
 // AgentManifest describes one supported agent.

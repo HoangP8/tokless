@@ -110,6 +110,21 @@ func opencodeKnownBinDirs() []string {
 	return dirs
 }
 
+// opencodeDesktopPaths probes the OpenCode Desktop (Electron) install.
+func opencodeDesktopPaths() []string {
+	switch goosForDetect {
+	case "windows":
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			return []string{filepath.Join(local, "Programs", "OpenCode", "OpenCode.exe")}
+		}
+		return nil
+	case "darwin":
+		return []string{"/Applications/OpenCode.app"}
+	default:
+		return []string{"/usr/bin/ai.opencode.desktop"}
+	}
+}
+
 var opencode = &core.AgentManifest{
 	ID:        "opencode",
 	Label:     "OpenCode",
@@ -117,6 +132,6 @@ var opencode = &core.AgentManifest{
 	CLIBin:    "opencode",
 	ConfigDir: func() string { return util.OpenCodePathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("opencode", util.OpenCodePathsResolved().Dir, opencodeKnownBinDirs())
+		return detectAgent("opencode", util.OpenCodePathsResolved().Dir, opencodeKnownBinDirs(), opencodeDesktopPaths())
 	},
 }

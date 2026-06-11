@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -102,6 +103,26 @@ func claudeKnownBinDirs() []string {
 	return []string{filepath.Join(util.Home(), ".local", "bin")}
 }
 
+var goosForDetect = runtime.GOOS
+
+func claudeDesktopPaths() []string {
+	switch goosForDetect {
+	case "windows":
+		var paths []string
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			paths = append(paths, filepath.Join(local, "AnthropicClaude", "claude.exe"))
+		}
+		if roam := os.Getenv("APPDATA"); roam != "" {
+			paths = append(paths, filepath.Join(roam, "Claude", "claude.exe"))
+		}
+		return paths
+	case "darwin":
+		return []string{"/Applications/Claude.app"}
+	default:
+		return nil
+	}
+}
+
 var claude = &core.AgentManifest{
 	ID:        "claude",
 	Label:     "Claude Code",
@@ -109,13 +130,26 @@ var claude = &core.AgentManifest{
 	CLIBin:    "claude",
 	ConfigDir: func() string { return util.ClaudeCodePaths().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("claude", util.ClaudeCodePaths().Dir, claudeKnownBinDirs())
+		return detectAgent("claude", util.ClaudeCodePaths().Dir, claudeKnownBinDirs(), claudeDesktopPaths())
 	},
 }
 
-func detectAgent(cli, configDir string, knownDirs []string) core.Detection {
-	if util.FindBinary(cli, knownDirs) != "" {
+func detectAgent(cli, configDir string, knownDirs []string, desktopPaths []string) core.Detection {
+	hasCLI := util.FindBinary(cli, knownDirs) != ""
+	hasDesktop := false
+	for _, p := range desktopPaths {
+		if util.Exists(p) {
+			hasDesktop = true
+			break
+		}
+	}
+	switch {
+	case hasCLI && hasDesktop:
+		return core.Detection{Installed: true, Source: "cli+desktop"}
+	case hasCLI:
 		return core.Detection{Installed: true, Source: "cli"}
+	case hasDesktop:
+		return core.Detection{Installed: true, Source: "desktop"}
 	}
 	if os.Getenv("TOKLESS_TEST") == "1" && util.Exists(configDir) {
 		return core.Detection{Installed: true, Source: "config"}

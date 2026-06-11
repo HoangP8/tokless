@@ -61,7 +61,7 @@ var codex = &core.AgentManifest{
 	CLIBin:    "codex",
 	ConfigDir: func() string { return util.CodexPathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("codex", util.CodexPathsResolved().Dir, codexKnownBinDirs())
+		return detectAgent("codex", util.CodexPathsResolved().Dir, codexKnownBinDirs(), nil)
 	},
 }
 
