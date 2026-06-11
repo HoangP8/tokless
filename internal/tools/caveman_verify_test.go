@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/HoangP8/tokless/internal/util"
 )
 
 func TestClaudeCavemanInstalled(t *testing.T) {
@@ -30,14 +32,26 @@ func TestClaudeCavemanInstalled(t *testing.T) {
 
 func TestCodexCavemanInstalled(t *testing.T) {
 	dir := t.TempDir()
+	home := t.TempDir()
 	os.Setenv("CODEX_HOME", dir)
 	defer os.Unsetenv("CODEX_HOME")
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
 	if codexCavemanInstalled() {
 		t.Fatal("empty codex → not installed")
 	}
 	os.MkdirAll(filepath.Join(dir, "skills", "caveman"), 0o755)
 	if !codexCavemanInstalled() {
-		t.Fatal("skills/caveman dir → installed")
+		t.Fatal("CODEX_HOME skills/caveman dir → installed")
+	}
+	os.RemoveAll(filepath.Join(dir, "skills"))
+	if codexCavemanInstalled() {
+		t.Fatal("removed → not installed")
+	}
+	os.MkdirAll(filepath.Join(home, ".agents", "skills", "caveman"), 0o755)
+	if !codexCavemanInstalled() {
+		t.Fatal("~/.agents/skills/caveman dir → installed")
 	}
 }
 
@@ -70,6 +84,87 @@ func TestRegisterCavemanOpencodeIdempotent(t *testing.T) {
 	// causes "-32000 Connection closed", so we must NOT write it.
 	if strings.Contains(string(second), "caveman-shrink") {
 		t.Fatal("caveman-shrink must NOT be registered (breaks with -32000)")
+	}
+}
+
+func TestUnregisterCavemanOpencodeExactMatch(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	ocDir := filepath.Join(dir, "opencode")
+	os.MkdirAll(ocDir, 0o755)
+	cfg := filepath.Join(ocDir, "opencode.json")
+	os.WriteFile(cfg, []byte(`{"plugin":["@user/caveman-tools@1.0.0","./plugins/caveman/plugin.js"],"mcp":{"caveman-shrink":{"type":"local"},"keep":{"type":"local"}}}`), 0o644)
+
+	unregisterCavemanOpencode()
+	out, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(out), "@user/caveman-tools@1.0.0") {
+		t.Fatal("unrelated user plugin containing 'caveman' was swept")
+	}
+	if strings.Contains(string(out), "./plugins/caveman/plugin.js") {
+		t.Fatal("caveman plugin entry not removed")
+	}
+	if strings.Contains(string(out), "caveman-shrink") {
+		t.Fatal("caveman-shrink mcp entry not removed")
+	}
+	if !strings.Contains(string(out), "keep") {
+		t.Fatal("unrelated mcp entry was swept")
+	}
+}
+
+func TestUnregisterCavemanOpencodeDropsEmptyMcp(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	ocDir := filepath.Join(dir, "opencode")
+	os.MkdirAll(ocDir, 0o755)
+	cfg := filepath.Join(ocDir, "opencode.json")
+	os.WriteFile(cfg, []byte(`{"plugin":["./plugins/caveman/plugin.js"],"mcp":{"caveman-shrink":{"type":"local"}}}`), 0o644)
+
+	unregisterCavemanOpencode()
+	out, _ := os.ReadFile(cfg)
+	if strings.Contains(string(out), "mcp") {
+		t.Fatalf("empty mcp object should be deleted, got: %s", out)
+	}
+}
+
+func TestRemoveCavemanOpencodeFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	ocDir := filepath.Join(dir, "opencode")
+	os.MkdirAll(filepath.Join(ocDir, "plugins", "caveman"), 0o755)
+	os.MkdirAll(filepath.Join(ocDir, "skills", "caveman"), 0o755)
+	os.MkdirAll(filepath.Join(ocDir, "skills", "my-skill"), 0o755)
+	os.MkdirAll(filepath.Join(ocDir, "commands"), 0o755)
+	os.MkdirAll(filepath.Join(ocDir, "agents"), 0o755)
+	os.WriteFile(filepath.Join(ocDir, "commands", "caveman.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "commands", "mine.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "agents", "cavecrew-builder.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "agents", "my-agent.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, ".caveman-active"), []byte("full"), 0o644)
+
+	removeCavemanOpencodeFiles()
+
+	for _, gone := range []string{
+		filepath.Join(ocDir, "plugins", "caveman"),
+		filepath.Join(ocDir, "skills", "caveman"),
+		filepath.Join(ocDir, "commands", "caveman.md"),
+		filepath.Join(ocDir, "agents", "cavecrew-builder.md"),
+		filepath.Join(ocDir, ".caveman-active"),
+	} {
+		if _, err := os.Stat(gone); err == nil {
+			t.Fatalf("should be removed: %s", gone)
+		}
+	}
+	for _, kept := range []string{
+		filepath.Join(ocDir, "skills", "my-skill"),
+		filepath.Join(ocDir, "commands", "mine.md"),
+		filepath.Join(ocDir, "agents", "my-agent.md"),
+	} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("user file swept: %s", kept)
+		}
 	}
 }
 

@@ -90,7 +90,7 @@ func unregisterCavemanOpencode() {
 				if arr, ok := pv.([]any); ok {
 					kept := make([]any, 0, len(arr))
 					for _, p := range arr {
-						if s, ok := p.(string); ok && strings.Contains(strings.ToLower(s), "caveman") {
+						if s, ok := p.(string); ok && s == cavemanOpencodePluginRel {
 							continue
 						}
 						kept = append(kept, p)
@@ -101,6 +101,9 @@ func unregisterCavemanOpencode() {
 			if mv, ok := cfg.Get("mcp"); ok {
 				if mm, ok := mv.(*util.OrderedMap); ok {
 					mm.Delete("caveman-shrink")
+					if mm.Len() == 0 {
+						cfg.Delete("mcp")
+					}
 				}
 			}
 			_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
@@ -261,7 +264,46 @@ func codexCavemanInstalled() bool {
 	} else {
 		root = filepath.Join(root, ".codex")
 	}
-	return util.Exists(filepath.Join(root, "skills", "caveman"))
+	if cwd, err := os.Getwd(); err == nil && util.Exists(filepath.Join(cwd, ".agents", "skills", "caveman")) {
+		return true
+	}
+	return util.Exists(filepath.Join(util.Home(), ".agents", "skills", "caveman")) ||
+		util.Exists(filepath.Join(root, "skills", "caveman"))
+}
+
+var cavemanSkillNames = []string{
+	"caveman", "caveman-commit", "caveman-compress", "caveman-help",
+	"caveman-review", "caveman-stats", "cavecrew",
+}
+
+// Upstream's opencode file manifests.
+var cavemanOpencodeCommandFiles = []string{
+	"caveman.md", "caveman-commit.md", "caveman-review.md",
+	"caveman-compress.md", "caveman-stats.md", "caveman-help.md",
+}
+
+var cavemanOpencodeAgentFiles = []string{
+	"cavecrew-investigator.md", "cavecrew-builder.md", "cavecrew-reviewer.md",
+}
+
+func removeCavemanOpencodeFiles() {
+	dir := util.OpenCodePathsResolved().Dir
+	_ = os.RemoveAll(filepath.Join(dir, "plugins", "caveman"))
+	for _, f := range cavemanOpencodeCommandFiles {
+		_ = os.Remove(filepath.Join(dir, "commands", f))
+	}
+	for _, f := range cavemanOpencodeAgentFiles {
+		_ = os.Remove(filepath.Join(dir, "agents", f))
+	}
+	for _, n := range cavemanSkillNames {
+		_ = os.RemoveAll(filepath.Join(dir, "skills", n))
+	}
+	_ = os.Remove(filepath.Join(dir, ".caveman-active"))
+}
+
+func claudePluginListHasCaveman() bool {
+	r := util.Run("claude", []string{"plugin", "list"}, util.RunOptions{Capture: true})
+	return r.Code == 0 && strings.Contains(strings.ToLower(r.Stdout), "caveman")
 }
 
 var caveman = &core.ToolManifest{
@@ -286,7 +328,6 @@ var caveman = &core.ToolManifest{
 					[]string{"plugin", "install", "caveman@caveman"}, opts, "")
 			}
 			if !opts.DryRun && !isTest() {
-				writeCavemanRuleset(claudeCavemanMemory())
 				stampCavemanVersion()
 			}
 			return ran, err
@@ -295,11 +336,11 @@ var caveman = &core.ToolManifest{
 			if !opts.DryRun && !isTest() {
 				ensureOpencodeCommandsDir()
 			}
-			args := []string{"-y", "github:JuliusBrussee/caveman", "--", "--only", "opencode"}
+			args := []string{"-y", "github:JuliusBrussee/caveman", "--", "--only", "opencode", "--no-mcp-shrink"}
 			if opts.Upgrade {
 				args = append(args, "--force")
 			}
-			ran, err := cavemanExec("npx", args, opts, "npx -y github:JuliusBrussee/caveman -- --only opencode"+func() string {
+			ran, err := cavemanExec("npx", args, opts, "npx -y github:JuliusBrussee/caveman -- --only opencode --no-mcp-shrink"+func() string {
 				if opts.Upgrade {
 					return " --force"
 				}
@@ -332,52 +373,57 @@ var caveman = &core.ToolManifest{
 			return opencodePluginInstalled(), err
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
-			args := []string{"-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex", "-y"}
-			if opts.Upgrade {
-				args = append(args, "--update")
+			args := []string{"-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex", "--yes", "--all"}
+			ran, err := cavemanExec("npx", args, opts, "npx -y skills add JuliusBrussee/caveman -a codex --yes --all")
+			if opts.DryRun || isTest() {
+				return ran, err
 			}
-			ran, err := cavemanExec("npx", args, opts, "npx -y skills add JuliusBrussee/caveman -a codex -y")
-			if !opts.DryRun && !isTest() {
-				writeCavemanRuleset(codexCavemanMemory())
-				stampCavemanVersion()
-			}
-			return ran, err
+			stampCavemanVersion()
+			return codexCavemanInstalled(), err
 		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
-			return core.BoolPtr(claudeCavemanInstalled() || cavemanRulesetActive(claudeCavemanMemory()))
+			if !isTest() && claudePluginListHasCaveman() {
+				return core.BoolPtr(true)
+			}
+			return core.BoolPtr(claudeCavemanInstalled())
 		},
-		"opencode": func() *bool { return core.BoolPtr(opencodePluginInstalled()) },
-		"codex": func() *bool {
-			return core.BoolPtr(codexCavemanInstalled() || cavemanRulesetActive(codexCavemanMemory()))
-		},
+		"opencode": func() *bool { return core.BoolPtr(opencodePluginInstalled() && opencodePluginFilesPresent()) },
+		"codex":    func() *bool { return core.BoolPtr(codexCavemanInstalled()) },
 	},
+
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(opts core.RunOpts) (bool, error) {
-			ran, err := cavemanExec("npx",
-				[]string{"-y", "github:JuliusBrussee/caveman", "--", "--uninstall", "--only", "claude"},
-				opts, "npx -y github:JuliusBrussee/caveman -- --uninstall --only claude")
-			if !opts.DryRun && !isTest() {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would run: claude plugin uninstall caveman@caveman && claude mcp remove caveman-shrink")
+				return true, nil
+			}
+			if !isTest() {
+				if claudePluginListHasCaveman() {
+					if r := util.Run("claude", []string{"plugin", "uninstall", "caveman@caveman"}, util.RunOptions{Capture: true}); r.Code != 0 {
+						util.L.Err("claude plugin uninstall failed: " + clip(r.Stderr))
+						return false, nil
+					}
+				}
+				_ = util.Run("claude", []string{"mcp", "remove", "caveman-shrink"}, util.RunOptions{Capture: true})
 				removeCavemanRuleset(claudeCavemanMemory())
 			}
-			return ran, err
+			return true, nil
 		},
 		"opencode": func(opts core.RunOpts) (bool, error) {
-			ran := true
-			var err error
-			if !isTest() {
-				ran, err = cavemanExec("npx",
-					[]string{"-y", "github:JuliusBrussee/caveman", "--", "--uninstall", "--only", "opencode"},
-					opts, "npx -y github:JuliusBrussee/caveman -- --uninstall --only opencode")
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would remove opencode caveman plugin dir, commands, agents, skills, config entries, AGENTS.md block")
+				return true, nil
 			}
-			if !opts.DryRun {
-				unregisterCavemanOpencode()
-			}
-			return ran, err
+			unregisterCavemanOpencode()
+			removeCavemanOpencodeFiles()
+			return true, nil
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
-			ran, err := cavemanExec("npx", []string{"skills", "remove", "caveman"}, opts, "npx skills remove caveman")
+			args := append([]string{"-y", "skills", "remove"}, cavemanSkillNames...)
+			args = append(args, "-y")
+			ran, err := cavemanExec("npx", args, opts, "npx -y skills remove <7 caveman skills> -y")
 			if !opts.DryRun && !isTest() {
 				removeCavemanRuleset(codexCavemanMemory())
 			}
