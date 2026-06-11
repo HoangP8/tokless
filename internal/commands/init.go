@@ -71,9 +71,11 @@ func RunInit(opts InitOptions) int {
 
 	allAgents := core.ListAgents()
 	installedIDs := map[string]bool{}
+	detectedSource := map[string]string{}
 	for _, a := range allAgents {
-		if a.Detect().Installed {
+		if d := a.Detect(); d.Installed {
 			installedIDs[a.ID] = true
+			detectedSource[a.ID] = d.Source
 		}
 	}
 
@@ -112,6 +114,8 @@ func RunInit(opts InitOptions) int {
 				opt.Disabled = true
 				opt.DisabledReason = "not installed"
 				opt.Hint = a.Homepage
+			} else if s := detectedSource[a.ID]; s != "" && s != "config" {
+				opt.Hint = s
 			}
 			optsList = append(optsList, opt)
 		}

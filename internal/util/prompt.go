@@ -103,6 +103,9 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 					label = it.Label
 				}
 				tag = C.Green("[READY]")
+				if it.Hint != "" {
+					extra = "  " + C.Dim(it.Hint)
+				}
 			}
 
 			b.WriteString(" " + pointer + " " + box + "  " + label + pad + "  " + tag + extra + "\r\n")
@@ -208,7 +211,11 @@ func multiSelectLine(question string, items []MultiSelectOption) []string {
 			mark = "*"
 			defaults = append(defaults, it.Value)
 		}
-		fmt.Fprintf(os.Stdout, "  %2d) %s%s  %s\n", num, mark, it.Label, C.Green("[READY]"))
+		line := fmt.Sprintf("  %2d) %s%s  %s", num, mark, it.Label, C.Green("[READY]"))
+		if it.Hint != "" {
+			line += "  " + C.Dim(it.Hint)
+		}
+		fmt.Fprintln(os.Stdout, line)
 	}
 	if num == 0 {
 		return nil
