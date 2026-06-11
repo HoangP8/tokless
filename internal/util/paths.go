@@ -132,3 +132,43 @@ func CodexPathsResolved() CodexPaths {
 		Instructions: filepath.Join(dir, "AGENTS.md"),
 	}
 }
+
+// AntigravityPaths
+type AntigravityPaths struct {
+	Dir, McpConfig, McpConfigCLI, SkillsDir string
+}
+
+func AntigravityPathsResolved() AntigravityPaths {
+	gemini := filepath.Join(Home(), ".gemini")
+	dir := filepath.Join(gemini, "antigravity")
+	return AntigravityPaths{
+		Dir:          dir,
+		McpConfig:    filepath.Join(dir, "mcp_config.json"),
+		McpConfigCLI: filepath.Join(gemini, "config", "mcp_config.json"),
+		SkillsDir:    filepath.Join(gemini, "config", "skills"),
+	}
+}
+
+// CopyDirMerge recursively copies src into dst, overwriting files.
+func CopyDirMerge(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		info, _ := d.Info()
+		mode := os.FileMode(0o644)
+		if info != nil && info.Mode()&0o111 != 0 {
+			mode = 0o755
+		}
+		return os.WriteFile(target, b, mode)
+	})
+}

@@ -70,4 +70,5 @@ func Register() {
 	core.RegisterAgent(claude)
 	core.RegisterAgent(opencode)
 	core.RegisterAgent(codex)
+	core.RegisterAgent(antigravity)
 }
