@@ -16,7 +16,7 @@
     <text y="164"><tspan x="30" fill="#58a6ff">❯</tspan><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">Claude Code</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
     <text y="188"><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">OpenCode</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
     <text y="212"><tspan x="52" fill="#6e7681">◯</tspan><tspan x="78" fill="#c9d1d9">Codex</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
-    <text y="236"><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">Antigravity</tspan><tspan x="210" fill="#3fb950">[READY]</tspan><tspan x="290" fill="#6e7681">cli+desktop</tspan></text>
+    <text y="236"><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">Antigravity</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
 
     <text x="22" y="282"><tspan fill="#3fb950">✔ </tspan><tspan fill="#c9d1d9">Wired RTK · Caveman · CodeGraph · Context-Mode into 3 agents</tspan></text>
     <text x="22" y="306"><tspan fill="#8b949e">  Restart your agents to pick up the new config.</tspan></text>
