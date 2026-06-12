@@ -55,6 +55,54 @@ func itoa(n int) string {
 
 func joinComma(ss []string) string { return strings.Join(ss, ", ") }
 
+func printFailureDetail(logs map[string]string) {
+	for label, out := range logs {
+		lines := lastNonEmptyLines(out, 4)
+		if len(lines) == 0 {
+			continue
+		}
+		util.L.Raw("      " + util.C.Gray(label+":"))
+		for _, ln := range lines {
+			util.L.Raw("        " + util.C.Gray(ln))
+		}
+	}
+}
+
+func lastNonEmptyLines(s string, n int) []string {
+	var keep []string
+	for _, ln := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(stripAnsi(ln)); t != "" {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) > n {
+		keep = keep[len(keep)-n:]
+	}
+	return keep
+}
+
+// stripAnsi removes ANSI/control sequences so captured progress output reads
+// as plain text when reprinted.
+func stripAnsi(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			for i++; i < len(s); i++ {
+				c := s[i]
+				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					break
+				}
+			}
+			continue
+		}
+		if s[i] == '\r' {
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
 func padEnd(s string, n int) string {
 	if len(s) >= n {
 		return s

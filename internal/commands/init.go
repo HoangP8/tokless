@@ -51,6 +51,7 @@ func RunInit(opts InitOptions) int {
 
 	toolBar := util.NewProgress("")
 	toolBar.Start(len(tools))
+	installLogs := map[string]string{}
 	for _, tool := range tools {
 		toolBar.Begin(tool.Label)
 		if tool.Channel == core.ChannelNpm && !nodeOK {
@@ -59,7 +60,7 @@ func RunInit(opts InitOptions) int {
 		}
 		report := func(phase string, frac float64) { toolBar.Step(phase, frac) }
 		installed := false
-		err := util.WithSilencedLogs(func() error {
+		logs, err := util.CaptureLogs(func() error {
 			ok, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: opts.Upgrade, Report: report})
 			installed = ok
 			return e
@@ -67,13 +68,16 @@ func RunInit(opts InitOptions) int {
 		switch {
 		case err != nil:
 			toolBar.Fail(firstLine(err.Error()))
+			installLogs[tool.Label] = logs
 		case !installed:
 			toolBar.Fail("install failed")
+			installLogs[tool.Label] = logs
 		default:
 			toolBar.Complete(toolVersionNote(tool))
 		}
 	}
 	toolBar.Done("")
+	printFailureDetail(installLogs)
 
 	if !opts.DryRun {
 		util.SelfHealPath()
@@ -158,13 +162,14 @@ func RunInit(opts InitOptions) int {
 	}
 
 	failures := map[string][]string{}
+	wireLogs := map[string]string{}
 	wireBar := util.NewProgress("")
 	wireBar.Start(len(wireIDs))
 	for _, agentID := range wireIDs {
 		agent := core.GetAgent(agentID)
 		wireBar.Begin(agent.Label)
 		var failed []string
-		_ = util.WithSilencedLogs(func() error {
+		wireOut, _ := util.CaptureLogs(func() error {
 			for _, tool := range tools {
 				fn, ok := tool.WireFor[agentID]
 				if !ok {
@@ -191,6 +196,7 @@ func RunInit(opts InitOptions) int {
 		} else {
 			wireBar.Fail(plural(len(failed)) + " not wired")
 			failures[agentID] = failed
+			wireLogs[agentID] = wireOut
 		}
 	}
 	wireBar.Done("")
@@ -213,6 +219,7 @@ func RunInit(opts InitOptions) int {
 	for id, failed := range failures {
 		util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " " + core.GetAgent(id).Label + ": " +
 			joinComma(failed) + " not wired. Run " + util.C.Cyan("tokless doctor") + " for details.")
+		printFailureDetail(map[string]string{core.GetAgent(id).Label: wireLogs[id]})
 	}
 	notifyOutdated(opts)
 	util.L.Raw("")

@@ -184,24 +184,41 @@ func (p *Progress) clearLine() {
 
 // WithSilencedLogs redirects stdout/stderr to a buffer while fn runs.
 func WithSilencedLogs(fn func() error) error {
+	_, err := CaptureLogs(fn)
+	return err
+}
+
+func CaptureLogs(fn func() error) (string, error) {
 	realOut, realErr := os.Stdout, os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", fn()
+	}
 	os.Stdout, os.Stderr = w, w
+	var captured strings.Builder
 	done := make(chan struct{})
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			if _, err := r.Read(buf); err != nil {
+			n, err := r.Read(buf)
+			if n > 0 {
+				captured.Write(buf[:n])
+			}
+			if err != nil {
 				break
 			}
 		}
 		close(done)
 	}()
-	defer func() {
-		w.Close()
-		os.Stdout, os.Stderr = realOut, realErr
-		<-done
-		r.Close()
+	var ferr error
+	func() {
+		defer func() {
+			w.Close()
+			os.Stdout, os.Stderr = realOut, realErr
+			<-done
+			r.Close()
+		}()
+		ferr = fn()
 	}()
-	return fn()
+	return captured.String(), ferr
 }
