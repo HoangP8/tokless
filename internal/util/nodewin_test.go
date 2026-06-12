@@ -61,7 +61,7 @@ func TestNodeLTSVersion(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := nodeLTSVersion(entries, tc.arch)
+			got, ok := nodeLTSVersion(entries, "win-"+tc.arch+"-zip")
 			if ok != tc.ok {
 				t.Errorf("nodeLTSVersion() ok = %v, want %v", ok, tc.ok)
 			}

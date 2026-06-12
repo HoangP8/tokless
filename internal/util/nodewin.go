@@ -35,9 +35,8 @@ func nodeWinArch() string {
 	return ""
 }
 
-// nodeLTSVersion picks the newest LTS release that ships a zip for arch.
-func nodeLTSVersion(entries []nodeDistEntry, arch string) (string, bool) {
-	want := "win-" + arch + "-zip"
+// nodeLTSVersion picks the newest LTS release that ships the wanted file token.
+func nodeLTSVersion(entries []nodeDistEntry, want string) (string, bool) {
 	for _, e := range entries {
 		lts := strings.TrimSpace(string(e.LTS))
 		if lts == "" || lts == "false" || lts == "null" {
@@ -177,7 +176,7 @@ func installNodeWindowsZip() bool {
 		L.Err("couldn't reach nodejs.org to resolve the Node LTS version")
 		return false
 	}
-	v, ok := nodeLTSVersion(entries, arch)
+	v, ok := nodeLTSVersion(entries, "win-"+arch+"-zip")
 	if !ok {
 		L.Err("no Node LTS zip available for win-" + arch)
 		return false
