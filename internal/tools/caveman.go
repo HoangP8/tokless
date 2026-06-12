@@ -339,6 +339,7 @@ var caveman = &core.ToolManifest{
 	Description:  "Skill that compresses agent prompts using primitive English.",
 	Homepage:     "https://github.com/JuliusBrussee/caveman",
 	InstallHint:  "Installed per-agent by Caveman's own CLI.",
+	NeedsGit:     true,
 	Channel:      core.ChannelGitHub,
 	NotTrackable: true,
 	Install: func(opts core.RunOpts) (bool, error) {

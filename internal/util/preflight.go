@@ -25,6 +25,27 @@ func EnsureNodeForTools() bool {
 	return false
 }
 
+func EnsureGitForTools() bool {
+	if Which("git") != "" {
+		return true
+	}
+	L.Warn("Caveman needs git (npm github: installs and skills clones), which isn't installed.")
+	if !IsWin {
+		L.Info("Install git with your package manager (apt/dnf/brew), then re-run: tokless")
+		return false
+	}
+	if !Confirm("Install MinGit (portable, ~30 MB) now?", true) {
+		L.Info("Skipping git install. Get it later: https://git-scm.com/downloads")
+		return false
+	}
+	if installGitWindowsZip() && Which("git") != "" {
+		L.Ok("MinGit installed.")
+		return true
+	}
+	L.Err("Git install didn't complete. Install manually: https://git-scm.com/downloads")
+	return false
+}
+
 // nodeToolsReady reports usable npm+npx.
 func nodeToolsReady() bool {
 	npm, npx := Which("npm"), Which("npx")

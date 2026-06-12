@@ -47,15 +47,14 @@ type VerifyFn func() *bool
 
 // ToolManifest describes one tool and how it installs/wires per agent.
 type ToolManifest struct {
-	ID          string
-	Label       string
-	Description string
-	Homepage    string
-	InstallHint string
-	Channel     Channel
-	// NotTrackable marks tools with no standalone binary (installed per-agent),
-	// so version checks (doctor/update) skip them instead of looping forever.
+	ID           string
+	Label        string
+	Description  string
+	Homepage     string
+	InstallHint  string
+	Channel      Channel
 	NotTrackable bool
+	NeedsGit     bool
 	Install      func(opts RunOpts) (bool, error)
 	WireFor      map[string]AgentFn
 	UnwireFor    map[string]AgentFn

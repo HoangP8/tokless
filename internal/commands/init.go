@@ -32,11 +32,6 @@ func RunInit(opts InitOptions) int {
 	util.L.Raw("")
 	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless")) + util.C.Gray("  global token-saver for AI agents"))
 
-	nodeOK := true
-	if !opts.DryRun {
-		nodeOK = util.EnsureNodeForTools()
-	}
-
 	allTools := core.ListTools()
 	var tools []*core.ToolManifest
 	if opts.Tools != nil {
@@ -47,6 +42,17 @@ func RunInit(opts InitOptions) int {
 		}
 	} else {
 		tools = allTools
+	}
+
+	nodeOK, gitOK := true, true
+	if !opts.DryRun {
+		nodeOK = util.EnsureNodeForTools()
+		for _, t := range tools {
+			if t.NeedsGit {
+				gitOK = util.EnsureGitForTools()
+				break
+			}
+		}
 	}
 
 	toolBar := util.NewProgress("")
@@ -173,6 +179,11 @@ func RunInit(opts InitOptions) int {
 			for _, tool := range tools {
 				fn, ok := tool.WireFor[agentID]
 				if !ok {
+					continue
+				}
+				if tool.NeedsGit && !gitOK {
+					util.L.Err(tool.Label + " needs git — https://git-scm.com/downloads")
+					failed = append(failed, tool.Label)
 					continue
 				}
 				okWire := false

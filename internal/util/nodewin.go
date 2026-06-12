@@ -98,18 +98,29 @@ func downloadToTemp(url string) (string, error) {
 // extractZipStripRoot unpacks zipPath into dest, dropping the archive's
 // single root directory (node-vX-win-x64/...) so binaries land in dest.
 func extractZipStripRoot(zipPath, dest string) error {
+	return extractZip(zipPath, dest, true)
+}
+
+// extractZipFlat unpacks zipPath into dest as-is (MinGit zips have no root dir).
+func extractZipFlat(zipPath, dest string) error {
+	return extractZip(zipPath, dest, false)
+}
+
+func extractZip(zipPath, dest string, stripRoot bool) error {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
 	}
 	defer zr.Close()
 	for _, f := range zr.File {
-		name := strings.ReplaceAll(f.Name, "\\", "/")
-		idx := strings.Index(name, "/")
-		if idx < 0 {
-			continue // root dir entry itself
+		rel := strings.ReplaceAll(f.Name, "\\", "/")
+		if stripRoot {
+			idx := strings.Index(rel, "/")
+			if idx < 0 {
+				continue
+			}
+			rel = rel[idx+1:]
 		}
-		rel := name[idx+1:]
 		if rel == "" || !filepath.IsLocal(filepath.FromSlash(rel)) {
 			continue
 		}
