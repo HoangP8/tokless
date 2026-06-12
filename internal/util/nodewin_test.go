@@ -98,7 +98,7 @@ func TestExtractZipStripRoot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create zip header for %s: %v", f.name, err)
 		}
-		
+
 		if f.content != "" {
 			fw.Write([]byte(f.content))
 		}

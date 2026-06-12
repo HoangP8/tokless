@@ -16,7 +16,7 @@ func TestCavemanVersionDirs(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 
 	dirs := cavemanVersionDirs()
-	
+
 	expected1 := filepath.Join(tempDir, ".gemini", "antigravity", "skills", "caveman")
 	expected2 := filepath.Join(tempDir, ".gemini", "config", "skills", "caveman")
 	expectedAgents := filepath.Join(tempDir, ".agents", "skills", "caveman")

@@ -10,13 +10,13 @@ func TestLegacyWinConsole(t *testing.T) {
 	defer func() { IsWin = originalIsWin }()
 
 	tests := []struct {
-		name         string
-		isWin        bool
-		wtSession    string
-		termProgram  string
-		term         string
-		conEmuANSI   string
-		want         bool
+		name        string
+		isWin       bool
+		wtSession   string
+		termProgram string
+		term        string
+		conEmuANSI  string
+		want        bool
 	}{
 		{
 			name:  "IsWin=false",

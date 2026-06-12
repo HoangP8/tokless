@@ -7,7 +7,7 @@ import (
 
 func TestLastNonEmptyLines(t *testing.T) {
 	input := "a\n\n\x1b[31mred\x1b[0m\nb\nc\nd"
-	
+
 	t.Run("n=3", func(t *testing.T) {
 		got := lastNonEmptyLines(input, 3)
 		want := []string{"b", "c", "d"}
@@ -29,7 +29,7 @@ func TestStripAnsi(t *testing.T) {
 	input := "\x1b[32m✔\x1b[0m done\r"
 	got := stripAnsi(input)
 	want := "✔ done"
-	
+
 	if got != want {
 		t.Errorf("stripAnsi(%q) = %q, want %q", input, got, want)
 	}
