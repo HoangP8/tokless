@@ -38,10 +38,6 @@ func ensureOpencodeCommandsDir() {
 	_ = os.MkdirAll(filepath.Join(util.OpenCodePathsResolved().Dir, "commands"), 0o755)
 }
 
-// installOpencodeCavemanSkills fills the gap in upstream's npx install path,
-// which ships plugin+commands but not skills: the same skills CLI used for
-// codex/antigravity has an opencode profile writing <config>/opencode/skills
-// with -g. Best-effort: skills are additive to the plugin wiring gate.
 func installOpencodeCavemanSkills(opts core.RunOpts) {
 	args := []string{"-y", "skills", "add", "JuliusBrussee/caveman", "-a", "opencode", "--yes", "--all", "-g"}
 	ok, _ := cavemanExec("npx", args, opts,

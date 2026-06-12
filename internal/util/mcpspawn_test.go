@@ -27,7 +27,6 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	if spawnCmd.Command != "cmd" {
 		t.Errorf("Expected Command == cmd, got %s", spawnCmd.Command)
 	}
-	// Windows configs carry the resolved absolute shim path (stale-PATH-proof).
 	expectedArgs := []string{"/c", Which("codegraph"), "serve", "--mcp"}
 	if !filepath.IsAbs(expectedArgs[1]) {
 		t.Fatalf("test setup: Which(codegraph) not absolute: %q", expectedArgs[1])
