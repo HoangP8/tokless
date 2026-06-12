@@ -88,6 +88,12 @@ func parseList(raw string, ok bool, allowed []string) ([]string, error) {
 }
 
 func main() {
+	code := run()
+	util.RestoreConsoleCP()
+	os.Exit(code)
+}
+
+func run() int {
 	agents.Register()
 	tools.Register()
 
@@ -98,11 +104,11 @@ func main() {
 
 	if p.bools["version"] || p.bools["v"] || p.cmd == "version" {
 		fmt.Println(util.ToklessVersion())
-		os.Exit(0)
+		return 0
 	}
 	if p.bools["help"] || p.cmd == "help" {
 		fmt.Println(helpText())
-		os.Exit(0)
+		return 0
 	}
 
 	command := p.cmd
@@ -115,12 +121,12 @@ func main() {
 	agentList, err := parseList(agentRaw, agentOK, core.AgentIDs())
 	if err != nil {
 		util.L.Err(err.Error())
-		os.Exit(2)
+		return 2
 	}
 	toolList, err := parseList(toolRaw, toolOK, core.ToolIDs())
 	if err != nil {
 		util.L.Err(err.Error())
-		os.Exit(2)
+		return 2
 	}
 
 	opts := commands.InitOptions{
@@ -152,5 +158,5 @@ func main() {
 		util.L.Err("Unknown command: " + command)
 		code = 1
 	}
-	os.Exit(code)
+	return code
 }

@@ -18,7 +18,19 @@ const (
 	winEnableVTProcessing   = 0x0004
 )
 
-var procSetConsoleMode = kernel32.NewProc("SetConsoleMode")
+var (
+	procSetConsoleMode     = kernel32.NewProc("SetConsoleMode")
+	procGetConsoleOutputCP = kernel32.NewProc("GetConsoleOutputCP")
+	procSetConsoleOutputCP = kernel32.NewProc("SetConsoleOutputCP")
+)
+
+var savedOutputCP uintptr
+
+func RestoreConsoleCP() {
+	if savedOutputCP != 0 && savedOutputCP != 65001 {
+		_, _, _ = procSetConsoleOutputCP.Call(savedOutputCP)
+	}
+}
 
 func getConsoleMode(fd uintptr) (uint32, bool) {
 	var mode uint32
@@ -33,6 +45,10 @@ func setConsoleMode(fd uintptr, mode uint32) bool {
 
 // enableVT turns on ANSI escape processing for stdout/stderr consoles.
 func enableVT() bool {
+	if cp, _, _ := procGetConsoleOutputCP.Call(); cp != 0 {
+		savedOutputCP = cp
+	}
+	_, _, _ = procSetConsoleOutputCP.Call(uintptr(65001))
 	ok := true
 	for _, f := range []*os.File{os.Stdout, os.Stderr} {
 		fd := f.Fd()

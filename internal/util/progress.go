@@ -8,7 +8,14 @@ import (
 	"time"
 )
 
-var frames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var frames = spinnerFrames()
+
+func spinnerFrames() []string {
+	if glyphsEnabled {
+		return []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	}
+	return []string{"|", "/", "-", "\\"}
+}
 
 type Progress struct {
 	title   string

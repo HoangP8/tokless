@@ -11,6 +11,9 @@ import (
 // enableVT is a no-op on unix terminals; ANSI is always available.
 func enableVT() bool { return true }
 
+// RestoreConsoleCP is a no-op outside Windows.
+func RestoreConsoleCP() {}
+
 // rawMode toggles terminal raw mode via stty; returns a restore func.
 func rawMode() (func(), bool) {
 	saved, err := exec.Command("stty", "-F", "/dev/tty", "-g").Output()

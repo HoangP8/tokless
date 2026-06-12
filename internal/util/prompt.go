@@ -124,6 +124,7 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		case 3: // ctrl-c
 			restore()
 			fmt.Fprint(os.Stdout, "\r\n")
+			RestoreConsoleCP()
 			os.Exit(130)
 		case 27: // escape sequence (arrow keys)
 			b1, _ := reader.ReadByte()

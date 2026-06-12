@@ -54,8 +54,22 @@ type Symbols struct {
 	Bullet, Arrow, Check, Cross, Warn, Info, Selected, Unselected, Disabled, Pointer string
 }
 
+// legacyWinConsole reports a plain conhost window (classic PowerShell/cmd)
+func legacyWinConsole() bool {
+	if !IsWin {
+		return false
+	}
+	return os.Getenv("WT_SESSION") == "" &&
+		os.Getenv("TERM_PROGRAM") == "" &&
+		os.Getenv("ConEmuANSI") != "ON" &&
+		os.Getenv("TERM") == ""
+}
+
+// glyphsEnabled gates unicode glyphs.
+var glyphsEnabled = colorsEnabled && !legacyWinConsole()
+
 func pick(uni, ascii string) string {
-	if colorsEnabled {
+	if glyphsEnabled {
 		return uni
 	}
 	return ascii
