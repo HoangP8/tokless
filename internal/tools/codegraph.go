@@ -72,7 +72,8 @@ func codegraphRealInstall(opts core.RunOpts) bool {
 	return realInstallRes
 }
 
-func codegraphTestShim(agent string) bool {
+// codegraphConfigureMcp writes the MCP entry tokless-side.
+func codegraphConfigureMcp(agent string) bool {
 	switch agent {
 	case "claude":
 		agents.ConfigureClaudeMcp("codegraph")
@@ -150,17 +151,19 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 func codegraphWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if isTest() {
-			return codegraphTestShim(agent), nil
+			return codegraphConfigureMcp(agent), nil
 		}
 		if opts.DryRun {
 			return codegraphRealInstall(opts), nil
 		}
-		ran := codegraphRealInstall(opts)
-		if agent == "antigravity" && !codegraphVerify(agent) {
-			agents.ConfigureAntigravityMcp("codegraph")
+		if ran := codegraphRealInstall(opts); !ran {
+			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
+		}
+		if !codegraphVerify(agent) {
+			codegraphConfigureMcp(agent)
 		}
 		wireAutoIndex(agent)
-		return ran && codegraphVerify(agent), nil
+		return codegraphVerify(agent), nil
 	}
 }
 
