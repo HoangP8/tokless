@@ -48,13 +48,10 @@ const cavemanOpencodePluginRel = "./plugins/caveman/plugin.js"
 
 func registerCavemanOpencode() {
 	op := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(op.Config)
-	if !ok {
-		return
-	}
+	raw, _ := util.ReadFileSafe(op.Config)
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
-		return
+		cfg = util.NewOrderedMap()
 	}
 	var plugins []any
 	if pv, ok := cfg.Get("plugin"); ok {
