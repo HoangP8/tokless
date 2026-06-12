@@ -96,6 +96,7 @@ func main() {
 func run() int {
 	agents.Register()
 	tools.Register()
+	util.EnsureProcessPath()
 
 	p := parseArgs(os.Args[1:])
 	if p.bools["verbose"] {

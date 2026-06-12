@@ -22,6 +22,24 @@ func ExpectedBinDirs() []string {
 	}
 }
 
+// runtimeBinDirs are process-PATH-only candidate.
+func runtimeBinDirs() []string {
+	if !IsWin {
+		return nil
+	}
+	dirs := []string{nodeInstallDir()}
+	if ad := os.Getenv("APPDATA"); ad != "" {
+		dirs = append(dirs, filepath.Join(ad, "npm"))
+	}
+	if pf := os.Getenv("ProgramFiles"); pf != "" {
+		dirs = append(dirs, filepath.Join(pf, "nodejs"))
+	}
+	if la := os.Getenv("LOCALAPPDATA"); la != "" {
+		dirs = append(dirs, filepath.Join(la, "Programs", "nodejs"))
+	}
+	return dirs
+}
+
 // EnsureProcessPath prepends existing expected dirs to PATH for this process.
 func EnsureProcessPath() []string {
 	sep := ":"
@@ -34,7 +52,7 @@ func EnsureProcessPath() []string {
 		inPath[d] = true
 	}
 	var added []string
-	for _, dir := range ExpectedBinDirs() {
+	for _, dir := range append(ExpectedBinDirs(), runtimeBinDirs()...) {
 		if !inPath[dir] && Exists(dir) {
 			current = append([]string{dir}, current...)
 			added = append(added, dir)
