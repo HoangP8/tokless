@@ -60,7 +60,12 @@ func ensurePersistentPathWindows() []string {
 			missing = append(missing, dir)
 		}
 	}
-	if len(missing) == 0 {
+	return persistWindowsPathDirs(missing)
+}
+
+// persistWindowsPathDirs appends dirs to the user PATH via the raw registry.
+func persistWindowsPathDirs(dirs []string) []string {
+	if len(dirs) == 0 {
 		return nil
 	}
 	ps := `$ErrorActionPreference='Stop'
@@ -71,7 +76,7 @@ if ($null -ne $k.GetValue('Path')) {
 }
 $parts = $cur -split ';' | Where-Object { $_ -ne '' }
 $expanded = $parts | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') }
-$add = @(` + psQuoteList(missing) + `)
+$add = @(` + psQuoteList(dirs) + `)
 $new = $parts
 $changed = $false
 foreach ($d in $add) {
@@ -86,7 +91,7 @@ $k.Close()`
 	if r.Code != 0 || !strings.Contains(r.Stdout, "changed") {
 		return nil
 	}
-	return missing
+	return dirs
 }
 
 func psQuoteList(dirs []string) string {

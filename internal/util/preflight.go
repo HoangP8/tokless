@@ -2,12 +2,13 @@ package util
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-// EnsureNodeForTools makes sure npm+npx exist, offering to install Node LTS.
+// EnsureNodeForTools makes sure usable npm+npx exist, offering to install Node LTS.
 func EnsureNodeForTools() bool {
-	if Which("npm") != "" && Which("npx") != "" {
+	if nodeToolsReady() {
 		return true
 	}
 	L.Warn("CodeGraph and Context-Mode need Node.js (npm/npx), which isn't installed.")
@@ -16,12 +17,35 @@ func EnsureNodeForTools() bool {
 		L.Info("Then re-run: tokless")
 		return false
 	}
-	if installNode() && Which("npm") != "" && Which("npx") != "" {
+	if installNode() && nodeToolsReady() {
 		L.Ok("Node.js installed.")
 		return true
 	}
 	L.Err("Node install didn't complete. Install manually: https://nodejs.org/en/download")
 	return false
+}
+
+// nodeToolsReady reports usable npm+npx.
+func nodeToolsReady() bool {
+	npm, npx := Which("npm"), Which("npx")
+	if npm == "" || npx == "" {
+		return false
+	}
+	if isWSL() && (isWindowsMount(npm) || isWindowsMount(npx)) {
+		L.Warn("Found Windows Node (" + npm + ") in WSL — a Linux Node install is needed here.")
+		return false
+	}
+	return true
+}
+
+func isWSL() bool {
+	return !IsWin && (os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "")
+}
+
+// isWindowsMount matches WSL drvfs paths (/mnt/c/...), not arbitrary /mnt dirs.
+func isWindowsMount(p string) bool {
+	return len(p) > 6 && strings.HasPrefix(p, "/mnt/") && p[6] == '/' &&
+		p[5] >= 'a' && p[5] <= 'z'
 }
 
 func installNode() bool {
@@ -56,13 +80,29 @@ func installNodeUnix() bool {
 }
 
 func installNodeWindows() bool {
-	if Which("winget") == "" {
-		L.Err("winget not found — install Node.js LTS from https://nodejs.org")
-		return false
+	if Which("winget") != "" {
+		r := Run("winget", []string{"install", "-e", "--id", "OpenJS.NodeJS.LTS",
+			"--accept-source-agreements", "--accept-package-agreements", "--silent"}, RunOptions{})
+		if r.Code == 0 {
+			pf := os.Getenv("ProgramFiles")
+			if pf == "" {
+				pf = `C:\Program Files`
+			}
+			for _, d := range []string{
+				filepath.Join(pf, "nodejs"),
+				filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "nodejs"),
+			} {
+				if Exists(filepath.Join(d, "npm.cmd")) {
+					PrependProcessPath(d)
+				}
+			}
+			if Which("npm") != "" && Which("npx") != "" {
+				return true
+			}
+		}
+		L.Warn("winget install didn't complete — falling back to direct download from nodejs.org")
 	}
-	r := Run("winget", []string{"install", "-e", "--id", "OpenJS.NodeJS.LTS",
-		"--accept-source-agreements", "--accept-package-agreements", "--silent"}, RunOptions{})
-	return r.Code == 0
+	return installNodeWindowsZip()
 }
 
 // InstallCargo offers to install Rust toolchain for RTK source builds.
