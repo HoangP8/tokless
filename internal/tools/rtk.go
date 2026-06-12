@@ -98,13 +98,13 @@ func rtkInstallPrebuilt(asset string, opts core.RunOpts) bool {
 		}, "; ")
 		return util.Run("powershell", []string{"-NoProfile", "-Command", ps}, util.RunOptions{}).Code == 0
 	}
-	tmp := filepath.Join(os.TempDir(), asset)
-	if util.Run("sh", []string{"-c", "curl -fsSL '" + url + "' -o '" + tmp + "'"}, util.RunOptions{}).Code != 0 {
+	opts.Reportf("extracting", 0.8)
+	if err := util.DownloadAndExtractTarGz(url, dest); err != nil {
 		return false
 	}
-	opts.Reportf("extracting", 0.8)
-	ex := util.Run("sh", []string{"-c", "tar -xzf '" + tmp + "' -C '" + dest + "' && rm -f '" + tmp + "' && chmod +x '" + dest + "/rtk'"}, util.RunOptions{})
-	return ex.Code == 0
+	rtkBin := filepath.Join(dest, "rtk")
+	_ = os.Chmod(rtkBin, 0o755)
+	return util.Exists(rtkBin)
 }
 
 func rtkTestShim(agent string) {
