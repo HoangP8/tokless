@@ -27,7 +27,11 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	if spawnCmd.Command != "cmd" {
 		t.Errorf("Expected Command == cmd, got %s", spawnCmd.Command)
 	}
-	expectedArgs := []string{"/c", "codegraph", "serve", "--mcp"}
+	// Windows configs carry the resolved absolute shim path (stale-PATH-proof).
+	expectedArgs := []string{"/c", Which("codegraph"), "serve", "--mcp"}
+	if !filepath.IsAbs(expectedArgs[1]) {
+		t.Fatalf("test setup: Which(codegraph) not absolute: %q", expectedArgs[1])
+	}
 	if !reflect.DeepEqual(spawnCmd.Args, expectedArgs) {
 		t.Errorf("Expected Args == %v, got %v", expectedArgs, spawnCmd.Args)
 	}
@@ -39,8 +43,8 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	t.Setenv("PATH", exeDir+";"+cmdDir)
 
 	spawnExe := PickMcpSpawn("codegraph", "serve", "--mcp")
-	if spawnExe.Command != "codegraph" {
-		t.Errorf("Expected Command == codegraph, got %s", spawnExe.Command)
+	if spawnExe.Command != Which("codegraph") || !filepath.IsAbs(spawnExe.Command) {
+		t.Errorf("Expected Command == absolute exe path %q, got %s", Which("codegraph"), spawnExe.Command)
 	}
 	expectedExeArgs := []string{"serve", "--mcp"}
 	if !reflect.DeepEqual(spawnExe.Args, expectedExeArgs) {
@@ -57,7 +61,10 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	if spawnFallback.Command != "cmd" {
 		t.Errorf("Expected fallback Command == cmd, got %s", spawnFallback.Command)
 	}
-	expectedFallbackArgs := []string{"/c", "npx", "--no-install", "@colbymchenry/codegraph"}
+	expectedFallbackArgs := []string{"/c", Which("npx"), "--no-install", "@colbymchenry/codegraph"}
+	if !filepath.IsAbs(expectedFallbackArgs[1]) {
+		t.Fatalf("test setup: Which(npx) not absolute: %q", expectedFallbackArgs[1])
+	}
 	if !reflect.DeepEqual(spawnFallback.Args, expectedFallbackArgs) {
 		t.Errorf("Expected fallback Args == %v, got %v", expectedFallbackArgs, spawnFallback.Args)
 	}

@@ -21,25 +21,40 @@ func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 	if extraArgs == nil {
 		extraArgs = []string{}
 	}
-	if Which(bin) != "" {
-		return wrapCmdShim(McpSpawn{Command: bin, Args: extraArgs})
+	if p := Which(bin); p != "" {
+		return wrapCmdShim(McpSpawn{Command: spawnCommand(bin, p), Args: extraArgs})
 	}
 	pkg, ok := pkgForBin[bin]
 	if !ok {
 		pkg = bin
 	}
 	args := append([]string{"--no-install", pkg}, extraArgs...)
-	return wrapCmdShim(McpSpawn{Command: "npx", Args: args})
+	cmd := "npx"
+	if p := Which("npx"); p != "" {
+		cmd = spawnCommand("npx", p)
+	}
+	return wrapCmdShim(McpSpawn{Command: cmd, Args: args})
+}
+
+// spawnCommand picks what goes into the config.
+func spawnCommand(bin, resolved string) string {
+	if IsWin && resolved != "" {
+		return resolved
+	}
+	return bin
 }
 
 func wrapCmdShim(s McpSpawn) McpSpawn {
 	if !IsWin {
 		return s
 	}
-	p := Which(s.Command)
+	p := s.Command
+	if !filepath.IsAbs(p) {
+		p = Which(s.Command)
+	}
 	ext := strings.ToLower(filepath.Ext(p))
 	if ext != ".cmd" && ext != ".bat" {
 		return s
 	}
-	return McpSpawn{Command: "cmd", Args: append([]string{"/c", s.Command}, s.Args...)}
+	return McpSpawn{Command: "cmd", Args: append([]string{"/c", p}, s.Args...)}
 }

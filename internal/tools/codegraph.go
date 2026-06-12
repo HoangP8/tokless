@@ -159,9 +159,7 @@ func codegraphWire(agent string) core.AgentFn {
 		if ran := codegraphRealInstall(opts); !ran {
 			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
 		}
-		if !codegraphVerify(agent) {
-			codegraphConfigureMcp(agent)
-		}
+		codegraphConfigureMcp(agent)
 		wireAutoIndex(agent)
 		return codegraphVerify(agent), nil
 	}
