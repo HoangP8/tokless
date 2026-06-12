@@ -84,7 +84,7 @@ func RunUpdate(opts InitOptions) int {
 	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless")) + util.C.Gray("  global token-saver for AI agents"))
 
 	if !opts.DryRun {
-		util.EnsureNodeForTools()
+		util.EnsureDeps(true, false)
 	}
 	allTools := core.ListTools()
 	var tools []*core.ToolManifest

@@ -44,15 +44,14 @@ func RunInit(opts InitOptions) int {
 		tools = allTools
 	}
 
+	needNode, needGit := false, false
+	for _, t := range tools {
+		needNode = needNode || t.Channel == core.ChannelNpm
+		needGit = needGit || t.NeedsGit
+	}
 	nodeOK, gitOK := true, true
 	if !opts.DryRun {
-		nodeOK = util.EnsureNodeForTools()
-		for _, t := range tools {
-			if t.NeedsGit {
-				gitOK = util.EnsureGitForTools()
-				break
-			}
-		}
+		nodeOK, gitOK = util.EnsureDeps(needNode, needGit)
 	}
 
 	toolBar := util.NewProgress("")

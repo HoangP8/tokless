@@ -6,43 +6,53 @@ import (
 	"strings"
 )
 
-// EnsureNodeForTools makes sure usable npm+npx exist, offering to install Node LTS.
-func EnsureNodeForTools() bool {
-	if nodeToolsReady() {
-		return true
+// EnsureDeps detects all missing external deps up front and offers one
+// combined install.
+func EnsureDeps(needNode, needGit bool) (nodeOK, gitOK bool) {
+	nodeOK = !needNode || nodeToolsReady()
+	gitOK = !needGit || Which("git") != ""
+	if nodeOK && gitOK {
+		return
 	}
-	L.Warn("CodeGraph and Context-Mode need Node.js (npm/npx), which isn't installed.")
-	if !Confirm("Install the latest Node.js LTS now?", true) {
-		L.Info("Skipping Node install. Install it later: https://nodejs.org/en/download")
-		L.Info("Then re-run: tokless")
-		return false
+	var missing []string
+	if !nodeOK {
+		missing = append(missing, "Node.js (CodeGraph, Context-Mode)")
 	}
-	if installNode() && nodeToolsReady() {
-		L.Ok("Node.js installed.")
-		return true
+	if !gitOK {
+		missing = append(missing, "git (Caveman)")
 	}
-	L.Err("Node install didn't complete. Install manually: https://nodejs.org/en/download")
-	return false
+	L.Warn("Missing: " + strings.Join(missing, ", "))
+	if !Confirm("Install now?", true) {
+		L.Info("Skipping. Node: https://nodejs.org/en/download · git: https://git-scm.com/downloads")
+		return
+	}
+	if !nodeOK {
+		if installNode() && nodeToolsReady() {
+			L.Ok("Node.js installed.")
+			nodeOK = true
+		} else {
+			L.Err("Node install didn't complete. Manual: https://nodejs.org/en/download")
+		}
+	}
+	if !gitOK {
+		if installGit() && Which("git") != "" {
+			L.Ok("Git installed.")
+			gitOK = true
+		} else {
+			L.Err("Git install didn't complete. Manual: https://git-scm.com/downloads")
+		}
+	}
+	return
 }
 
-func EnsureGitForTools() bool {
-	if Which("git") != "" {
+func installGit() bool {
+	if os.Getenv("TOKLESS_TEST") == "1" {
 		return true
 	}
-	L.Warn("Caveman needs git (npm github: installs and skills clones), which isn't installed.")
-	if !IsWin {
-		L.Info("Install git with your package manager (apt/dnf/brew), then re-run: tokless")
-		return false
+	if IsWin {
+		return installGitWindowsZip()
 	}
-	if !Confirm("Install MinGit (portable, ~30 MB) now?", true) {
-		L.Info("Skipping git install. Get it later: https://git-scm.com/downloads")
-		return false
-	}
-	if installGitWindowsZip() && Which("git") != "" {
-		L.Ok("MinGit installed.")
-		return true
-	}
-	L.Err("Git install didn't complete. Install manually: https://git-scm.com/downloads")
+	L.Info("Install git with your package manager (apt/dnf/brew), then re-run: tokless")
 	return false
 }
 
@@ -80,24 +90,7 @@ func installNode() bool {
 }
 
 func installNodeUnix() bool {
-	if Which("curl") == "" {
-		L.Err("Need curl to install Node.")
-		return false
-	}
-	fnmHome := os.Getenv("HOME") + "/.local/share/fnm"
-	if Run("sh", []string{"-c", "curl -fsSL https://fnm.vercel.app/install | bash -s -- --skip-shell"}, RunOptions{}).Code != 0 {
-		return false
-	}
-	r := Run("sh", []string{"-c",
-		`eval "$(` + fnmHome + `/fnm env --shell bash)" && ` + fnmHome + `/fnm install --lts && ` + fnmHome + `/fnm use lts-latest && echo "$PATH"`,
-	}, RunOptions{Capture: true})
-	if r.Code != 0 {
-		return false
-	}
-	if p := strings.TrimSpace(r.Stdout); p != "" {
-		os.Setenv("PATH", p)
-	}
-	return Which("node") != "" && Which("npm") != ""
+	return installNodeUnixTarball()
 }
 
 func installNodeWindows() bool {
