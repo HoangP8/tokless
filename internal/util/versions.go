@@ -25,7 +25,7 @@ type cacheShape struct {
 }
 
 func cachePath() string {
-	home := resolveHome()
+	home := Home()
 	if home == "" {
 		return ""
 	}
@@ -201,7 +201,7 @@ const cavemanVersionMarker = ".tokless-version"
 
 // cavemanVersionDirs lists per-agent caveman install dirs, priority order.
 func cavemanVersionDirs() []string {
-	home := resolveHome()
+	home := Home()
 
 	claude := filepath.Join(home, ".claude")
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
@@ -213,12 +213,16 @@ func cavemanVersionDirs() []string {
 		codex = d
 	}
 
+	gemini := filepath.Join(home, ".gemini")
+
 	return []string{
 		filepath.Join(OpenCodePathsResolved().Dir, "plugins", "caveman"),
 		filepath.Join(claude, "plugins", "marketplaces", "caveman"),
 		filepath.Join(claude, "plugins", "caveman"),
 		filepath.Join(codex, "skills", "caveman"),
 		filepath.Join(home, ".agents", "skills", "caveman"),
+		filepath.Join(gemini, "antigravity", "skills", "caveman"),
+		filepath.Join(gemini, "config", "skills", "caveman"),
 	}
 }
 

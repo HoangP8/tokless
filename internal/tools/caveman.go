@@ -10,7 +10,7 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func cavemanExec(bin string, args []string, opts core.RunOpts, dryHint string) (bool, error) {
+func cavemanExec(bin string, args []string, opts core.RunOpts, dryHint string, env ...string) (bool, error) {
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would run: " + dryHint)
 		return true, nil
@@ -18,12 +18,20 @@ func cavemanExec(bin string, args []string, opts core.RunOpts, dryHint string) (
 	if isTest() {
 		return true, nil
 	}
-	r := util.Run(bin, args, util.RunOptions{Capture: true})
+	r := util.Run(bin, args, util.RunOptions{Capture: true, Env: env})
 	if r.Code != 0 {
 		util.L.Err("caveman command failed: " + clip(r.Stderr))
 		return false, nil
 	}
 	return true, nil
+}
+
+func cavemanOpencodeInstallEnv() []string {
+	dir := util.OpenCodePathsResolved().Dir
+	if filepath.Base(dir) != "opencode" {
+		return nil
+	}
+	return []string{"XDG_CONFIG_HOME=" + filepath.Dir(dir)}
 }
 
 func ensureOpencodeCommandsDir() {
@@ -371,7 +379,7 @@ var caveman = &core.ToolManifest{
 					return " --force"
 				}
 				return ""
-			}())
+			}(), cavemanOpencodeInstallEnv()...)
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
