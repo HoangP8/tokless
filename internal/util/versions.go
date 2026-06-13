@@ -1,14 +1,18 @@
 package util
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -83,18 +87,48 @@ func fetchJSON(u string, out any) bool {
 func strp(s string) *string { return &s }
 
 func npmLatest(pkg string) *string {
+	// Primary: ask npm itself, so the user's registry/mirror/proxy/auth from
+	// .npmrc are honored (a hardcoded npmjs.org GET ignores all of that and
+	// fails on mirrored/proxied networks where npm install works fine).
+	if v := npmViewLatest(pkg); v != nil {
+		return v
+	}
+	// Fallback (npm not on PATH): direct registry GET against the configured base.
 	var data struct {
 		DistTags struct {
 			Latest string `json:"latest"`
 		} `json:"dist-tags"`
 	}
-	if !fetchJSON("https://registry.npmjs.org/"+url.QueryEscape(pkg), &data) {
+	if !fetchJSON(npmRegistryBase()+url.QueryEscape(pkg), &data) {
 		return nil
 	}
 	if data.DistTags.Latest == "" {
 		return nil
 	}
 	return strp(data.DistTags.Latest)
+}
+
+// npmViewLatest resolves a package's latest version via the npm CLI (nil if npm
+// is absent, times out, or errors). Uses --json to avoid notifier/stderr noise.
+func npmViewLatest(pkg string) *string {
+	if Which("npm") == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, "npm", "info", pkg+"@latest", "version", "--json")
+	var out bytes.Buffer
+	c.Stdout = &out
+	c.Stderr = nil
+	if err := c.Run(); err != nil {
+		return nil
+	}
+	s := strings.TrimSpace(out.String())
+	s = strings.Trim(s, "\"") // --json wraps a bare version string in quotes
+	if m := reSemver.FindStringSubmatch(s); m != nil {
+		return strp(m[1])
+	}
+	return nil
 }
 
 func githubLatestRelease(repo string) *string {
@@ -330,12 +364,33 @@ func cachedLatest(force bool) map[string]*string {
 		}
 	}
 
-	fetched := false
+	// Fetch needed ids in parallel; npm CLI spawn is heavy, so pay it once in
+	// wall-clock time rather than once per tool.
+	var todo []string
 	for _, id := range toolIDs {
 		if result[id] != nil && fresh && !force {
 			continue
 		}
-		if v := latestFetcher(id); v != nil {
+		todo = append(todo, id)
+	}
+	fetched := false
+	if len(todo) > 0 {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		got := make(map[string]*string, len(todo))
+		for _, id := range todo {
+			wg.Add(1)
+			go func(id string) {
+				defer wg.Done()
+				if v := latestFetcher(id); v != nil {
+					mu.Lock()
+					got[id] = v
+					mu.Unlock()
+				}
+			}(id)
+		}
+		wg.Wait()
+		for id, v := range got {
 			result[id] = v
 			fetched = true
 		}
