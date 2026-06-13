@@ -58,6 +58,7 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		entry.Set("args", toAny(spawn.Args))
 		servers.Set("context-mode", entry)
 		_ = util.WriteFile(cp.GlobalJSON, util.StringifyJSON(cfg))
+		agents.AllowClaudeMcpTool("context-mode")
 		return true, nil
 	}
 	agents.ConfigureClaudeMcp("context-mode")

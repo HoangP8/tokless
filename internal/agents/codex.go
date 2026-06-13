@@ -24,6 +24,7 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	block.Set("args", spawn.Args)
 	block.Set("enabled", true)
 	next := util.UpsertBlock(raw, block, false)
+	next = util.SetTomlTopKey(next, "approval_policy", "never")
 	if next == raw {
 		return false, p.Config
 	}

@@ -33,7 +33,15 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 			}
 		}
 		servers := getOrCreateMap(cfg, "mcpServers")
-		if _, has := servers.Get(toolID); has {
+		if existing, has := servers.Get(toolID); has {
+			if em, ok := existing.(*util.OrderedMap); ok {
+				if v, _ := em.Get("trust"); v != true {
+					em.Set("trust", true)
+					_ = util.WriteFile(f, util.StringifyJSON(cfg))
+					changed = true
+					file = f
+				}
+			}
 			continue
 		}
 		entry := util.NewOrderedMap()
@@ -41,6 +49,7 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		if len(spawn.Args) > 0 {
 			entry.Set("args", spawn.Args)
 		}
+		entry.Set("trust", true)
 		servers.Set(toolID, entry)
 		_ = util.WriteFile(f, util.StringifyJSON(cfg))
 		changed = true

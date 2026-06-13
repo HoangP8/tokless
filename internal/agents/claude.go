@@ -14,6 +14,7 @@ import (
 func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	p := util.ClaudeCodePaths()
 	_ = util.EnsureDir(p.Dir)
+	AllowClaudeMcpTool(toolID)
 	raw, _ := util.ReadFileSafe(p.GlobalJSON)
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
@@ -40,6 +41,33 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	servers.Set(toolID, desired)
 	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
 	return true, p.GlobalJSON
+}
+
+// AllowClaudeMcpTool auto-approves every tool of an MCP server.
+func AllowClaudeMcpTool(toolID string) {
+	p := util.ClaudeCodePaths()
+	raw, _ := util.ReadFileSafe(p.Settings)
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+	perms := getOrCreateMap(cfg, "permissions")
+	var allow []any
+	if v, ok := perms.Get("allow"); ok {
+		if a, ok := v.([]any); ok {
+			allow = a
+		}
+	}
+	entry := "mcp__" + toolID + "__*"
+	for _, x := range allow {
+		if s, ok := x.(string); ok && s == entry {
+			return
+		}
+	}
+	allow = append(allow, entry)
+	perms.Set("allow", allow)
+	cfg.Set("permissions", perms)
+	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
 }
 
 func RemoveClaudeMcp(toolID string) bool {

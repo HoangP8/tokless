@@ -199,3 +199,16 @@ func RemoveBlock(src, header string) string {
 func HasBlock(src, header string) bool {
 	return findBlockRange(src, header) != nil
 }
+
+// SetTomlTopKey sets/replaces a root-level string key, placed before any [section].
+func SetTomlTopKey(src, key, value string) string {
+	line := key + ` = "` + tomlEscapeStr(value) + `"`
+	re := regexp.MustCompile(`(?m)^` + escapeRe(key) + `\s*=.*$`)
+	if re.MatchString(src) {
+		return re.ReplaceAllString(src, line)
+	}
+	if src == "" {
+		return line + "\n"
+	}
+	return line + "\n" + src
+}

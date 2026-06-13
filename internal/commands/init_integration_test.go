@@ -116,6 +116,9 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(codexConfigStr, "[features]") {
 		t.Errorf("config.toml doesn't contain '[features]', got: %s", codexConfigStr)
 	}
+	if !strings.Contains(codexConfigStr, `approval_policy = "never"`) {
+		t.Errorf("config.toml doesn't auto-approve (approval_policy=never), got: %s", codexConfigStr)
+	}
 
 	// 4. <home>/.codex/hooks.json contains "context-mode hook codex pretooluse"
 	codexHooksPath := filepath.Join(tempdir, ".codex", "hooks.json")
@@ -140,6 +143,18 @@ func TestInitSandboxWiring(t *testing.T) {
 	}
 	if !strings.Contains(agyMcpStr, "context-mode") {
 		t.Errorf("antigravity mcp_config.json doesn't contain 'context-mode', got: %s", agyMcpStr)
+	}
+	if !strings.Contains(agyMcpStr, "trust") {
+		t.Errorf("antigravity mcp_config.json doesn't auto-approve (trust), got: %s", agyMcpStr)
+	}
+
+	// Claude auto-approves tokless MCP tools via permissions.allow in settings.json.
+	claudeSettings, err := os.ReadFile(filepath.Join(tempdir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("failed to read claude settings.json: %v", err)
+	}
+	if !strings.Contains(string(claudeSettings), "mcp__codegraph__*") {
+		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
 	// 6. project-scoped antigravity artifacts: rtk rules + context-mode routing GEMINI.md
