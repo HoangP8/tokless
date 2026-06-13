@@ -157,22 +157,7 @@ func rtkTestShim(agent string) {
 		dir := util.OpenCodePathsResolved().PluginsDir
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk plugin shim (tokless test mode)\nexport const Plugin = async () => ({});\n")
-	case "antigravity":
-		if cwd, err := os.Getwd(); err == nil {
-			dir := filepath.Join(cwd, ".agents", "rules")
-			_ = os.MkdirAll(dir, 0o755)
-			writeIfMissing(filepath.Join(dir, "antigravity-rtk-rules.md"), "# RTK - Rust Token Killer (Google Antigravity)\n(tokless test stub)\n")
-		}
 	}
-}
-
-// rtkAntigravityRules is upstream's project-scoped rules file path.
-func rtkAntigravityRules() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(cwd, ".agents", "rules", "antigravity-rtk-rules.md")
 }
 
 func claudeSettingsHasRtkHook(settingsPath string) bool {
@@ -210,8 +195,6 @@ func rtkWire(agent string) core.AgentFn {
 			args = append(args, "--opencode")
 		case "codex":
 			args = append(args, "--codex")
-		case "antigravity":
-			args = []string{"init", "--agent", "antigravity"}
 		default: // claude
 			args = append(args, "--auto-patch")
 		}
@@ -246,10 +229,27 @@ var rtk = &core.ToolManifest{
 	Channel:     core.ChannelGitHub,
 	Install:     rtkEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":      rtkWire("claude"),
-		"opencode":    rtkWire("opencode"),
-		"codex":       rtkWire("codex"),
-		"antigravity": rtkWire("antigravity"),
+		"claude":   rtkWire("claude"),
+		"opencode": rtkWire("opencode"),
+		"codex":    rtkWire("codex"),
+	},
+	IndexProject: func(dir string, opts core.RunOpts) (bool, error) {
+		r := util.Run("rtk", []string{"init", "--agent", "antigravity"}, util.RunOptions{Cwd: dir, Capture: true})
+		return r.Code == 0, nil
+	},
+	UnwireFor: map[string]core.AgentFn{
+		"claude": func(core.RunOpts) (bool, error) {
+			util.Run("rtk", []string{"init", "--uninstall", "--agent", "claude"}, util.RunOptions{})
+			return true, nil
+		},
+		"opencode": func(core.RunOpts) (bool, error) {
+			util.Run("rtk", []string{"init", "--uninstall", "--agent", "opencode"}, util.RunOptions{})
+			return true, nil
+		},
+		"codex": func(core.RunOpts) (bool, error) {
+			util.Run("rtk", []string{"init", "--uninstall", "--agent", "codex"}, util.RunOptions{})
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -260,10 +260,6 @@ var rtk = &core.ToolManifest{
 		},
 		"codex": func() *bool {
 			return core.BoolPtr(util.Exists(filepath.Join(util.CodexPathsResolved().Dir, "RTK.md")))
-		},
-		"antigravity": func() *bool {
-			p := rtkAntigravityRules()
-			return core.BoolPtr(p != "" && util.Exists(p))
 		},
 	},
 }
