@@ -146,8 +146,17 @@ func TestInitSandboxWiring(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-rtk-rules.md")); err != nil {
 		t.Errorf("antigravity rtk rules not written: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-codegraph-rules.md")); err != nil {
+		t.Errorf("antigravity codegraph rules not written: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(proj, "GEMINI.md")); err != nil {
 		t.Errorf("antigravity GEMINI.md routing file not written: %v", err)
+	}
+
+	// 7. Antigravity codegraph MCP launch is wrapped through `tokless run-mcp`
+	// so opening a project in the IDE auto-indexes (IDE has no startup hook).
+	if !strings.Contains(agyMcpStr, "run-mcp") {
+		t.Errorf("antigravity mcp_config.json codegraph entry not wrapped with run-mcp, got: %s", agyMcpStr)
 	}
 }
 

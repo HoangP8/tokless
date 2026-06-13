@@ -311,12 +311,8 @@ func codexCavemanInstalled() bool {
 		util.Exists(filepath.Join(root, "skills", "caveman"))
 }
 
-// antigravityCavemanInstalled checks only roots antigravity verifiably reads:
-// workspace .agents/skills, global ~/.gemini/config/skills, legacy antigravity/skills.
+// antigravityCavemanInstalled checks the global skills roots antigravity reads.
 func antigravityCavemanInstalled() bool {
-	if cwd, err := os.Getwd(); err == nil && util.Exists(filepath.Join(cwd, ".agents", "skills", "caveman")) {
-		return true
-	}
 	return util.Exists(filepath.Join(util.Home(), ".gemini", "config", "skills", "caveman")) ||
 		util.Exists(filepath.Join(util.Home(), ".gemini", "antigravity", "skills", "caveman"))
 }

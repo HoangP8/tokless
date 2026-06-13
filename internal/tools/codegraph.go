@@ -133,7 +133,30 @@ func codegraphVerify(agent string) bool {
 	return false
 }
 
+const codegraphAgentRule = `# CodeGraph (Google Antigravity)
+
+Query the code knowledge graph via the ` + "`codegraph`" + ` MCP server before grep/find or reading files: locate symbols, callers, and call paths. Rebuild with ` + "`codegraph init -i`" + `.
+`
+
+func codegraphAgentRulePath(dir string) string {
+	return filepath.Join(dir, ".agents", "rules", "antigravity-codegraph-rules.md")
+}
+
+func writeCodegraphAgentRule(dir string) {
+	_ = os.MkdirAll(filepath.Join(dir, ".agents", "rules"), 0o755)
+	writeIfMissing(codegraphAgentRulePath(dir), codegraphAgentRule)
+}
+
+func codegraphIndexed(dir string) bool {
+	return util.Exists(filepath.Join(dir, ".codegraph")) && util.Exists(codegraphAgentRulePath(dir))
+}
+
 func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
+	if isTest() {
+		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
+		writeCodegraphAgentRule(dir)
+		return true, nil
+	}
 	if util.Which("codegraph") == "" {
 		return false, nil
 	}
@@ -141,11 +164,16 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would run: codegraph init -i  (in " + dir + ")")
 		return true, nil
 	}
-	res := util.Run("codegraph", []string{"init", "-i"}, util.RunOptions{Cwd: dir, Capture: true})
-	if res.Code != 0 {
-		res = util.Run("codegraph", []string{"init"}, util.RunOptions{Cwd: dir, Capture: true})
+	ok := util.Exists(filepath.Join(dir, ".codegraph"))
+	if !ok {
+		res := util.Run("codegraph", []string{"init", "-i"}, util.RunOptions{Cwd: dir, Capture: true})
+		if res.Code != 0 {
+			res = util.Run("codegraph", []string{"init"}, util.RunOptions{Cwd: dir, Capture: true})
+		}
+		ok = res.Code == 0
 	}
-	return res.Code == 0, nil
+	writeCodegraphAgentRule(dir)
+	return ok, nil
 }
 
 func codegraphWire(agent string) core.AgentFn {
@@ -198,7 +226,7 @@ var codegraph = &core.ToolManifest{
 	Channel:      core.ChannelNpm,
 	Install:      codegraphEnsureInstalled,
 	IndexProject: codegraphIndexProject,
-	Indexed:      func(dir string) bool { return util.Exists(filepath.Join(dir, ".codegraph")) },
+	Indexed:      codegraphIndexed,
 	IndexReady:   func() bool { return util.Which("codegraph") != "" },
 	WireFor: map[string]core.AgentFn{
 		"claude":      codegraphWire("claude"),

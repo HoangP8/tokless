@@ -98,6 +98,10 @@ func run() int {
 	tools.Register()
 	util.EnsureProcessPath()
 
+	if len(os.Args) >= 3 && os.Args[1] == "run-mcp" {
+		return commands.RunMcp(os.Args[2:])
+	}
+
 	p := parseArgs(os.Args[1:])
 	if p.bools["verbose"] {
 		util.SetVerbose(true)

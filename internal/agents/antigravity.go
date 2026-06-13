@@ -20,6 +20,7 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
 		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
+		spawn = wrapAutoIndex(spawn)
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}
@@ -46,6 +47,16 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		file = f
 	}
 	return changed, file
+}
+
+// wrapAutoIndex routes the MCP launch through `tokless run-mcp`.
+func wrapAutoIndex(s util.McpSpawn) util.McpSpawn {
+	self, err := os.Executable()
+	if err != nil {
+		return s
+	}
+	args := append([]string{"run-mcp", s.Command}, s.Args...)
+	return util.McpSpawn{Command: self, Args: args}
 }
 
 // AntigravityMcpHas reports whether every surface's MCP config registers the tool.
