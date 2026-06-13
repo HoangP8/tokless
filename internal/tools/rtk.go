@@ -96,7 +96,11 @@ func rtkInstallPrebuilt(asset string, opts core.RunOpts) bool {
 			"Expand-Archive -Force -Path $env:TEMP\\rtk.zip -DestinationPath '" + dest + "'",
 			"Remove-Item $env:TEMP\\rtk.zip",
 		}, "; ")
-		return util.Run("powershell", []string{"-NoProfile", "-Command", ps}, util.RunOptions{}).Code == 0
+		if util.Run("powershell", []string{"-NoProfile", "-Command", ps}, util.RunOptions{}).Code != 0 {
+			return false
+		}
+		util.PrependProcessPath(dest)
+		return true
 	}
 	opts.Reportf("extracting", 0.8)
 	if err := util.DownloadAndExtractTarGz(url, dest); err != nil {
@@ -104,7 +108,11 @@ func rtkInstallPrebuilt(asset string, opts core.RunOpts) bool {
 	}
 	rtkBin := filepath.Join(dest, "rtk")
 	_ = os.Chmod(rtkBin, 0o755)
-	return util.Exists(rtkBin)
+	if !util.Exists(rtkBin) {
+		return false
+	}
+	util.PrependProcessPath(dest)
+	return true
 }
 
 func rtkTestShim(agent string) {
