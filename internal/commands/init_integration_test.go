@@ -65,6 +65,13 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("RunInit returned non-zero code: %d", code)
 	}
 
+	indexCode := commands.RunIndex(commands.InitOptions{
+		Agents: []string{"claude", "opencode", "codex", "antigravity"},
+	}, false)
+	if indexCode != 0 {
+		t.Errorf("RunIndex returned non-zero code: %d", indexCode)
+	}
+
 	// 1. <home>/.claude.json contains "codegraph" and "context-mode"
 	claudePath := filepath.Join(tempdir, ".claude.json")
 	claudeData, err := os.ReadFile(claudePath)

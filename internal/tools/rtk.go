@@ -234,6 +234,12 @@ var rtk = &core.ToolManifest{
 		"codex":    rtkWire("codex"),
 	},
 	IndexProject: func(dir string, opts core.RunOpts) (bool, error) {
+		if os.Getenv("TOKLESS_TEST") == "1" {
+			rulesDir := filepath.Join(dir, ".agents", "rules")
+			_ = os.MkdirAll(rulesDir, 0o755)
+			writeIfMissing(filepath.Join(rulesDir, "antigravity-rtk-rules.md"), "# RTK - Rust Token Killer (Google Antigravity)\n(tokless test stub)\n")
+			return true, nil
+		}
 		r := util.Run("rtk", []string{"init", "--agent", "antigravity"}, util.RunOptions{Cwd: dir, Capture: true})
 		return r.Code == 0, nil
 	},
