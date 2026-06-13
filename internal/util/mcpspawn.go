@@ -38,7 +38,7 @@ func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 
 // spawnCommand picks what goes into the config.
 func spawnCommand(bin, resolved string) string {
-	if IsWin && resolved != "" {
+	if resolved != "" {
 		return resolved
 	}
 	return bin

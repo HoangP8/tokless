@@ -85,7 +85,7 @@ func TestPickMcpSpawnIsWinFalse(t *testing.T) {
 	os.WriteFile(binPath, []byte("dummy"), 0755)
 
 	spawn := PickMcpSpawn("codegraph")
-	if spawn.Command != "codegraph" {
-		t.Errorf("Expected Command == codegraph, got %s", spawn.Command)
+	if spawn.Command != binPath {
+		t.Errorf("Expected Command == %s (absolute resolved path), got %s", binPath, spawn.Command)
 	}
 }
