@@ -34,23 +34,21 @@ func cachePath() string {
 
 const cacheTTL = 6 * time.Hour
 
-func loadCache() *cacheShape {
+func loadCache() (*cacheShape, bool) {
 	p := cachePath()
 	if p == "" {
-		return nil
+		return nil, false
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var obj cacheShape
 	if json.Unmarshal(b, &obj) != nil {
-		return nil
+		return nil, false
 	}
-	if time.Since(time.UnixMilli(obj.Ts)) > cacheTTL {
-		return nil
-	}
-	return &obj
+	fresh := time.Since(time.UnixMilli(obj.Ts)) <= cacheTTL
+	return &obj, fresh
 }
 
 func saveCache(m map[string]VersionInfo) {
@@ -154,7 +152,11 @@ func npmInstalledVersion(pkg string) *string {
 }
 
 // GatherVersions returns version info for all tools, cached for 6h.
-func GatherVersions() map[string]VersionInfo {
+func GatherVersions() map[string]VersionInfo { return gatherVersions(false) }
+
+func GatherVersionsForce() map[string]VersionInfo { return gatherVersions(true) }
+
+func gatherVersions(force bool) map[string]VersionInfo {
 	if os.Getenv("TOKLESS_TEST") == "1" {
 		return map[string]VersionInfo{
 			"rtk":          {Installed: strp("0.40.0"), Latest: strp("0.40.0"), Channel: "github"},
@@ -165,7 +167,7 @@ func GatherVersions() map[string]VersionInfo {
 		}
 	}
 	// Latest (slow, network) is cached; installed (fast, local) is always live.
-	latest := cachedLatest()
+	latest := cachedLatest(force)
 	out := map[string]VersionInfo{}
 	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github"}
 	out["caveman"] = VersionInfo{Installed: cavemanInstalledVersion(), Latest: latest["caveman"], Channel: "github"}
@@ -177,7 +179,7 @@ func GatherVersions() map[string]VersionInfo {
 
 // LatestVersionFor returns one tool's latest available version (cached).
 func LatestVersionFor(id string) *string {
-	return cachedLatest()[id]
+	return cachedLatest(false)[id]
 }
 
 // InstalledVersionFor reads one tool's live installed version (nil if absent).
@@ -279,7 +281,7 @@ func cavemanInstalledVersion() *string {
 	}
 
 	if presentDir != "" {
-		if latest := cachedLatest()["caveman"]; latest != nil {
+		if latest := cachedLatest(false)["caveman"]; latest != nil {
 			_ = os.WriteFile(filepath.Join(presentDir, cavemanVersionMarker), []byte(*latest+"\n"), 0o644)
 			return latest
 		}
@@ -309,7 +311,7 @@ func fetchLatestFor(id string) *string {
 }
 
 // cachedLatest returns the latest-version lookups, cached to disk (6h TTL).
-func cachedLatest() map[string]*string {
+func cachedLatest(force bool) map[string]*string {
 	if os.Getenv("TOKLESS_TEST") == "1" {
 		m := map[string]*string{}
 		for k, v := range GatherVersions() {
@@ -318,19 +320,19 @@ func cachedLatest() map[string]*string {
 		return m
 	}
 
+	cache, fresh := loadCache()
 	result := map[string]*string{}
-	if c := loadCache(); c != nil {
-		for k, v := range c.Map {
+	if cache != nil {
+		for k, v := range cache.Map {
 			if v.Latest != nil {
 				result[k] = v.Latest
 			}
 		}
 	}
 
-	// Fetch any tool still missing a known-good latest version.
 	fetched := false
 	for _, id := range toolIDs {
-		if result[id] != nil {
+		if result[id] != nil && fresh && !force {
 			continue
 		}
 		if v := latestFetcher(id); v != nil {
@@ -339,8 +341,8 @@ func cachedLatest() map[string]*string {
 		}
 	}
 
-	// Persist only on change (never store nils).
-	if fetched {
+	// Persist on any successful fetch, or when forced.
+	if fetched || force {
 		store := map[string]VersionInfo{}
 		for k, v := range result {
 			if v != nil {

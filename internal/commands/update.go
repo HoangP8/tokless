@@ -16,13 +16,12 @@ func RunUpdate(opts InitOptions) int {
 		util.L.Info("Dry run — would probe registries and reinstall changed tools only.")
 	}
 
-	util.BustVersionCache()
 	if stdoutTTY() {
 		fmt.Print("  " + util.C.Gray("probing upstream…"))
 	} else {
 		util.L.Raw("  " + util.C.Gray("probing upstream…"))
 	}
-	versions := util.GatherVersions()
+	versions := util.GatherVersionsForce()
 	if stdoutTTY() {
 		fmt.Print("\r\x1b[2K")
 	} else {
