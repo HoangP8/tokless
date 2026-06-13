@@ -50,6 +50,44 @@ func TestClaudeAutoIndexMergeIdempotentUnwire(t *testing.T) {
 	}
 }
 
+func TestGeminiAutoIndexMergeIdempotentUnwire(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("HOME", dir)
+	defer os.Unsetenv("HOME")
+	util.SetHomeOverride(dir)
+	defer util.SetHomeOverride("")
+	p := geminiSettingsPath()
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	os.WriteFile(p, []byte(`{"theme":"dark","hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"echo user"}]}]}}`), 0o644)
+
+	wireGeminiAutoIndex()
+	s, _ := os.ReadFile(p)
+	if !strings.Contains(string(s), "echo user") {
+		t.Fatal("existing user hook lost")
+	}
+	if !strings.Contains(string(s), autoIndexCmd) {
+		t.Fatal("auto-index hook not added to gemini settings")
+	}
+	if !strings.Contains(string(s), "dark") {
+		t.Fatal("unrelated gemini settings lost")
+	}
+
+	wireGeminiAutoIndex()
+	s2, _ := os.ReadFile(p)
+	if strings.Count(string(s2), autoIndexCmd) != 1 {
+		t.Fatalf("gemini auto-index not idempotent: %d", strings.Count(string(s2), autoIndexCmd))
+	}
+
+	unwireGeminiAutoIndex()
+	s3, _ := os.ReadFile(p)
+	if strings.Contains(string(s3), autoIndexCmd) {
+		t.Fatal("gemini auto-index not removed on unwire")
+	}
+	if !strings.Contains(string(s3), "echo user") {
+		t.Fatal("unwire clobbered user gemini hook")
+	}
+}
+
 func TestCodexAutoIndexMergeWithContextMode(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("CODEX_HOME", dir)

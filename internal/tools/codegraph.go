@@ -203,6 +203,8 @@ func wireAutoIndex(agent string) {
 		wireCodexAutoIndex()
 	case "opencode":
 		wireOpencodeAutoIndex()
+	case "antigravity":
+		wireGeminiAutoIndex()
 	}
 }
 
@@ -214,6 +216,8 @@ func unwireAutoIndex(agent string) {
 		unwireCodexAutoIndex()
 	case "opencode":
 		unwireOpencodeAutoIndex()
+	case "antigravity":
+		unwireGeminiAutoIndex()
 	}
 }
 
@@ -259,6 +263,7 @@ var codegraph = &core.ToolManifest{
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
 			agents.RemoveAntigravityMcp("codegraph")
+			unwireAutoIndex("antigravity")
 			return true, nil
 		},
 	},

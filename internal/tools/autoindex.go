@@ -167,6 +167,63 @@ func unwireOpencodeAutoIndex() {
 	_ = os.Remove(opencodeAutoIndexPath())
 }
 
+// --- Antigravity / Gemini CLI: ~/.gemini/settings.json hooks.SessionStart ---
+
+func geminiSettingsPath() string {
+	return filepath.Join(util.Home(), ".gemini", "settings.json")
+}
+
+func wireGeminiAutoIndex() {
+	p := geminiSettingsPath()
+	_ = util.EnsureDir(filepath.Dir(p))
+	cfg := loadOrdered(p)
+	hooks := getOrCreateMapT(cfg, "hooks")
+	var ss []any
+	if v, ok := hooks.Get("SessionStart"); ok {
+		if existing, ok := v.([]any); ok {
+			ss = existing
+		}
+	}
+	if groupsContainAutoIndex(ss) {
+		return
+	}
+	cmd := util.NewOrderedMap()
+	cmd.Set("type", "command")
+	cmd.Set("command", autoIndexCmd)
+	cmd.Set("timeout", 120000) // gemini hook timeouts are milliseconds
+	group := util.NewOrderedMap()
+	group.Set("matcher", "")
+	group.Set("hooks", []any{cmd})
+	ss = append(ss, group)
+	hooks.Set("SessionStart", ss)
+	cfg.Set("hooks", hooks)
+	_ = util.WriteFile(p, util.StringifyJSON(cfg))
+}
+
+func unwireGeminiAutoIndex() {
+	p := geminiSettingsPath()
+	if !util.Exists(p) {
+		return
+	}
+	cfg := loadOrdered(p)
+	hv, ok := cfg.Get("hooks")
+	if !ok {
+		return
+	}
+	hooks, ok := hv.(*util.OrderedMap)
+	if !ok {
+		return
+	}
+	if removeAutoIndexGroups(hooks) {
+		if hooks.Len() == 0 {
+			cfg.Delete("hooks")
+		} else {
+			cfg.Set("hooks", hooks)
+		}
+		_ = util.WriteFile(p, util.StringifyJSON(cfg))
+	}
+}
+
 // --- shared group helpers (a "group" is {matcher, hooks:[{command}]}) ---
 
 func groupsContainAutoIndex(groups []any) bool {
