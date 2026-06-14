@@ -200,7 +200,6 @@ func rtkWireAntigravity() core.AgentFn {
 			return true, nil
 		}
 		agents.InstallAntigravityRtkHook()
-		// Remove stale rtk instruction rule from older installs; the hook handles rewriting.
 		if wd, err := os.Getwd(); err == nil {
 			_ = os.Remove(filepath.Join(wd, ".agents", "rules", "antigravity-rtk-rules.md"))
 		}
