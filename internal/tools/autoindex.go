@@ -8,52 +8,10 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+// autoIndexCmd is the legacy SessionStart command prefix we clean up.
 const autoIndexCmd = "tokless index --auto"
 
-// autoIndexCmdFor scopes the per-project index to the triggering agent so
-// antigravity-only artifacts don't leak into other agents' projects.
-func autoIndexCmdFor(agent string) string { return autoIndexCmd + " --agent " + agent }
-
-// --- Claude Code: settings.json hooks.SessionStart command hook ---
-
-func wireClaudeAutoIndex() {
-	cp := util.ClaudeCodePaths()
-	_ = util.EnsureDir(cp.Dir)
-	cfg := loadOrdered(cp.Settings)
-	hooks := getOrCreateMapT(cfg, "hooks")
-	if claudeHasAutoIndex(hooks) {
-		return
-	}
-	cmd := util.NewOrderedMap()
-	cmd.Set("type", "command")
-	cmd.Set("command", autoIndexCmdFor("claude"))
-	cmd.Set("timeout", 120)
-	group := util.NewOrderedMap()
-	group.Set("matcher", "startup")
-	group.Set("hooks", []any{cmd})
-	var ss []any
-	if v, ok := hooks.Get("SessionStart"); ok {
-		if existing, ok := v.([]any); ok {
-			ss = existing
-		}
-	}
-	ss = append(ss, group)
-	hooks.Set("SessionStart", ss)
-	cfg.Set("hooks", hooks)
-	_ = util.WriteFile(cp.Settings, util.StringifyJSON(cfg))
-}
-
-func claudeHasAutoIndex(hooks *util.OrderedMap) bool {
-	v, ok := hooks.Get("SessionStart")
-	if !ok {
-		return false
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return false
-	}
-	return groupsContainAutoIndex(arr)
-}
+// --- Claude Code: settings.json hooks.SessionStart ---
 
 func unwireClaudeAutoIndex() {
 	cp := util.ClaudeCodePaths()
@@ -79,36 +37,7 @@ func unwireClaudeAutoIndex() {
 	}
 }
 
-// --- Codex: hooks.json hooks.SessionStart, merged with any existing hooks ---
-
-func wireCodexAutoIndex() {
-	cx := util.CodexPathsResolved()
-	_ = util.EnsureDir(cx.Dir)
-	hooksPath := filepath.Join(cx.Dir, "hooks.json")
-	cfg := loadOrdered(hooksPath)
-	hooks := getOrCreateMapT(cfg, "hooks")
-	var ss []any
-	if v, ok := hooks.Get("SessionStart"); ok {
-		if existing, ok := v.([]any); ok {
-			ss = existing
-		}
-	}
-	if groupsContainAutoIndex(ss) {
-		return
-	}
-	cmd := util.NewOrderedMap()
-	cmd.Set("type", "command")
-	cmd.Set("command", autoIndexCmdFor("codex"))
-	cmd.Set("timeout", 120)
-	group := util.NewOrderedMap()
-	group.Set("matcher", "startup")
-	group.Set("hooks", []any{cmd})
-	ss = append(ss, group)
-	hooks.Set("SessionStart", ss)
-	cfg.Set("hooks", hooks)
-	_ = util.WriteFile(hooksPath, util.StringifyJSON(cfg))
-	enableCodexFeatureFlags(false)
-}
+// --- Codex: hooks.json hooks.SessionStart ---
 
 func unwireCodexAutoIndex() {
 	cx := util.CodexPathsResolved()
@@ -135,37 +64,10 @@ func unwireCodexAutoIndex() {
 	}
 }
 
-// --- OpenCode: a flat plugin file that runs tokless index --auto on session.created ---
-
-const opencodeAutoIndexPlugin = `// tokless: auto-build codegraph's per-project index on session start.
-// Managed by tokless; safe to delete. Idempotent + guarded by 'tokless index --auto'.
-import { spawn } from "child_process"
-
-export const ToklessCodegraphInit = async ({ directory }) => {
-  let done = false
-  return {
-    event: async ({ event }) => {
-      if (done) return
-      if (event?.type !== "session.created") return
-      done = true
-      try {
-        spawn("tokless", ["index", "--auto", "--agent", "opencode"], { cwd: directory, stdio: "ignore", detached: true }).unref()
-      } catch {}
-    },
-  }
-}
-
-export default ToklessCodegraphInit
-`
+// --- OpenCode: legacy plugin file ---
 
 func opencodeAutoIndexPath() string {
 	return filepath.Join(util.OpenCodePathsResolved().Dir, "plugins", "tokless-codegraph-init.js")
-}
-
-func wireOpencodeAutoIndex() {
-	p := opencodeAutoIndexPath()
-	_ = util.EnsureDir(filepath.Dir(p))
-	_ = util.WriteFile(p, opencodeAutoIndexPlugin)
 }
 
 func unwireOpencodeAutoIndex() {
@@ -176,33 +78,6 @@ func unwireOpencodeAutoIndex() {
 
 func geminiSettingsPath() string {
 	return filepath.Join(util.Home(), ".gemini", "settings.json")
-}
-
-func wireGeminiAutoIndex() {
-	p := geminiSettingsPath()
-	_ = util.EnsureDir(filepath.Dir(p))
-	cfg := loadOrdered(p)
-	hooks := getOrCreateMapT(cfg, "hooks")
-	var ss []any
-	if v, ok := hooks.Get("SessionStart"); ok {
-		if existing, ok := v.([]any); ok {
-			ss = existing
-		}
-	}
-	if groupsContainAutoIndex(ss) {
-		return
-	}
-	cmd := util.NewOrderedMap()
-	cmd.Set("type", "command")
-	cmd.Set("command", autoIndexCmdFor("antigravity"))
-	cmd.Set("timeout", 120000) // gemini hook timeouts are milliseconds
-	group := util.NewOrderedMap()
-	group.Set("matcher", "")
-	group.Set("hooks", []any{cmd})
-	ss = append(ss, group)
-	hooks.Set("SessionStart", ss)
-	cfg.Set("hooks", hooks)
-	_ = util.WriteFile(p, util.StringifyJSON(cfg))
 }
 
 func unwireGeminiAutoIndex() {

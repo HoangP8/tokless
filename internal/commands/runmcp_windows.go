@@ -7,8 +7,6 @@ import (
 	"os/exec"
 )
 
-func detachMcpChild(c *exec.Cmd) {}
-
 // handoffMcp runs the MCP server in the foreground; Windows has no exec replace.
 func handoffMcp(path string, argv, env []string) int {
 	c := exec.Command(path, argv[1:]...)

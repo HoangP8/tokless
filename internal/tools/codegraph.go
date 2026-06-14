@@ -133,43 +133,13 @@ func codegraphVerify(agent string) bool {
 	return false
 }
 
-const codegraphAgentRule = `# CodeGraph (Google Antigravity)
-
-Query the code knowledge graph via the ` + "`codegraph`" + ` MCP server before grep/find or reading files: locate symbols, callers, and call paths. Rebuild with ` + "`codegraph init -i`" + `.
-`
-
-func codegraphAgentRulePath(dir string) string {
-	return filepath.Join(dir, ".agents", "rules", "antigravity-codegraph-rules.md")
-}
-
-func writeCodegraphAgentRule(dir string) {
-	_ = os.MkdirAll(filepath.Join(dir, ".agents", "rules"), 0o755)
-	writeIfMissing(codegraphAgentRulePath(dir), codegraphAgentRule)
-}
-
-// codegraphRuleForAgent reports whether the antigravity project rule applies:
-// global/manual mode (empty agent) or antigravity itself.
-func codegraphRuleForAgent(agent string) bool {
-	return agent == "" || agent == "antigravity"
-}
-
-func codegraphIndexed(dir string, opts core.RunOpts) bool {
-	if !util.Exists(filepath.Join(dir, ".codegraph")) {
-		return false
-	}
-	if codegraphRuleForAgent(opts.Agent) {
-		return util.Exists(codegraphAgentRulePath(dir))
-	}
-	return true
+func codegraphIndexed(dir string, _ core.RunOpts) bool {
+	return util.Exists(filepath.Join(dir, ".codegraph"))
 }
 
 func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
-	writeRule := codegraphRuleForAgent(opts.Agent)
 	if isTest() {
 		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
-		if writeRule {
-			writeCodegraphAgentRule(dir)
-		}
 		return true, nil
 	}
 	if util.Which("codegraph") == "" {
@@ -187,9 +157,6 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 		}
 		ok = res.Code == 0
 	}
-	if writeRule {
-		writeCodegraphAgentRule(dir)
-	}
 	return ok, nil
 }
 
@@ -205,23 +172,8 @@ func codegraphWire(agent string) core.AgentFn {
 			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
 		}
 		codegraphConfigureMcp(agent)
-		wireAutoIndex(agent)
+		unwireAutoIndex(agent)
 		return codegraphVerify(agent), nil
-	}
-}
-
-// wireAutoIndex installs the per-agent SessionStart trigger that auto-builds the
-// codegraph index when a session opens in a fresh project.
-func wireAutoIndex(agent string) {
-	switch agent {
-	case "claude":
-		wireClaudeAutoIndex()
-	case "codex":
-		wireCodexAutoIndex()
-	case "opencode":
-		wireOpencodeAutoIndex()
-	case "antigravity":
-		wireGeminiAutoIndex()
 	}
 }
 

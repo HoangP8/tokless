@@ -8,16 +8,16 @@ import (
 )
 
 func RunMcp(argv []string) int {
+	agent := ""
+	if len(argv) >= 2 && argv[0] == "--agent" {
+		agent = argv[1]
+		argv = argv[2:]
+	}
 	if len(argv) == 0 {
 		return 1
 	}
 	util.EnsureProcessPath()
-	if self, err := os.Executable(); err == nil {
-		idx := exec.Command(self, "index", "--auto")
-		idx.Stdin, idx.Stdout, idx.Stderr = nil, nil, nil
-		detachMcpChild(idx)
-		_ = idx.Start()
-	}
+	RunIndex(InitOptions{Agent: agent}, true)
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		path = argv[0]

@@ -77,7 +77,11 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		var b strings.Builder
 
 		b.WriteString(C.Bold(C.Cyan("?")) + " " + C.Bold(question) + "\r\n")
-		b.WriteString("  " + C.Dim("↑/↓ move · <space> select · <a> all · <enter> confirm") + "\r\n")
+		b.WriteString("  " +
+			C.Orange("↑/↓") + C.Dim(" move · ") +
+			C.Orange("<space>") + C.Dim(" select · ") +
+			C.Orange("<a>") + C.Dim(" all · ") +
+			C.Orange("<enter>") + C.Dim(" confirm") + "\r\n")
 
 		for i, it := range items {
 			pointer := " "

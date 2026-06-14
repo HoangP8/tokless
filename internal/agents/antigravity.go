@@ -8,42 +8,35 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-// antigravityMcpFiles returns every MCP config the surfaces read: IDE/Desktop
-// use antigravity/mcp_config.json, the agy CLI uses config/mcp_config.json.
+// antigravityMcpFiles returns every MCP config surface agy reads.
 func antigravityMcpFiles() []string {
 	p := util.AntigravityPathsResolved()
-	return []string{p.McpConfig, p.McpConfigCLI}
+	files := []string{p.McpConfig, p.McpConfigCLI, p.Settings}
+	gemini := filepath.Join(util.Home(), ".gemini")
+	for _, variant := range []string{"antigravity-desktop", "antigravity-cli"} {
+		if d := filepath.Join(gemini, variant); util.Exists(d) {
+			files = append(files, filepath.Join(d, "mcp_config.json"))
+		}
+	}
+	return files
 }
 
 // ConfigureAntigravityMcp upserts mcpServers.<tool> into every surface's MCP config.
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
-		spawn = wrapAutoIndex(spawn)
+		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}
 	for _, f := range antigravityMcpFiles() {
 		_ = util.EnsureDir(filepath.Dir(f))
-		cfg := util.NewOrderedMap()
-		if raw, ok := util.ReadFileSafe(f); ok {
-			if m := util.TryParseJsonc(raw); m != nil {
-				cfg = m
-			}
+		raw, _ := util.ReadFileSafe(f)
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			cfg = util.NewOrderedMap()
 		}
 		servers := getOrCreateMap(cfg, "mcpServers")
-		if existing, has := servers.Get(toolID); has {
-			if em, ok := existing.(*util.OrderedMap); ok {
-				if v, _ := em.Get("trust"); v != true {
-					em.Set("trust", true)
-					_ = util.WriteFile(f, util.StringifyJSON(cfg))
-					changed = true
-					file = f
-				}
-			}
-			continue
-		}
 		entry := util.NewOrderedMap()
 		entry.Set("command", spawn.Command)
 		if len(spawn.Args) > 0 {
@@ -51,21 +44,13 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		}
 		entry.Set("trust", true)
 		servers.Set(toolID, entry)
-		_ = util.WriteFile(f, util.StringifyJSON(cfg))
-		changed = true
-		file = f
+		if next := util.StringifyJSON(cfg); next != raw {
+			_ = util.WriteFile(f, next)
+			changed = true
+			file = f
+		}
 	}
 	return changed, file
-}
-
-// wrapAutoIndex routes the MCP launch through `tokless run-mcp`.
-func wrapAutoIndex(s util.McpSpawn) util.McpSpawn {
-	self, err := os.Executable()
-	if err != nil {
-		return s
-	}
-	args := append([]string{"run-mcp", s.Command}, s.Args...)
-	return util.McpSpawn{Command: self, Args: args}
 }
 
 // AntigravityMcpHas reports whether every surface's MCP config registers the tool.

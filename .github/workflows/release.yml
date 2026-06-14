@@ -35,3 +35,4 @@ jobs:
           files: dist/release/*
           generate_release_notes: true
           fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

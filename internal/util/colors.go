@@ -25,10 +25,21 @@ func wrap(open, close int) func(string) string {
 	}
 }
 
+// wrapFg256 styles with a 256-color foreground.
+func wrapFg256(n int) func(string) string {
+	return func(s string) string {
+		if colorsEnabled {
+			return fmt.Sprintf("\x1b[38;5;%dm%s\x1b[39m", n, s)
+		}
+		return s
+	}
+}
+
 // Colors holds ANSI styling functions.
 type Colors struct {
 	Bold, Dim, Italic, Underline, Inverse         func(string) string
 	Red, Green, Yellow, Blue, Magenta, Cyan, Gray func(string) string
+	Orange                                        func(string) string
 	BgCyan, BgGreen                               func(string) string
 }
 
@@ -45,6 +56,7 @@ var C = Colors{
 	Magenta:   wrap(35, 39),
 	Cyan:      wrap(36, 39),
 	Gray:      wrap(90, 39),
+	Orange:    wrapFg256(208),
 	BgCyan:    wrap(46, 49),
 	BgGreen:   wrap(42, 49),
 }

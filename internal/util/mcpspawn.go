@@ -1,6 +1,7 @@
 package util
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -57,4 +58,15 @@ func wrapCmdShim(s McpSpawn) McpSpawn {
 		return s
 	}
 	return McpSpawn{Command: "cmd", Args: append([]string{"/c", p}, s.Args...)}
+}
+
+// WrapAutoIndex routes an MCP launch through `tokless run-mcp --agent <id>` so
+// the per-project index is built/checked before the real server starts.
+func WrapAutoIndex(agent string, s McpSpawn) McpSpawn {
+	self, err := os.Executable()
+	if err != nil {
+		return s
+	}
+	args := append([]string{"run-mcp", "--agent", agent, s.Command}, s.Args...)
+	return McpSpawn{Command: self, Args: args}
 }

@@ -135,7 +135,7 @@ func CodexPathsResolved() CodexPaths {
 
 // AntigravityPaths
 type AntigravityPaths struct {
-	Dir, McpConfig, McpConfigCLI, SkillsDir string
+	Dir, McpConfig, McpConfigCLI, Settings, SkillsDir string
 }
 
 func AntigravityPathsResolved() AntigravityPaths {
@@ -145,6 +145,7 @@ func AntigravityPathsResolved() AntigravityPaths {
 		Dir:          dir,
 		McpConfig:    filepath.Join(dir, "mcp_config.json"),
 		McpConfigCLI: filepath.Join(gemini, "config", "mcp_config.json"),
+		Settings:     filepath.Join(gemini, "settings.json"),
 		SkillsDir:    filepath.Join(gemini, "config", "skills"),
 	}
 }

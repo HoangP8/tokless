@@ -2,14 +2,7 @@
 
 package commands
 
-import (
-	"os/exec"
-	"syscall"
-)
-
-func detachMcpChild(c *exec.Cmd) {
-	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-}
+import "syscall"
 
 // handoffMcp replaces this process with the MCP server so it inherits the raw
 // JSON-RPC stdio untouched.
