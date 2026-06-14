@@ -165,11 +165,9 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(string(hooksContent), "tokless-rtk-rewrite") {
 		t.Errorf("antigravity hooks.json does not contain tokless-rtk-rewrite")
 	}
-	// rtk no longer installs an instruction rule for antigravity — the native
-	// PreToolUse hook rewrites bare commands transparently, so the model needs
-	// no rtk instructions at all.
+	// rtk uses the native hook now, not an instruction rule.
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-rtk-rules.md")); err == nil {
-		t.Errorf("antigravity rtk instruction rule should NOT be written (native hook handles rewriting)")
+		t.Errorf("antigravity rtk instruction rule should NOT be written")
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-codegraph-rules.md")); err == nil {
 		t.Errorf("fabricated antigravity-codegraph-rules.md should not be written")
