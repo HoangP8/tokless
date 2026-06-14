@@ -21,6 +21,125 @@ func antigravityMcpFiles() []string {
 	return files
 }
 
+func antigravitySettingsFiles() []string {
+	gemini := filepath.Join(util.Home(), ".gemini")
+	files := []string{
+		filepath.Join(gemini, "antigravity-cli", "settings.json"),
+		filepath.Join(gemini, "antigravity-ide", "settings.json"),
+	}
+	if d := filepath.Join(gemini, "antigravity-desktop"); util.Exists(d) {
+		files = append(files, filepath.Join(d, "settings.json"))
+	}
+	return files
+}
+
+// MirrorAntigravityHooks copies the hooks block rtk wrote into ~/.gemini/settings.json
+// into the per-surface settings files agy reads (CLI + IDE), preserving other keys.
+func MirrorAntigravityHooks() {
+	src := filepath.Join(util.Home(), ".gemini", "settings.json")
+	raw, ok := util.ReadFileSafe(src)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	hk, ok := cfg.Get("hooks")
+	if !ok {
+		return
+	}
+	for _, f := range antigravitySettingsFiles() {
+		_ = util.EnsureDir(filepath.Dir(f))
+		draw, _ := util.ReadFileSafe(f)
+		dst := util.TryParseJsonc(draw)
+		if dst == nil {
+			dst = util.NewOrderedMap()
+		}
+		dst.Set("hooks", hk)
+		if next := util.StringifyJSON(dst); next != draw {
+			_ = util.WriteFile(f, next)
+		}
+	}
+}
+
+// allowAntigravityEntry adds a permissions.allow rule so agy auto-approves it.
+func allowAntigravityEntry(entry string) {
+	for _, f := range antigravitySettingsFiles() {
+		_ = util.EnsureDir(filepath.Dir(f))
+		raw, _ := util.ReadFileSafe(f)
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			cfg = util.NewOrderedMap()
+		}
+		perms := getOrCreateMap(cfg, "permissions")
+		var allow []any
+		if v, ok := perms.Get("allow"); ok {
+			if arr, ok := v.([]any); ok {
+				allow = arr
+			}
+		}
+		has := false
+		for _, e := range allow {
+			if s, ok := e.(string); ok && s == entry {
+				has = true
+				break
+			}
+		}
+		if !has {
+			allow = append(allow, entry)
+		}
+		perms.Set("allow", allow)
+		if next := util.StringifyJSON(cfg); next != raw {
+			_ = util.WriteFile(f, next)
+		}
+	}
+}
+
+// removeAntigravityEntry drops a permissions.allow rule.
+func removeAntigravityEntry(entry string) {
+	want := entry
+	for _, f := range antigravitySettingsFiles() {
+		raw, ok := util.ReadFileSafe(f)
+		if !ok {
+			continue
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			continue
+		}
+		p, ok := cfg.Get("permissions")
+		if !ok {
+			continue
+		}
+		pm, ok := p.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		v, ok := pm.Get("allow")
+		if !ok {
+			continue
+		}
+		arr, ok := v.([]any)
+		if !ok {
+			continue
+		}
+		out := make([]any, 0, len(arr))
+		dropped := false
+		for _, e := range arr {
+			if s, ok := e.(string); ok && s == want {
+				dropped = true
+				continue
+			}
+			out = append(out, e)
+		}
+		if dropped {
+			pm.Set("allow", out)
+			_ = util.WriteFile(f, util.StringifyJSON(cfg))
+		}
+	}
+}
+
 // ConfigureAntigravityMcp upserts mcpServers.<tool> into every surface's MCP config.
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
@@ -29,6 +148,8 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}
+	allowAntigravityEntry("mcp(" + toolID + "/*)")
+	allowAntigravityEntry("command(rtk)")
 	for _, f := range antigravityMcpFiles() {
 		_ = util.EnsureDir(filepath.Dir(f))
 		raw, _ := util.ReadFileSafe(f)
@@ -50,6 +171,8 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 			file = f
 		}
 	}
+	allowAntigravityEntry("mcp(" + toolID + "/*)")
+	allowAntigravityEntry("command(rtk)")
 	return changed, file
 }
 
@@ -137,4 +260,5 @@ func RemoveAntigravityMcp(toolID string) {
 			}
 		}
 	}
+	removeAntigravityEntry("mcp(" + toolID + "/*)")
 }

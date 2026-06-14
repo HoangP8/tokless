@@ -157,9 +157,13 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. project-scoped antigravity artifacts: rtk rules + context-mode routing GEMINI.md
-	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-rtk-rules.md")); err != nil {
-		t.Errorf("antigravity rtk rules not written: %v", err)
+	// 6. Antigravity global rtk hook is installed + project-scoped context-mode routing GEMINI.md
+	antigravitySettings, err := os.ReadFile(filepath.Join(tempdir, ".gemini", "antigravity-cli", "settings.json"))
+	if err != nil {
+		t.Errorf("failed to read antigravity settings.json: %v", err)
+	}
+	if !strings.Contains(string(antigravitySettings), "rtk-hook") {
+		t.Errorf("antigravity settings.json missing rtk hook: %s", string(antigravitySettings))
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-codegraph-rules.md")); err == nil {
 		t.Errorf("fabricated antigravity-codegraph-rules.md should not be written")
@@ -175,9 +179,8 @@ func TestInitSandboxWiring(t *testing.T) {
 	}
 }
 
-// TestAutoIndexRtkIndependentOfCodegraph proves auto-index creates RTK's
-// antigravity rules even when codegraph already indexed the project (regression).
-func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
+// TestAutoIndexCodegraph proves auto-index completes when codegraph already indexed the project (regression).
+func TestAutoIndexCodegraph(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
 	tempdir := t.TempDir()
 	for _, d := range []string{".claude", filepath.Join(".config", "opencode"), ".codex", filepath.Join(".gemini", "antigravity")} {
@@ -207,10 +210,6 @@ func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
 		t.Fatalf("RunInit returned non-zero code: %d", code)
 	}
 	commands.RunIndex(commands.InitOptions{}, true)
-
-	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-rtk-rules.md")); err != nil {
-		t.Errorf("auto-index did not write RTK antigravity rules: %v", err)
-	}
 }
 
 func getSHA256(path string) (string, error) {

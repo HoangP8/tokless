@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -157,6 +158,11 @@ func rtkTestShim(agent string) {
 		dir := util.OpenCodePathsResolved().PluginsDir
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk plugin shim (tokless test mode)\nexport const Plugin = async () => ({});\n")
+	case "antigravity":
+		dir := filepath.Join(util.Home(), ".gemini", "antigravity-cli")
+		_ = os.MkdirAll(dir, 0o755)
+		writeIfMissing(filepath.Join(dir, "settings.json"),
+			`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":"~/.gemini/hooks/rtk-hook-gemini.sh"}]}]}}`+"\n")
 	}
 }
 
@@ -185,6 +191,26 @@ func claudeSettingsHasRtkHook(settingsPath string) bool {
 		}
 	}
 	return false
+}
+
+func rtkWireAntigravity() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would run: rtk init -g --gemini --auto-patch")
+			return true, nil
+		}
+		if os.Getenv("TOKLESS_TEST") == "1" {
+			rtkTestShim("antigravity")
+			return true, nil
+		}
+		r := util.Run("rtk", []string{"init", "-g", "--gemini", "--auto-patch"}, util.RunOptions{Capture: true})
+		if r.Code != 0 {
+			util.L.Debug("rtk gemini init exited " + clip(r.Stderr))
+			return false, nil
+		}
+		agents.MirrorAntigravityHooks()
+		return true, nil
+	}
 }
 
 func rtkWire(agent string) core.AgentFn {
@@ -220,12 +246,6 @@ func rtkWire(agent string) core.AgentFn {
 	}
 }
 
-// rtkIndexForAgent: rtk project rules are antigravity-only, written in
-// global/manual mode (empty agent) or for antigravity itself.
-func rtkIndexForAgent(agent string) bool {
-	return agent == "" || agent == "antigravity"
-}
-
 var rtk = &core.ToolManifest{
 	ID:          "rtk",
 	Label:       "RTK",
@@ -235,30 +255,11 @@ var rtk = &core.ToolManifest{
 	Channel:     core.ChannelGitHub,
 	Install:     rtkEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":   rtkWire("claude"),
-		"opencode": rtkWire("opencode"),
-		"codex":    rtkWire("codex"),
+		"claude":      rtkWire("claude"),
+		"opencode":    rtkWire("opencode"),
+		"codex":       rtkWire("codex"),
+		"antigravity": rtkWireAntigravity(),
 	},
-	IndexProject: func(dir string, opts core.RunOpts) (bool, error) {
-		if !rtkIndexForAgent(opts.Agent) {
-			return true, nil
-		}
-		if os.Getenv("TOKLESS_TEST") == "1" {
-			rulesDir := filepath.Join(dir, ".agents", "rules")
-			_ = os.MkdirAll(rulesDir, 0o755)
-			writeIfMissing(filepath.Join(rulesDir, "antigravity-rtk-rules.md"), "# RTK - Rust Token Killer (Google Antigravity)\n(tokless test stub)\n")
-			return true, nil
-		}
-		r := util.Run("rtk", []string{"init", "--agent", "antigravity"}, util.RunOptions{Cwd: dir, Capture: true})
-		return r.Code == 0, nil
-	},
-	Indexed: func(dir string, opts core.RunOpts) bool {
-		if !rtkIndexForAgent(opts.Agent) {
-			return true
-		}
-		return util.Exists(filepath.Join(dir, ".agents", "rules", "antigravity-rtk-rules.md"))
-	},
-	IndexReady: func() bool { return isTest() || util.Which("rtk") != "" },
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
 			util.Run("rtk", []string{"init", "--uninstall", "--agent", "claude"}, util.RunOptions{})
@@ -272,6 +273,10 @@ var rtk = &core.ToolManifest{
 			util.Run("rtk", []string{"init", "--uninstall", "--agent", "codex"}, util.RunOptions{})
 			return true, nil
 		},
+		"antigravity": func(core.RunOpts) (bool, error) {
+			util.Run("rtk", []string{"init", "--uninstall", "--gemini"}, util.RunOptions{})
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -283,5 +288,22 @@ var rtk = &core.ToolManifest{
 		"codex": func() *bool {
 			return core.BoolPtr(util.Exists(filepath.Join(util.CodexPathsResolved().Dir, "RTK.md")))
 		},
+		"antigravity": func() *bool {
+			return core.BoolPtr(antigravityHasRtkHook())
+		},
 	},
+}
+
+func antigravityHasRtkHook() bool {
+	gemini := filepath.Join(util.Home(), ".gemini")
+	for _, f := range []string{
+		filepath.Join(gemini, "settings.json"),
+		filepath.Join(gemini, "antigravity-cli", "settings.json"),
+		filepath.Join(gemini, "antigravity-ide", "settings.json"),
+	} {
+		if raw, ok := util.ReadFileSafe(f); ok && strings.Contains(raw, "rtk-hook") {
+			return true
+		}
+	}
+	return false
 }
