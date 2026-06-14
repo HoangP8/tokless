@@ -216,9 +216,6 @@ func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
 	}
 	commands.RunIndex(commands.InitOptions{}, true)
 
-	// rtk for antigravity is wired purely as a native PreToolUse hook (no
-	// per-project instruction rule). Confirm the hook is installed and that no
-	// rtk instruction file is written.
 	if !util.Exists(filepath.Join(tempdir, ".gemini", "config", "hooks.json")) {
 		t.Errorf("antigravity rtk PreToolUse hook (hooks.json) not installed")
 	}
