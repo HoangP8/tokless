@@ -4,6 +4,7 @@ package core
 type RunOpts struct {
 	DryRun  bool
 	Upgrade bool
+	Agent   string
 	Report  func(phase string, frac float64)
 }
 
@@ -60,7 +61,7 @@ type ToolManifest struct {
 	UnwireFor    map[string]AgentFn
 	VerifyFor    map[string]VerifyFn
 	IndexProject func(dir string, opts RunOpts) (bool, error)
-	Indexed      func(dir string) bool
+	Indexed      func(dir string, opts RunOpts) bool
 	IndexReady   func() bool
 }
 

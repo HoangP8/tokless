@@ -137,6 +137,7 @@ func run() int {
 	opts := commands.InitOptions{
 		Agents:  agentList,
 		Tools:   toolList,
+		Agent:   strings.ToLower(strings.TrimSpace(p.flags["agent"])),
 		Yes:     p.bools["yes"],
 		DryRun:  p.bools["dry-run"] || p.bools["dryrun"],
 		Verbose: p.bools["verbose"],

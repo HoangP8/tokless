@@ -11,6 +11,7 @@ import (
 type InitOptions struct {
 	Agents  []string
 	Tools   []string
+	Agent   string
 	DryRun  bool
 	Yes     bool
 	Verbose bool

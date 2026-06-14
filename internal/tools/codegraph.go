@@ -147,14 +147,29 @@ func writeCodegraphAgentRule(dir string) {
 	writeIfMissing(codegraphAgentRulePath(dir), codegraphAgentRule)
 }
 
-func codegraphIndexed(dir string) bool {
-	return util.Exists(filepath.Join(dir, ".codegraph")) && util.Exists(codegraphAgentRulePath(dir))
+// codegraphRuleForAgent reports whether the antigravity project rule applies:
+// global/manual mode (empty agent) or antigravity itself.
+func codegraphRuleForAgent(agent string) bool {
+	return agent == "" || agent == "antigravity"
+}
+
+func codegraphIndexed(dir string, opts core.RunOpts) bool {
+	if !util.Exists(filepath.Join(dir, ".codegraph")) {
+		return false
+	}
+	if codegraphRuleForAgent(opts.Agent) {
+		return util.Exists(codegraphAgentRulePath(dir))
+	}
+	return true
 }
 
 func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
+	writeRule := codegraphRuleForAgent(opts.Agent)
 	if isTest() {
 		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
-		writeCodegraphAgentRule(dir)
+		if writeRule {
+			writeCodegraphAgentRule(dir)
+		}
 		return true, nil
 	}
 	if util.Which("codegraph") == "" {
@@ -172,7 +187,9 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 		}
 		ok = res.Code == 0
 	}
-	writeCodegraphAgentRule(dir)
+	if writeRule {
+		writeCodegraphAgentRule(dir)
+	}
 	return ok, nil
 }
 

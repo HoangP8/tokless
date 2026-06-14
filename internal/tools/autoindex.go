@@ -3,11 +3,16 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
 
 const autoIndexCmd = "tokless index --auto"
+
+// autoIndexCmdFor scopes the per-project index to the triggering agent so
+// antigravity-only artifacts don't leak into other agents' projects.
+func autoIndexCmdFor(agent string) string { return autoIndexCmd + " --agent " + agent }
 
 // --- Claude Code: settings.json hooks.SessionStart command hook ---
 
@@ -21,7 +26,7 @@ func wireClaudeAutoIndex() {
 	}
 	cmd := util.NewOrderedMap()
 	cmd.Set("type", "command")
-	cmd.Set("command", autoIndexCmd)
+	cmd.Set("command", autoIndexCmdFor("claude"))
 	cmd.Set("timeout", 120)
 	group := util.NewOrderedMap()
 	group.Set("matcher", "startup")
@@ -93,7 +98,7 @@ func wireCodexAutoIndex() {
 	}
 	cmd := util.NewOrderedMap()
 	cmd.Set("type", "command")
-	cmd.Set("command", autoIndexCmd)
+	cmd.Set("command", autoIndexCmdFor("codex"))
 	cmd.Set("timeout", 120)
 	group := util.NewOrderedMap()
 	group.Set("matcher", "startup")
@@ -144,7 +149,7 @@ export const ToklessCodegraphInit = async ({ directory }) => {
       if (event?.type !== "session.created") return
       done = true
       try {
-        spawn("tokless", ["index", "--auto"], { cwd: directory, stdio: "ignore", detached: true }).unref()
+        spawn("tokless", ["index", "--auto", "--agent", "opencode"], { cwd: directory, stdio: "ignore", detached: true }).unref()
       } catch {}
     },
   }
@@ -189,7 +194,7 @@ func wireGeminiAutoIndex() {
 	}
 	cmd := util.NewOrderedMap()
 	cmd.Set("type", "command")
-	cmd.Set("command", autoIndexCmd)
+	cmd.Set("command", autoIndexCmdFor("antigravity"))
 	cmd.Set("timeout", 120000) // gemini hook timeouts are milliseconds
 	group := util.NewOrderedMap()
 	group.Set("matcher", "")
@@ -246,7 +251,7 @@ func groupsContainAutoIndex(groups []any) bool {
 				continue
 			}
 			if c, ok := hm.Get("command"); ok {
-				if s, ok := c.(string); ok && s == autoIndexCmd {
+				if s, ok := c.(string); ok && strings.HasPrefix(s, autoIndexCmd) {
 					return true
 				}
 			}

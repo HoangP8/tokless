@@ -90,10 +90,10 @@ func RunIndex(opts InitOptions, auto bool) int {
 		return 0
 	}
 
-	ro := core.RunOpts{DryRun: opts.DryRun}
+	ro := core.RunOpts{DryRun: opts.DryRun, Agent: opts.Agent}
 	failed := 0
 	for _, t := range indexable {
-		if t.Indexed != nil && t.Indexed(dir) {
+		if t.Indexed != nil && t.Indexed(dir, ro) {
 			if !auto {
 				util.L.Raw("  " + util.C.Green("✔ ") + t.Label + util.C.Gray("  already indexed"))
 			}
