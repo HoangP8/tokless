@@ -162,7 +162,6 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
 	}
-	// No wrapper script should be written — the hook calls the binary directly.
 	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "rtk-rewrite.sh")) ||
 		util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless-rtk-rewrite.sh")) {
 		t.Errorf("no rtk rewrite wrapper script should be installed")

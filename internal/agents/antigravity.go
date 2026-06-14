@@ -168,7 +168,7 @@ func HasAntigravityRtkHook() bool {
 	if !ok {
 		return false
 	}
-	return strings.Contains(cmdStr, "tokless-rtk-rewrite")
+	return strings.Contains(cmdStr, "rtk-hook agy")
 }
 
 // allowAntigravityEntry adds a permissions.allow rule so agy auto-approves it.
