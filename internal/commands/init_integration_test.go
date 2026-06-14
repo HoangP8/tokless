@@ -158,12 +158,14 @@ func TestInitSandboxWiring(t *testing.T) {
 	}
 
 	// 6. Antigravity PreToolUse hook is installed + project-scoped context-mode routing GEMINI.md
-	if !util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless-rtk-rewrite.sh")) {
-		t.Errorf("antigravity rewrite script not installed")
-	}
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
-	if !strings.Contains(string(hooksContent), "tokless-rtk-rewrite") {
-		t.Errorf("antigravity hooks.json does not contain tokless-rtk-rewrite")
+	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
+		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
+	}
+	// No wrapper script should be written — the hook calls the binary directly.
+	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "rtk-rewrite.sh")) ||
+		util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless-rtk-rewrite.sh")) {
+		t.Errorf("no rtk rewrite wrapper script should be installed")
 	}
 	// rtk uses the native hook now, not an instruction rule.
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-rtk-rules.md")); err == nil {

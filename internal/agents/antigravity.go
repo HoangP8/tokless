@@ -39,6 +39,10 @@ func antigravityHooksFile() string {
 }
 
 func antigravityRewriteScript() string {
+	return filepath.Join(util.Home(), ".gemini", "config", "tokless", "rtk-rewrite.sh")
+}
+
+func antigravityLegacyRewriteScript() string {
 	return filepath.Join(util.Home(), ".gemini", "config", "tokless-rtk-rewrite.sh")
 }
 
@@ -52,11 +56,14 @@ func getToklessAbs() string {
 
 // InstallAntigravityRtkHook installs the PreToolUse hook for agy.
 func InstallAntigravityRtkHook() {
-	script := antigravityRewriteScript()
-	_ = util.EnsureDir(filepath.Dir(script))
-	wrapper := "#!/bin/sh\nexec \"" + getToklessAbs() + "\" rtk-hook agy\n"
-	_ = util.WriteFile(script, wrapper)
-	_ = os.Chmod(script, 0o755)
+	tok := getToklessAbs()
+	if strings.ContainsAny(tok, " \t") {
+		tok = "tokless"
+	}
+	command := tok + " rtk-hook agy"
+
+	_ = os.Remove(antigravityRewriteScript())
+	_ = os.Remove(antigravityLegacyRewriteScript())
 
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
@@ -72,7 +79,7 @@ func InstallAntigravityRtkHook() {
 
 	hookCfg := util.NewOrderedMap()
 	hookCfg.Set("type", "command")
-	hookCfg.Set("command", script)
+	hookCfg.Set("command", command)
 	hookCfg.Set("timeout", 10)
 
 	preToolUseEntry := util.NewOrderedMap()
@@ -95,6 +102,7 @@ func InstallAntigravityRtkHook() {
 // RemoveAntigravityRtkHook removes the PreToolUse hook for agy.
 func RemoveAntigravityRtkHook() {
 	_ = os.Remove(antigravityRewriteScript())
+	_ = os.Remove(antigravityLegacyRewriteScript())
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
 	if !ok {
