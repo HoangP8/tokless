@@ -182,7 +182,7 @@ func npmInstalledVersion(pkg string) *string {
 	if d, ok := j.Dependencies[pkg]; ok && d.Version != "" {
 		return strp(d.Version)
 	}
-	return nil
+	return npmPrefixInstalledVersion(userLocalNpmPrefix(), pkg)
 }
 
 // GatherVersions returns version info for all tools, cached for 6h.
@@ -319,9 +319,12 @@ func cavemanInstalledVersion() *string {
 			_ = os.WriteFile(filepath.Join(presentDir, cavemanVersionMarker), []byte(*latest+"\n"), 0o644)
 			return latest
 		}
+		return strp(CavemanPresentSentinel)
 	}
 	return nil
 }
+
+const CavemanPresentSentinel = "present"
 
 var toolIDs = []string{"rtk", "caveman", "codegraph", "context-mode", "tokless"}
 
@@ -459,6 +462,9 @@ func SemverGte(a, b string) bool { return SemverCompare(&a, &b) >= 0 }
 func CountOutdated(m map[string]VersionInfo) int {
 	n := 0
 	for _, v := range m {
+		if v.Installed != nil && *v.Installed == CavemanPresentSentinel {
+			continue
+		}
 		if v.Installed != nil && v.Latest != nil && SemverCompare(v.Installed, v.Latest) < 0 {
 			n++
 		}

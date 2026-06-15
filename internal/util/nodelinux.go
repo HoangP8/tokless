@@ -23,7 +23,8 @@ func DownloadAndExtractTarGz(url, dest string) error {
 	return ExtractTarGzFlat(tmp, dest)
 }
 
-func nodeLinuxArch() string {
+// nodeUnixArch maps GOARCH to the nodejs.org arch token ("" = unsupported).
+func nodeUnixArch() string {
 	switch runtime.GOARCH {
 	case "amd64":
 		return "x64"
@@ -33,31 +34,44 @@ func nodeLinuxArch() string {
 	return ""
 }
 
+func nodeUnixDist(goos, arch string) (indexToken, downloadOS string) {
+	if goos == "darwin" {
+		return "osx-" + arch + "-tar", "darwin"
+	}
+	return "linux-" + arch, "linux"
+}
+
+func nodeUnixArtifact(goos, arch, v string) (indexToken, fileBase, url string) {
+	indexToken, dlOS := nodeUnixDist(goos, arch)
+	fileBase = "node-" + v + "-" + dlOS + "-" + arch
+	url = "https://nodejs.org/dist/" + v + "/" + fileBase + ".tar.gz"
+	return indexToken, fileBase, url
+}
+
 func nodeUnixInstallDir() string {
 	return filepath.Join(Home(), ".local", "share", "tokless", "node")
 }
 
-// installNodeUnixTarball: official tar.gz, pure-Go extract, bins symlinked
-// into ~/.local/bin — no fnm/unzip/sudo, system node untouched.
 func installNodeUnixTarball() bool {
-	arch := nodeLinuxArch()
+	arch := nodeUnixArch()
 	if arch == "" {
 		L.Err("unsupported architecture for Node install: " + runtime.GOARCH)
 		return false
 	}
+	indexToken, _ := nodeUnixDist(runtime.GOOS, arch)
 	entries, ok := fetchNodeIndex()
 	if !ok {
 		L.Err("couldn't fetch the Node.js release index")
 		return false
 	}
-	v, ok := nodeLTSVersion(entries, "linux-"+arch)
+	v, ok := nodeLTSVersion(entries, indexToken)
 	if !ok {
-		L.Err("no Node LTS tarball for linux-" + arch)
+		L.Err("no Node LTS tarball for " + indexToken)
 		return false
 	}
 	L.Info("Downloading Node.js " + v + " from nodejs.org…")
-	name := "node-" + v + "-linux-" + arch
-	tarPath, err := downloadToTemp("https://nodejs.org/dist/" + v + "/" + name + ".tar.gz")
+	_, _, url := nodeUnixArtifact(runtime.GOOS, arch, v)
+	tarPath, err := downloadToTemp(url)
 	if err != nil {
 		L.Err("Node download failed: " + err.Error())
 		return false

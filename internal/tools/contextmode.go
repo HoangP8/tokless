@@ -28,6 +28,9 @@ func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
 	v, ok := util.NpmGlobalInstall("context-mode", "latest")
 	if !ok {
 		util.L.Err("context-mode install failed across all strategies (npm + tarball fallback).")
+		if hint := util.NodeTooOldHint(18); hint != "" {
+			util.L.Sub(hint)
+		}
 		return false, nil
 	}
 	opts.Reportf("ready", 1)

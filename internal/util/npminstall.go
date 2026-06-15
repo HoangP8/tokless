@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -76,6 +77,9 @@ var npmResolve = resolveFromRegistry
 var npmRun = func(args []string) ExecResult {
 	return Run("npm", args, RunOptions{Capture: true})
 }
+var npmRunEnv = func(args, env []string) ExecResult {
+	return Run("npm", args, RunOptions{Capture: true, Env: env})
+}
 var npmReadInstalled = func(pkg string) *string {
 	return npmInstalledVersion(pkg)
 }
@@ -141,7 +145,70 @@ func NpmGlobalInstall(pkg, spec string) (string, bool) {
 			return v, true
 		}
 	}
+
+	// Final fallback
+	token := pkg + "@" + spec
+	if resolvedVersion != "" {
+		token = pkg + "@" + resolvedVersion
+	}
+	if v, ok := npmUserPrefixInstall(pkg, token, cacheDir); ok {
+		return v, true
+	}
 	return "", false
+}
+
+func userLocalNpmPrefix() string {
+	for _, k := range []string{"npm_config_prefix", "NPM_CONFIG_PREFIX"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return filepath.Join(Home(), ".local")
+}
+
+func npmPrefixInstalledVersion(prefix, pkg string) *string {
+	pj := filepath.Join(prefix, "lib", "node_modules", pkg, "package.json")
+	if IsWin {
+		pj = filepath.Join(prefix, "node_modules", pkg, "package.json")
+	}
+	b, err := os.ReadFile(pj)
+	if err != nil {
+		return nil
+	}
+	var p struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(b, &p) != nil || p.Version == "" {
+		return nil
+	}
+	return &p.Version
+}
+
+func npmUserPrefixInstall(pkg, token, cacheDir string) (string, bool) {
+	prefix := userLocalNpmPrefix()
+	if prefix == "" {
+		return "", false
+	}
+	seed := filepath.Join(prefix, "lib")
+	if IsWin {
+		seed = prefix
+	}
+	if EnsureDir(seed) != nil {
+		return "", false
+	}
+	args := []string{"install", "-g", token, "--no-audit", "--no-fund"}
+	if cacheDir != "" {
+		args = append(args, "--cache", cacheDir)
+	}
+	if r := npmRunEnv(args, []string{"npm_config_prefix=" + prefix}); r.Code != 0 {
+		return "", false
+	}
+	v := npmPrefixInstalledVersion(prefix, pkg)
+	if v == nil {
+		return "", false
+	}
+	PrependProcessPath(npmGlobalBinDir(prefix, IsWin))
+	return *v, true
 }
 
 var npmPrefix = func() string {
@@ -180,4 +247,28 @@ func cleanupDir(dir string) {
 	if dir != "" {
 		_ = os.RemoveAll(dir)
 	}
+}
+
+// NodeMajor returns the installed Node.js major version, or 0 if unknown.
+func NodeMajor() int {
+	if Which("node") == "" {
+		return 0
+	}
+	r := Run("node", []string{"--version"}, RunOptions{Capture: true})
+	v := strings.TrimPrefix(strings.TrimSpace(r.Stdout), "v")
+	if i := strings.IndexByte(v, '.'); i > 0 {
+		v = v[:i]
+	}
+	n, _ := strconv.Atoi(v)
+	return n
+}
+
+// NodeTooOldHint returns an actionable message when Node is older than min.
+func NodeTooOldHint(min int) string {
+	if maj := NodeMajor(); maj > 0 && maj < min {
+		return "Node.js v" + strconv.Itoa(maj) + " is too old (need v" + strconv.Itoa(min) +
+			"+). Upgrade without sudo via nvm (https://github.com/nvm-sh/nvm), " +
+			"or: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs"
+	}
+	return ""
 }
