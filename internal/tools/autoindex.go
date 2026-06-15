@@ -72,6 +72,9 @@ func opencodeAutoIndexPath() string {
 
 func unwireOpencodeAutoIndex() {
 	_ = os.Remove(opencodeAutoIndexPath())
+	if win := util.WindowsHomeFromWSL(); win != "" {
+		_ = os.Remove(filepath.Join(win, ".config", "opencode", "plugins", "tokless-codegraph-init.js"))
+	}
 }
 
 // --- Antigravity / Gemini CLI: ~/.gemini/settings.json hooks.SessionStart ---

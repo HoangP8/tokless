@@ -73,6 +73,23 @@ func isWSL() bool {
 	return !IsWin && (os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != "")
 }
 
+func WindowsHomeFromWSL() string {
+	if !isWSL() {
+		return ""
+	}
+	r := Run("cmd.exe", []string{"/c", "echo %USERPROFILE%"}, RunOptions{Capture: true, Quiet: true})
+	win := strings.TrimSpace(r.Stdout)
+	if r.Code != 0 || win == "" || strings.Contains(win, "%USERPROFILE%") {
+		return ""
+	}
+	p := Run("wslpath", []string{"-u", win}, RunOptions{Capture: true, Quiet: true})
+	out := strings.TrimSpace(p.Stdout)
+	if p.Code != 0 || out == "" {
+		return ""
+	}
+	return out
+}
+
 // isWindowsMount matches WSL drvfs paths (/mnt/c/...), not arbitrary /mnt dirs.
 func isWindowsMount(p string) bool {
 	return len(p) > 6 && strings.HasPrefix(p, "/mnt/") && p[6] == '/' &&
