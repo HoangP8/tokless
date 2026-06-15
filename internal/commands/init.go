@@ -18,18 +18,6 @@ type InitOptions struct {
 	Upgrade bool
 }
 
-// indexAgent picks the agent the per-project index is scoped to: antigravity
-// (writes its project rules) if selected, else any agent (shared index only).
-func indexAgent(wireIDs []string) string {
-	if contains(wireIDs, "antigravity") {
-		return "antigravity"
-	}
-	if len(wireIDs) > 0 {
-		return wireIDs[0]
-	}
-	return ""
-}
-
 func contains(ss []string, s string) bool {
 	for _, x := range ss {
 		if x == s {
@@ -244,14 +232,6 @@ func RunInit(opts InitOptions) int {
 			joinComma(failed) + " not wired. Run " + util.C.Cyan("tokless doctor") + " for details.")
 		printFailureDetail(map[string]string{core.GetAgent(id).Label: wireLogs[id]})
 	}
-	if !opts.DryRun && len(wireIDs) > 0 {
-		if dir, err := os.Getwd(); err == nil && looksLikeProject(dir) {
-			idxOpts := opts
-			idxOpts.Agent = indexAgent(wireIDs)
-			RunIndex(idxOpts, false)
-		}
-	}
-
 	notifyOutdated(opts)
 	util.L.Raw("")
 	if len(failures) > 0 {
