@@ -120,7 +120,9 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(codexConfigStr, "[features]") {
 		t.Errorf("config.toml doesn't contain '[features]', got: %s", codexConfigStr)
 	}
-	// Note: We no longer assert approval_policy = "never" because we removed auto-approve for Codex
+	if !strings.Contains(codexConfigStr, `approval_policy = "never"`) {
+		t.Errorf("config.toml doesn't auto-approve (approval_policy=never), got: %s", codexConfigStr)
+	}
 
 	// 4. <home>/.codex/hooks.json contains "context-mode hook codex pretooluse"
 	codexHooksPath := filepath.Join(tempdir, ".codex", "hooks.json")
