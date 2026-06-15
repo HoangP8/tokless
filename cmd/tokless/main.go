@@ -101,8 +101,13 @@ func run() int {
 	if len(os.Args) >= 3 && os.Args[1] == "run-mcp" {
 		return commands.RunMcp(os.Args[2:])
 	}
-	if len(os.Args) >= 3 && os.Args[1] == "rtk-hook" && os.Args[2] == "agy" {
-		return commands.RunRtkHook()
+	if len(os.Args) >= 3 && os.Args[1] == "rtk-hook" {
+		switch os.Args[2] {
+		case "agy":
+			return commands.RunRtkHook()
+		case "codex":
+			return commands.RunRtkHookCodex()
+		}
 	}
 
 	p := parseArgs(os.Args[1:])

@@ -37,6 +37,10 @@ func TestInitSandboxWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create .codex: %v", err)
 	}
+	userHook := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/user-guard.py","timeout":20}]}]}}`
+	if err := os.WriteFile(filepath.Join(tempdir, ".codex", "hooks.json"), []byte(userHook), 0644); err != nil {
+		t.Fatalf("failed to seed user hooks.json: %v", err)
+	}
 	err = os.MkdirAll(filepath.Join(tempdir, ".gemini", "antigravity"), 0755)
 	if err != nil {
 		t.Fatalf("failed to create .gemini/antigravity: %v", err)
@@ -129,6 +133,18 @@ func TestInitSandboxWiring(t *testing.T) {
 	codexHooksStr := string(codexHooksData)
 	if !strings.Contains(strings.ToLower(codexHooksStr), "context-mode hook codex pretooluse") {
 		t.Errorf("hooks.json doesn't contain 'context-mode hook codex pretooluse', got: %s", codexHooksStr)
+	}
+	if !strings.Contains(codexHooksStr, "rtk-hook codex") {
+		t.Errorf("hooks.json doesn't contain the rtk hook 'rtk-hook codex', got: %s", codexHooksStr)
+	}
+	if !strings.Contains(codexConfigStr, "[hooks.state") || !strings.Contains(codexConfigStr, "trusted_hash") {
+		t.Errorf("config.toml doesn't pre-seed rtk hook trust ([hooks.state]/trusted_hash), got: %s", codexConfigStr)
+	}
+	if util.Exists(filepath.Join(tempdir, ".codex", "RTK.md")) {
+		t.Errorf("codex RTK.md instruction should NOT be written (hook handles rewriting)")
+	}
+	if !strings.Contains(codexHooksStr, "/usr/bin/user-guard.py") {
+		t.Errorf("user's pre-existing hook was overwritten — must be preserved, got: %s", codexHooksStr)
 	}
 
 	// 5. <home>/.gemini/antigravity/mcp_config.json contains both MCP tools
