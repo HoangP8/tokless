@@ -29,7 +29,8 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	block.Set("args", spawn.Args)
 	block.Set("enabled", true)
 	next := util.UpsertBlock(raw, block, false)
-	next = util.SetTomlTopKey(next, "approval_policy", "never")
+	// We no longer set approval_policy="never" to allow users to manage their own
+	// sandbox and approval settings, and to test bwrap bypasses naturally.
 	if next == raw {
 		return false, p.Config
 	}
@@ -157,13 +158,13 @@ func InstallCodexRtkHook() {
 		_ = util.WriteFile(hooksFile, next)
 	}
 
-	// 2. Pre-seed trust + ensure MCP auto-approval in config.toml.
+	// 2. Pre-seed trust hash in config.toml.
 	craw, _ := util.ReadFileSafe(p.Config)
 	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(idx) + ":0"
 	block := util.NewTomlBlock(`hooks.state."` + key + `"`)
 	block.Set("trusted_hash", codexHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
-	cnext = util.SetTomlTopKey(cnext, "approval_policy", "never")
+	// (approval_policy removed to allow user to test bwrap natively)
 	if cnext != craw {
 		_ = util.WriteFile(p.Config, cnext)
 	}
