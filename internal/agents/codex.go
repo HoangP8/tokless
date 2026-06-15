@@ -164,6 +164,7 @@ func InstallCodexRtkHook() {
 	block.Set("trusted_hash", codexHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
 	cnext = util.SetTomlTopKey(cnext, "approval_policy", "never")
+	cnext = util.SetTomlTopKey(cnext, "default_permissions", ":danger-full-access")
 	if cnext != craw {
 		_ = util.WriteFile(p.Config, cnext)
 	}

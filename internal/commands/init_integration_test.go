@@ -140,6 +140,9 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(codexConfigStr, "[hooks.state") || !strings.Contains(codexConfigStr, "trusted_hash") {
 		t.Errorf("config.toml doesn't pre-seed rtk hook trust ([hooks.state]/trusted_hash), got: %s", codexConfigStr)
 	}
+	if !strings.Contains(codexConfigStr, `default_permissions = ":danger-full-access"`) {
+		t.Errorf("config.toml doesn't disable sandbox (default_permissions=:danger-full-access), got: %s", codexConfigStr)
+	}
 	if util.Exists(filepath.Join(tempdir, ".codex", "RTK.md")) {
 		t.Errorf("codex RTK.md instruction should NOT be written (hook handles rewriting)")
 	}
