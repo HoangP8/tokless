@@ -121,6 +121,51 @@ func InstallAntigravityRtkHook() {
 	}
 }
 
+// InstallAntigravityContextModeHook installs the PreToolUse hook for context-mode.
+func InstallAntigravityContextModeHook(scriptPath string) {
+	tok := getToklessAbs()
+	if strings.ContainsAny(tok, " \t") {
+		tok = "tokless"
+	}
+	command := tok + " context-mode-hook agy pretooluse"
+	if scriptPath != "" {
+		command += " --script " + scriptPath
+	}
+
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	var cfg *util.OrderedMap
+	if ok {
+		cfg = util.TryParseJsonc(raw)
+	}
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+
+	group := util.NewOrderedMap()
+
+	hookCfg := util.NewOrderedMap()
+	hookCfg.Set("type", "command")
+	hookCfg.Set("command", command)
+	hookCfg.Set("timeout", 10)
+
+	preToolUseEntry := util.NewOrderedMap()
+	preToolUseEntry.Set("matcher", "run_command|view_file|read_file|edit_file|replace_file_content|write_file|glob|search_file_content|grep_search|web_fetch|mcp__")
+	preToolUseEntry.Set("hooks", []interface{}{hookCfg})
+
+	group.Set("PreToolUse", []interface{}{preToolUseEntry})
+	group.Set("PostToolUse", nil)
+	group.Set("PreInvocation", nil)
+	group.Set("PostInvocation", nil)
+	group.Set("Stop", nil)
+
+	cfg.Set("tokless-context-mode", group)
+
+	if next := util.StringifyJSON(cfg); next != raw {
+		_ = util.WriteFile(hooksFile, next)
+	}
+}
+
 // RemoveAntigravityRtkHook removes the PreToolUse hook for agy.
 func RemoveAntigravityRtkHook() {
 	_ = os.Remove(antigravityRewriteScript())
@@ -136,6 +181,23 @@ func RemoveAntigravityRtkHook() {
 	}
 	if _, ok := cfg.Get("rtk"); ok {
 		cfg.Delete("rtk")
+		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+	}
+}
+
+// RemoveAntigravityContextModeHook removes the context-mode hook for agy.
+func RemoveAntigravityContextModeHook() {
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	if _, ok := cfg.Get("tokless-context-mode"); ok {
+		cfg.Delete("tokless-context-mode")
 		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 	}
 }
@@ -191,6 +253,59 @@ func HasAntigravityRtkHook() bool {
 		return false
 	}
 	return strings.Contains(cmdStr, "rtk-hook agy")
+}
+
+// HasAntigravityContextModeHook reports whether the context-mode hook is installed.
+func HasAntigravityContextModeHook() bool {
+	raw, ok := util.ReadFileSafe(antigravityHooksFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	groupObj, ok := cfg.Get("tokless-context-mode")
+	if !ok {
+		return false
+	}
+	group, ok := groupObj.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	pre, ok := group.Get("PreToolUse")
+	if !ok {
+		return false
+	}
+	preArr, ok := pre.([]interface{})
+	if !ok || len(preArr) == 0 {
+		return false
+	}
+	entry, ok := preArr[0].(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	hooksObj, ok := entry.Get("hooks")
+	if !ok {
+		return false
+	}
+	hooksArr, ok := hooksObj.([]interface{})
+	if !ok || len(hooksArr) == 0 {
+		return false
+	}
+	hook, ok := hooksArr[0].(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	cmd, ok := hook.Get("command")
+	if !ok {
+		return false
+	}
+	cmdStr, ok := cmd.(string)
+	if !ok {
+		return false
+	}
+	return strings.Contains(cmdStr, "context-mode-hook agy")
 }
 
 // allowAntigravityEntry adds a permissions.allow rule so agy auto-approves it.

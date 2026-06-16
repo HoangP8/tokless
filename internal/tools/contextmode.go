@@ -419,53 +419,39 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-// --- Antigravity (upstream: MCP-only, no hooks; GEMINI.md is the routing) ---
+// --- Antigravity (upstream: MCP-only, no hooks; tokless adds hooks via agents.InstallAntigravityContextModeHook) ---
 
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add context-mode to mcp_config.json and copy routing GEMINI.md to project root")
+		util.L.Sub("[dry-run] would add context-mode to mcp_config.json and install context-mode-hook agy")
 		return true, nil
 	}
 	agents.ConfigureAntigravityMcp("context-mode")
-	copyAntigravityGeminiMd()
+	
+	scriptPath := ""
+	if !isTest() && util.Which("npm") != "" {
+		root := util.Run("npm", []string{"root", "-g"}, util.RunOptions{Capture: true})
+		if root.Code == 0 {
+			p := filepath.Join(strings.TrimSpace(root.Stdout), "context-mode", "hooks", "gemini-cli", "beforetool.mjs")
+			if util.Exists(p) {
+				scriptPath = p
+			}
+		}
+	}
+	agents.InstallAntigravityContextModeHook(scriptPath)
+	
 	return ctxVerifyAntigravity(), nil
-}
-
-// copyAntigravityGeminiMd drops upstream's routing file at the project root (never clobbers).
-func copyAntigravityGeminiMd() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	dest := filepath.Join(cwd, "GEMINI.md")
-	if util.Exists(dest) {
-		return
-	}
-	if isTest() {
-		_ = util.WriteFile(dest, "# "+ctxGeminiMarker+"\n(tokless test stub)\n")
-		return
-	}
-	if util.Which("npm") == "" {
-		return
-	}
-	root := util.Run("npm", []string{"root", "-g"}, util.RunOptions{Capture: true})
-	if root.Code != 0 {
-		return
-	}
-	src := filepath.Join(strings.TrimSpace(root.Stdout), "context-mode", "configs", "antigravity", "GEMINI.md")
-	if b, err := os.ReadFile(src); err == nil {
-		_ = util.WriteFile(dest, string(b))
-	}
 }
 
 func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would remove context-mode from mcp_config.json and delete tokless-managed GEMINI.md")
+		util.L.Sub("[dry-run] would remove context-mode from mcp_config.json, uninstall hook, and delete tokless-managed GEMINI.md")
 		return true, nil
 	}
 	agents.RemoveAntigravityMcp("context-mode")
+	agents.RemoveAntigravityContextModeHook()
 	if cwd, err := os.Getwd(); err == nil {
 		dest := filepath.Join(cwd, "GEMINI.md")
 		if raw, ok := util.ReadFileSafe(dest); ok && strings.Contains(raw, ctxGeminiMarker) {
@@ -475,7 +461,7 @@ func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-func ctxVerifyAntigravity() bool { return agents.AntigravityMcpHas("context-mode") }
+func ctxVerifyAntigravity() bool { return agents.AntigravityMcpHas("context-mode") && agents.HasAntigravityContextModeHook() }
 
 // --- verify ---
 

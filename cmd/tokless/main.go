@@ -109,6 +109,9 @@ func run() int {
 			return commands.RunRtkHookCodex()
 		}
 	}
+	if len(os.Args) >= 4 && os.Args[1] == "context-mode-hook" && os.Args[2] == "agy" {
+		return commands.RunContextModeHookAgy()
+	}
 
 	p := parseArgs(os.Args[1:])
 	if p.bools["verbose"] {

@@ -173,10 +173,16 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity PreToolUse hook is installed + project-scoped context-mode routing GEMINI.md
+	// 6. Antigravity PreToolUse hooks are installed: rtk + context-mode (no project GEMINI.md).
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), "context-mode-hook agy") {
+		t.Errorf("antigravity hooks.json does not invoke `context-mode-hook agy`, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), "tokless-context-mode") {
+		t.Errorf("antigravity hooks.json missing `tokless-context-mode` group, got: %s", string(hooksContent))
 	}
 	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "rtk-rewrite.sh")) ||
 		util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless-rtk-rewrite.sh")) {
@@ -189,8 +195,8 @@ func TestInitSandboxWiring(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-codegraph-rules.md")); err == nil {
 		t.Errorf("fabricated antigravity-codegraph-rules.md should not be written")
 	}
-	if _, err := os.Stat(filepath.Join(proj, "GEMINI.md")); err != nil {
-		t.Errorf("antigravity GEMINI.md routing file not written: %v", err)
+	if _, err := os.Stat(filepath.Join(proj, "GEMINI.md")); err == nil {
+		t.Errorf("antigravity GEMINI.md routing file should NOT be written (hook replaces it)")
 	}
 
 	// 7. Antigravity codegraph MCP launch is wrapped through `tokless run-mcp`
