@@ -45,6 +45,10 @@ func TestInitSandboxWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create .gemini/antigravity: %v", err)
 	}
+	err = os.MkdirAll(filepath.Join(tempdir, ".gemini", "antigravity-ide"), 0755)
+	if err != nil {
+		t.Fatalf("failed to create .gemini/antigravity-ide: %v", err)
+	}
 
 	util.SetHomeOverride(tempdir)
 	t.Setenv("HOME", tempdir)
@@ -221,6 +225,24 @@ func TestInitSandboxWiring(t *testing.T) {
 	// so opening a project in the IDE auto-indexes (IDE has no startup hook).
 	if !strings.Contains(agyMcpStr, "run-mcp") {
 		t.Errorf("antigravity mcp_config.json codegraph entry not wrapped with run-mcp, got: %s", agyMcpStr)
+	}
+
+	// 8. Antigravity IDE variant gets its own MCP config when ~/.gemini/antigravity-ide exists.
+	agyIdeMcpPath := filepath.Join(tempdir, ".gemini", "antigravity-ide", "mcp_config.json")
+	if !util.Exists(agyIdeMcpPath) {
+		t.Errorf("antigravity-ide mcp_config.json was not created")
+	} else {
+		agyIdeMcpData, err := os.ReadFile(agyIdeMcpPath)
+		if err != nil {
+			t.Fatalf("failed to read antigravity-ide mcp_config.json: %v", err)
+		}
+		agyIdeMcpStr := string(agyIdeMcpData)
+		if !strings.Contains(agyIdeMcpStr, "codegraph") {
+			t.Errorf("antigravity-ide mcp_config.json missing 'codegraph', got: %s", agyIdeMcpStr)
+		}
+		if !strings.Contains(agyIdeMcpStr, "run-mcp") {
+			t.Errorf("antigravity-ide mcp_config.json codegraph not wrapped with run-mcp, got: %s", agyIdeMcpStr)
+		}
 	}
 }
 

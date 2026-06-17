@@ -106,7 +106,7 @@ func RunIndex(opts InitOptions, auto bool) int {
 	return 0
 }
 
-// RunCodegraphIndexHook guards `tokless index --auto` for agy's PreInvocation hook.
+// RunCodegraphIndexHook handles `tokless agy-hook codegraph-index [--sync]`.
 func RunCodegraphIndexHook() int {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -115,7 +115,31 @@ func RunCodegraphIndexHook() int {
 	if util.Exists(filepath.Join(dir, ".codegraph")) {
 		return 0
 	}
-	return RunIndex(InitOptions{}, true)
+	bin := util.Which("codegraph")
+	if bin == "" {
+		if matches, _ := filepath.Glob(filepath.Join(util.Home(), ".nvm", "versions", "node", "*", "bin")); len(matches) > 0 {
+			for _, d := range matches {
+				util.PrependProcessPath(d)
+			}
+		}
+		bin = util.Which("codegraph")
+	}
+	if bin == "" {
+		return 0
+	}
+	if len(os.Args) > 3 && os.Args[3] == "--sync" {
+		cmd := exec.Command(bin, "init", "-i")
+		cmd.Dir = dir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+		return 0
+	}
+	cmd := exec.Command(bin, "init", "-i")
+	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	_ = cmd.Start()
+	return 0
 }
 
 // RunContextModeWarmup starts the context-mode MCP server if not already running.
@@ -131,7 +155,8 @@ func RunContextModeWarmup() int {
 }
 
 func contextModeSentinelAlive() bool {
-	entries, err := os.ReadDir("/tmp")
+	tmp := os.TempDir()
+	entries, err := os.ReadDir(tmp)
 	if err != nil {
 		return false
 	}
@@ -140,7 +165,7 @@ func contextModeSentinelAlive() bool {
 		if !strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join("/tmp", e.Name()))
+		data, err := os.ReadFile(filepath.Join(tmp, e.Name()))
 		if err != nil {
 			continue
 		}

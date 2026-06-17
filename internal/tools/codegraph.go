@@ -179,6 +179,7 @@ func codegraphWire(agent string) core.AgentFn {
 		unwireAutoIndex(agent)
 		if agent == "antigravity" {
 			agents.InstallAntigravityCodegraphIndexHook()
+			agents.InstallCodegraphBeforeToolHook()
 		}
 		return codegraphVerify(agent), nil
 	}
@@ -241,6 +242,8 @@ var codegraph = &core.ToolManifest{
 			agents.RemoveAntigravityMcp("codegraph")
 			unwireAutoIndex("antigravity")
 			agents.RemoveAntigravityCodegraphIndexHook()
+			agents.RemoveCodegraphBeforeToolHook()
+			agents.RemoveAntigravityCodegraphToolDefs()
 			return true, nil
 		},
 	},
