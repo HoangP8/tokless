@@ -177,25 +177,17 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity: context-mode PreInvocation injects routing + PreToolUse redirects raw tools.
+	// 6. Antigravity: context-mode via GEMINI.md instructions (no hooks — like opencode).
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
 	}
-	if !strings.Contains(string(hooksContent), "context-mode-hook agy preinvocation") {
-		t.Errorf("antigravity hooks.json does not invoke `context-mode-hook agy preinvocation`, got: %s", string(hooksContent))
+	// ctx hooks removed — GEMINI.md instructions replace them.
+	if strings.Contains(string(hooksContent), "context-mode-hook agy") {
+		t.Errorf("antigravity hooks.json should NOT have context-mode hooks, got: %s", string(hooksContent))
 	}
-	if !strings.Contains(string(hooksContent), "context-mode-hook agy pretooluse") {
-		t.Errorf("antigravity hooks.json does not invoke `context-mode-hook agy pretooluse`, got: %s", string(hooksContent))
-	}
-	if !strings.Contains(string(hooksContent), `"ctx": {`) {
-		t.Errorf("antigravity hooks.json missing `ctx` group, got: %s", string(hooksContent))
-	}
-	if !strings.Contains(string(hooksContent), "PreInvocation") && strings.Contains(string(hooksContent), "ctx") {
-		t.Errorf("antigravity hooks.json missing PreInvocation in ctx group")
-	}
-	if !strings.Contains(string(hooksContent), "PreToolUse") && strings.Contains(string(hooksContent), "ctx") {
-		t.Errorf("antigravity hooks.json missing PreToolUse in ctx group")
+	if strings.Contains(string(hooksContent), `"ctx"`) {
+		t.Errorf("antigravity hooks.json should NOT have ctx group, got: %s", string(hooksContent))
 	}
 	if !strings.Contains(string(hooksContent), "tokless-codegraph-index") {
 		t.Errorf("antigravity hooks.json missing `tokless-codegraph-index` group (auto-index), got: %s", string(hooksContent))

@@ -494,7 +494,7 @@ func removeGeminiMdSection(open, close string) {
 
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add context-mode to mcp_config.json and install context-mode-hook agy")
+		util.L.Sub("[dry-run] would add context-mode MCP config and GEMINI.md routing instructions")
 		return true, nil
 	}
 	agents.ConfigureAntigravityMcp("context-mode")
@@ -505,7 +505,9 @@ func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 		_ = util.WriteFile(dest, "# context-mode — MANDATORY routing rules\n\ncontext-mode MCP tools available.\n")
 	}
 
-	agents.InstallAntigravityContextModeHook()
+	// Remove legacy ctx hooks (PreInvocation + PreToolUse) — GEMINI.md handles routing now.
+	agents.RemoveAntigravityContextModeHook()
+
 	routingPath := copyAntigravityRoutingFile()
 	agents.AllowAntigravityEntry("command(echo)")
 
@@ -572,7 +574,7 @@ func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-func ctxVerifyAntigravity() bool { return agents.AntigravityMcpHas("context-mode") && agents.HasAntigravityContextModeHook() }
+func ctxVerifyAntigravity() bool { return agents.AntigravityMcpHas("context-mode") }
 
 // --- verify ---
 
