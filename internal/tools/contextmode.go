@@ -419,53 +419,150 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-// --- Antigravity (upstream: MCP-only, no hooks; GEMINI.md is the routing) ---
+// --- Antigravity (upstream: MCP-only, no hooks; tokless adds hooks + bridge script) ---
 
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 
+func routingFilePath() string {
+	return filepath.Join(util.Home(), ".gemini", "config", "tokless", "context-mode-routing.md")
+}
+
+// copyAntigravityRoutingFile copies context-mode's antigravity GEMINI.md
+// to ~/.gemini/config/tokless/context-mode-routing.md for PreInvocation injection.
+func copyAntigravityRoutingFile() string {
+	ctxDir := findContextModeDir()
+	if ctxDir == "" {
+		return ""
+	}
+	src := filepath.Join(ctxDir, "configs", "antigravity", "GEMINI.md")
+	raw, ok := util.ReadFileSafe(src)
+	if !ok {
+		return ""
+	}
+	clean := strings.Replace(raw,
+		"Antigravity has NO hooks — these instructions are ONLY enforcement. Follow strictly.\n\n",
+		"", 1)
+	dest := routingFilePath()
+	_ = util.EnsureDir(filepath.Dir(dest))
+	_ = util.WriteFile(dest, clean)
+	return dest
+}
+
+func geminiMdPath() string {
+	return filepath.Join(util.Home(), ".gemini", "GEMINI.md")
+}
+
+func upsertGeminiMdSection(open, close, content string) {
+	p := geminiMdPath()
+	existing, ok := util.ReadFileSafe(p)
+	if ok {
+		oi := strings.Index(existing, open)
+		ci := strings.Index(existing, close)
+		if oi >= 0 && ci > oi {
+			ci += len(close)
+			for ci < len(existing) && existing[ci] == '\n' { ci++ }
+			r := existing[:oi] + content + "\n" + existing[ci:]
+			_ = util.WriteFile(p, strings.TrimRight(r, "\n")+"\n")
+			return
+		}
+		existing = strings.TrimRight(existing, "\n")
+		if existing != "" { existing += "\n\n" }
+		_ = util.WriteFile(p, existing+content+"\n")
+		return
+	}
+	_ = util.WriteFile(p, content+"\n")
+}
+
+func removeGeminiMdSection(open, close string) {
+	p := geminiMdPath()
+	existing, ok := util.ReadFileSafe(p)
+	if !ok { return }
+	oi := strings.Index(existing, open)
+	ci := strings.Index(existing, close)
+	if oi < 0 || ci <= oi { return }
+	ci += len(close)
+	for oi > 0 && existing[oi-1] == '\n' { oi-- }
+	for ci < len(existing) && existing[ci] == '\n' { ci++ }
+	c := existing[:oi] + existing[ci:]
+	c = strings.TrimRight(c, "\n")
+	if strings.TrimSpace(c) == "" {
+		_ = os.Remove(p)
+		return
+	}
+	_ = util.WriteFile(p, c+"\n")
+}
+
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add context-mode to mcp_config.json and copy routing GEMINI.md to project root")
+		util.L.Sub("[dry-run] would add context-mode to mcp_config.json and install context-mode-hook agy")
 		return true, nil
 	}
 	agents.ConfigureAntigravityMcp("context-mode")
-	copyAntigravityGeminiMd()
+
+	if isTest() {
+		dest := routingFilePath()
+		_ = util.EnsureDir(filepath.Dir(dest))
+		_ = util.WriteFile(dest, "# context-mode — MANDATORY routing rules\n\ncontext-mode MCP tools available.\n")
+	}
+
+	agents.InstallAntigravityContextModeHook()
+	routingPath := copyAntigravityRoutingFile()
+	agents.AllowAntigravityEntry("command(echo)")
+
+	// Write routing block to ~/.gemini/GEMINI.md for system-level injection.
+	if raw, ok := util.ReadFileSafe(routingPath); ok {
+		section := "<!-- CONTEXT-MODE_START -->\n\n" + strings.TrimSpace(raw) + "\n\n<!-- CONTEXT-MODE_END -->"
+		upsertGeminiMdSection("<!-- CONTEXT-MODE_START -->", "<!-- CONTEXT-MODE_END -->", section)
+	}
+
 	return ctxVerifyAntigravity(), nil
 }
 
-// copyAntigravityGeminiMd drops upstream's routing file at the project root (never clobbers).
-func copyAntigravityGeminiMd() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
+// findContextModeDir finds the context-mode npm package root directory.
+func findContextModeDir() string {
+	if util.Which("npm") != "" {
+		root := util.Run("npm", []string{"root", "-g"}, util.RunOptions{Capture: true})
+		if root.Code == 0 {
+			ctxRoot := strings.TrimSpace(root.Stdout)
+			ctxPkg := filepath.Join(ctxRoot, "context-mode")
+			if util.Exists(filepath.Join(ctxPkg, "configs", "antigravity", "GEMINI.md")) {
+				return ctxPkg
+			}
+		}
 	}
-	dest := filepath.Join(cwd, "GEMINI.md")
-	if util.Exists(dest) {
-		return
+	if util.Which("node") != "" {
+		script := "try{const p=require.resolve('context-mode/package.json');process.stdout.write(require('path').dirname(p))}catch(e){}"
+		r := util.Run("node", []string{"-e", script}, util.RunOptions{Capture: true})
+		if r.Code == 0 && strings.TrimSpace(r.Stdout) != "" {
+			ctxRoot := strings.TrimSpace(r.Stdout)
+			if util.Exists(filepath.Join(ctxRoot, "configs", "antigravity", "GEMINI.md")) {
+				return ctxRoot
+			}
+		}
 	}
-	if isTest() {
-		_ = util.WriteFile(dest, "# "+ctxGeminiMarker+"\n(tokless test stub)\n")
-		return
+	if cm := util.Which("context-mode"); cm != "" {
+		script := "const{realpathSync}=require('fs');const{dirname,join}=require('path');const r=realpathSync(process.argv[1]);process.stdout.write(join(dirname(dirname(r)),'context-mode'))"
+		r := util.Run("node", []string{"-e", script, cm}, util.RunOptions{Capture: true})
+		if r.Code == 0 && strings.TrimSpace(r.Stdout) != "" {
+			ctxRoot := strings.TrimSpace(r.Stdout)
+			if util.Exists(filepath.Join(ctxRoot, "configs", "antigravity", "GEMINI.md")) {
+				return ctxRoot
+			}
+		}
 	}
-	if util.Which("npm") == "" {
-		return
-	}
-	root := util.Run("npm", []string{"root", "-g"}, util.RunOptions{Capture: true})
-	if root.Code != 0 {
-		return
-	}
-	src := filepath.Join(strings.TrimSpace(root.Stdout), "context-mode", "configs", "antigravity", "GEMINI.md")
-	if b, err := os.ReadFile(src); err == nil {
-		_ = util.WriteFile(dest, string(b))
-	}
+	return ""
 }
 
 func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would remove context-mode from mcp_config.json and delete tokless-managed GEMINI.md")
+		util.L.Sub("[dry-run] would remove context-mode from mcp_config.json, uninstall hook, and delete routing file")
 		return true, nil
 	}
 	agents.RemoveAntigravityMcp("context-mode")
+	agents.RemoveAntigravityContextModeHook()
+	_ = os.Remove(routingFilePath())
+	agents.RemoveAntigravityEntry("command(echo)")
+	removeGeminiMdSection("<!-- CONTEXT-MODE_START -->", "<!-- CONTEXT-MODE_END -->")
 	if cwd, err := os.Getwd(); err == nil {
 		dest := filepath.Join(cwd, "GEMINI.md")
 		if raw, ok := util.ReadFileSafe(dest); ok && strings.Contains(raw, ctxGeminiMarker) {
@@ -475,7 +572,7 @@ func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-func ctxVerifyAntigravity() bool { return agents.AntigravityMcpHas("context-mode") }
+func ctxVerifyAntigravity() bool { return agents.AntigravityMcpHas("context-mode") && agents.HasAntigravityContextModeHook() }
 
 // --- verify ---
 

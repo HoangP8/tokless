@@ -207,6 +207,17 @@ func rtkWireAntigravity() core.AgentFn {
 	}
 }
 
+func rtkWireCodex() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install codex PreToolUse hook (~/.codex/hooks.json) routing shell commands through rtk, pre-trusted in config.toml")
+			return true, nil
+		}
+		agents.InstallCodexRtkHook()
+		return true, nil
+	}
+}
+
 func rtkWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		args := []string{"init", "-g"}
@@ -251,7 +262,7 @@ var rtk = &core.ToolManifest{
 	WireFor: map[string]core.AgentFn{
 		"claude":      rtkWire("claude"),
 		"opencode":    rtkWire("opencode"),
-		"codex":       rtkWire("codex"),
+		"codex":       rtkWireCodex(),
 		"antigravity": rtkWireAntigravity(),
 	},
 	UnwireFor: map[string]core.AgentFn{
@@ -264,7 +275,7 @@ var rtk = &core.ToolManifest{
 			return true, nil
 		},
 		"codex": func(core.RunOpts) (bool, error) {
-			util.Run("rtk", []string{"init", "--uninstall", "--agent", "codex"}, util.RunOptions{})
+			agents.RemoveCodexRtkHook()
 			return true, nil
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
@@ -280,7 +291,7 @@ var rtk = &core.ToolManifest{
 			return core.BoolPtr(util.Exists(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "rtk.ts")))
 		},
 		"codex": func() *bool {
-			return core.BoolPtr(util.Exists(filepath.Join(util.CodexPathsResolved().Dir, "RTK.md")))
+			return core.BoolPtr(agents.HasCodexRtkHook())
 		},
 		"antigravity": func() *bool {
 			return core.BoolPtr(agents.HasAntigravityRtkHook())

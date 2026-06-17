@@ -37,9 +37,17 @@ func TestInitSandboxWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create .codex: %v", err)
 	}
+	userHook := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/user-guard.py","timeout":20}]}]}}`
+	if err := os.WriteFile(filepath.Join(tempdir, ".codex", "hooks.json"), []byte(userHook), 0644); err != nil {
+		t.Fatalf("failed to seed user hooks.json: %v", err)
+	}
 	err = os.MkdirAll(filepath.Join(tempdir, ".gemini", "antigravity"), 0755)
 	if err != nil {
 		t.Fatalf("failed to create .gemini/antigravity: %v", err)
+	}
+	err = os.MkdirAll(filepath.Join(tempdir, ".gemini", "antigravity-ide"), 0755)
+	if err != nil {
+		t.Fatalf("failed to create .gemini/antigravity-ide: %v", err)
 	}
 
 	util.SetHomeOverride(tempdir)
@@ -130,6 +138,18 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(strings.ToLower(codexHooksStr), "context-mode hook codex pretooluse") {
 		t.Errorf("hooks.json doesn't contain 'context-mode hook codex pretooluse', got: %s", codexHooksStr)
 	}
+	if !strings.Contains(codexHooksStr, "rtk-hook codex") {
+		t.Errorf("hooks.json doesn't contain the rtk hook 'rtk-hook codex', got: %s", codexHooksStr)
+	}
+	if !strings.Contains(codexConfigStr, "[hooks.state") || !strings.Contains(codexConfigStr, "trusted_hash") {
+		t.Errorf("config.toml doesn't pre-seed rtk hook trust ([hooks.state]/trusted_hash), got: %s", codexConfigStr)
+	}
+	if util.Exists(filepath.Join(tempdir, ".codex", "RTK.md")) {
+		t.Errorf("codex RTK.md instruction should NOT be written (hook handles rewriting)")
+	}
+	if !strings.Contains(codexHooksStr, "/usr/bin/user-guard.py") {
+		t.Errorf("user's pre-existing hook was overwritten — must be preserved, got: %s", codexHooksStr)
+	}
 
 	// 5. <home>/.gemini/antigravity/mcp_config.json contains both MCP tools
 	agyMcpPath := filepath.Join(tempdir, ".gemini", "antigravity", "mcp_config.json")
@@ -157,10 +177,34 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity PreToolUse hook is installed + project-scoped context-mode routing GEMINI.md
+	// 6. Antigravity: context-mode PreInvocation injects routing + PreToolUse redirects raw tools.
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), "context-mode-hook agy preinvocation") {
+		t.Errorf("antigravity hooks.json does not invoke `context-mode-hook agy preinvocation`, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), "context-mode-hook agy pretooluse") {
+		t.Errorf("antigravity hooks.json does not invoke `context-mode-hook agy pretooluse`, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), `"ctx": {`) {
+		t.Errorf("antigravity hooks.json missing `ctx` group, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), "PreInvocation") && strings.Contains(string(hooksContent), "ctx") {
+		t.Errorf("antigravity hooks.json missing PreInvocation in ctx group")
+	}
+	if !strings.Contains(string(hooksContent), "PreToolUse") && strings.Contains(string(hooksContent), "ctx") {
+		t.Errorf("antigravity hooks.json missing PreToolUse in ctx group")
+	}
+	if !strings.Contains(string(hooksContent), "tokless-codegraph-index") {
+		t.Errorf("antigravity hooks.json missing `tokless-codegraph-index` group (auto-index), got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), "agy-hook codegraph-index") {
+		t.Errorf("antigravity hooks.json missing `agy-hook codegraph-index` command, got: %s", string(hooksContent))
+	}
+	if !util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "context-mode-routing.md")) {
+		t.Errorf("antigravity context-mode routing file not installed at ~/.gemini/config/tokless/")
 	}
 	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "rtk-rewrite.sh")) ||
 		util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless-rtk-rewrite.sh")) {
@@ -173,14 +217,32 @@ func TestInitSandboxWiring(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-codegraph-rules.md")); err == nil {
 		t.Errorf("fabricated antigravity-codegraph-rules.md should not be written")
 	}
-	if _, err := os.Stat(filepath.Join(proj, "GEMINI.md")); err != nil {
-		t.Errorf("antigravity GEMINI.md routing file not written: %v", err)
+	if _, err := os.Stat(filepath.Join(proj, "GEMINI.md")); err == nil {
+		t.Errorf("antigravity GEMINI.md routing file should NOT be written (hook replaces it)")
 	}
 
 	// 7. Antigravity codegraph MCP launch is wrapped through `tokless run-mcp`
 	// so opening a project in the IDE auto-indexes (IDE has no startup hook).
 	if !strings.Contains(agyMcpStr, "run-mcp") {
 		t.Errorf("antigravity mcp_config.json codegraph entry not wrapped with run-mcp, got: %s", agyMcpStr)
+	}
+
+	// 8. Antigravity IDE variant gets its own MCP config when ~/.gemini/antigravity-ide exists.
+	agyIdeMcpPath := filepath.Join(tempdir, ".gemini", "antigravity-ide", "mcp_config.json")
+	if !util.Exists(agyIdeMcpPath) {
+		t.Errorf("antigravity-ide mcp_config.json was not created")
+	} else {
+		agyIdeMcpData, err := os.ReadFile(agyIdeMcpPath)
+		if err != nil {
+			t.Fatalf("failed to read antigravity-ide mcp_config.json: %v", err)
+		}
+		agyIdeMcpStr := string(agyIdeMcpData)
+		if !strings.Contains(agyIdeMcpStr, "codegraph") {
+			t.Errorf("antigravity-ide mcp_config.json missing 'codegraph', got: %s", agyIdeMcpStr)
+		}
+		if !strings.Contains(agyIdeMcpStr, "run-mcp") {
+			t.Errorf("antigravity-ide mcp_config.json codegraph not wrapped with run-mcp, got: %s", agyIdeMcpStr)
+		}
 	}
 }
 

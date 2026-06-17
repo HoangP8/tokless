@@ -317,6 +317,11 @@ func antigravityCavemanInstalled() bool {
 		util.Exists(filepath.Join(util.Home(), ".gemini", "antigravity", "skills", "caveman"))
 }
 
+func geminiCavemanMd() string { return filepath.Join(util.Home(), ".gemini", "GEMINI.md") }
+
+func writeCavemanGeminiMd() { writeCavemanRuleset(geminiCavemanMd()) }
+func removeCavemanGeminiMd() { removeCavemanRuleset(geminiCavemanMd()) }
+
 var cavemanSkillNames = []string{
 	"caveman", "caveman-commit", "caveman-compress", "caveman-help",
 	"caveman-review", "caveman-stats", "cavecrew",
@@ -440,6 +445,7 @@ var caveman = &core.ToolManifest{
 				return ran, err
 			}
 			relocateCavemanSkills(util.AntigravityPathsResolved().SkillsDir)
+			writeCavemanGeminiMd()
 			stampCavemanVersion()
 			return antigravityCavemanInstalled(), err
 		},
@@ -497,6 +503,7 @@ var caveman = &core.ToolManifest{
 				"npx -y skills remove <7 caveman skills> -a antigravity -y -g")
 			if !opts.DryRun && !isTest() {
 				removeCavemanSkillCopies(util.AntigravityPathsResolved().SkillsDir)
+				removeCavemanGeminiMd()
 			}
 			return ran, err
 		},
