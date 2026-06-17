@@ -177,17 +177,19 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity: context-mode via GEMINI.md instructions (no hooks — like opencode).
+	// 6. Antigravity: context-mode via official PreToolUse hook + GEMINI.md instructions.
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
 	}
-	// ctx hooks removed — GEMINI.md instructions replace them.
-	if strings.Contains(string(hooksContent), "context-mode-hook agy") {
-		t.Errorf("antigravity hooks.json should NOT have context-mode hooks, got: %s", string(hooksContent))
+	if !strings.Contains(string(hooksContent), "context-mode hook gemini") {
+		t.Errorf("antigravity hooks.json missing official context-mode hook, got: %s", string(hooksContent))
 	}
-	if strings.Contains(string(hooksContent), `"ctx"`) {
-		t.Errorf("antigravity hooks.json should NOT have ctx group, got: %s", string(hooksContent))
+	if !strings.Contains(string(hooksContent), "PreToolUse") {
+		t.Errorf("antigravity hooks.json missing PreToolUse in ctx group, got: %s", string(hooksContent))
+	}
+	if !strings.Contains(string(hooksContent), `"ctx":`) {
+		t.Errorf("antigravity hooks.json missing ctx group, got: %s", string(hooksContent))
 	}
 	if !strings.Contains(string(hooksContent), "tokless-codegraph-index") {
 		t.Errorf("antigravity hooks.json missing `tokless-codegraph-index` group (auto-index), got: %s", string(hooksContent))

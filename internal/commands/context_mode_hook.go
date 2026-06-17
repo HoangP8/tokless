@@ -81,8 +81,8 @@ const (
 		"Full network access. Retry on transient DNS errors (EAI_AGAIN, ETIMEDOUT, ENETUNREACH)."
 )
 
-// RunContextModePreToolUseAgy redirects raw tools to context-mode equivalents
-// using per-tool messages from upstream context-mode routing engine.
+// RunContextModePreToolUseAgy blocks raw web/shell tools. GEMINI.md
+// routing instructions tell the agent to use context-mode MCP tools instead.
 func RunContextModePreToolUseAgy() int {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil || len(input) == 0 {
@@ -101,55 +101,42 @@ func RunContextModePreToolUseAgy() int {
 
 	switch req.ToolCall.Name {
 	case "read_url_content", "web_fetch":
-		overwrite := copyArgs(req.ToolCall.Args)
-		overwrite["url"] = "data:text/plain;charset=utf-8," + webFetchMsg
-		emitModify(overwrite)
+		emitBlock("use ctx_fetch_and_index instead")
 
 	case "run_command", "run_shell_command":
 		cmd, _ := req.ToolCall.Args["CommandLine"].(string)
 		if cmd == "" {
 			return 0
 		}
-		msg := classifyShellRedirect(cmd)
+		msg := classifyShellBlock(cmd)
 		if msg == "" {
 			return 0
 		}
-		overwrite := copyArgs(req.ToolCall.Args)
-		escaped := strings.ReplaceAll(msg, "'", "'\\''")
-		overwrite["CommandLine"] = "echo '" + escaped + "'"
-		emitModify(overwrite)
+		emitBlock(msg)
 	}
 	return 0
 }
 
-func classifyShellRedirect(cmd string) string {
+func classifyShellBlock(cmd string) string {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
 	if strings.Contains(lower, "curl ") || strings.Contains(lower, "wget ") ||
 		strings.HasPrefix(lower, "curl\n") || strings.HasPrefix(lower, "wget\n") {
-		return curlWgetMsg
+		return "use ctx_fetch_and_index instead"
 	}
 	triggers := []string{"fetch(", "requests.get", "requests.post",
 		"http.get", "http.request", "urllib", "httpx.get", "httpx.post"}
 	for _, t := range triggers {
 		if strings.Contains(lower, t) {
-			return inlineHttpMsg
+			return "use ctx_execute instead"
 		}
 	}
 	return ""
 }
 
-func copyArgs(args map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{})
-	for k, v := range args {
-		out[k] = v
-	}
-	return out
-}
-
-func emitModify(overwrite map[string]interface{}) {
+func emitBlock(reason string) {
 	resp := map[string]interface{}{
-		"decision":  "modify",
-		"overwrite": overwrite,
+		"decision": "block",
+		"reason":   reason,
 	}
 	if out, err := json.Marshal(resp); err == nil {
 		fmt.Println(string(out))

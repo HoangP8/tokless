@@ -117,13 +117,10 @@ func InstallAntigravityRtkHook() {
 	}
 }
 
-// InstallAntigravityContextModeHook installs PreInvocation + PreToolUse hooks.
+// InstallAntigravityContextModeHook installs PreToolUse hook using the official
+// context-mode routing engine (routePreToolUse deny/context/passthrough).
+// Writes to hooks.json (CLI PreToolUse) and all settings surfaces (IDE BeforeTool).
 func InstallAntigravityContextModeHook() {
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
@@ -136,21 +133,12 @@ func InstallAntigravityContextModeHook() {
 
 	group := util.NewOrderedMap()
 
-	preInvHook := util.NewOrderedMap()
-	preInvHook.Set("type", "command")
-	preInvHook.Set("command", tok+" context-mode-hook agy preinvocation")
-	preInvHook.Set("timeout", 10)
-	preInvEntry := util.NewOrderedMap()
-	preInvEntry.Set("matcher", "")
-	preInvEntry.Set("hooks", []interface{}{preInvHook})
-	group.Set("PreInvocation", []interface{}{preInvEntry})
-
 	preToolHook := util.NewOrderedMap()
 	preToolHook.Set("type", "command")
-	preToolHook.Set("command", tok+" context-mode-hook agy pretooluse")
+	preToolHook.Set("command", "context-mode hook gemini-cli beforetool")
 	preToolHook.Set("timeout", 10)
 	preToolUseEntry := util.NewOrderedMap()
-	preToolUseEntry.Set("matcher", "read_url_content|web_fetch|run_command|run_shell_command")
+	preToolUseEntry.Set("matcher", "web_fetch|Bash|read_file")
 	preToolUseEntry.Set("hooks", []interface{}{preToolHook})
 	group.Set("PreToolUse", []interface{}{preToolUseEntry})
 
@@ -162,6 +150,93 @@ func InstallAntigravityContextModeHook() {
 	if next := util.StringifyJSON(cfg); next != raw {
 		_ = util.WriteFile(hooksFile, next)
 	}
+
+	// Also install BeforeTool hook in all settings surfaces for IDE/desktop.
+	installContextModeBeforeToolAll()
+}
+
+// allInternalSettingsFiles returns every agy settings surface (CLI, IDE, desktop).
+func allInternalSettingsFiles() []string {
+	gemini := filepath.Join(util.Home(), ".gemini")
+	var files []string
+	for _, variant := range []string{"antigravity-cli", "antigravity-ide", "antigravity-desktop"} {
+		f := filepath.Join(gemini, variant, "settings.json")
+		if util.Exists(filepath.Dir(f)) {
+			files = append(files, f)
+		}
+	}
+	return files
+}
+
+// installContextModeBeforeToolAll writes the official context-mode BeforeTool hook
+// to every agy settings surface (CLI, IDE, desktop).
+func installContextModeBeforeToolAll() {
+	for _, p := range allInternalSettingsFiles() {
+		_ = util.EnsureDir(filepath.Dir(p))
+		raw, ok := util.ReadFileSafe(p)
+		var cfg *util.OrderedMap
+		if ok {
+			cfg = util.TryParseJsonc(raw)
+		}
+		if cfg == nil {
+			cfg = util.NewOrderedMap()
+		}
+		hooks := getOrCreateMap(cfg, "hooks")
+		btArr := removeContextModeBeforeToolEntries(getOrCreateArr(hooks, "BeforeTool"))
+
+		hookCfg := util.NewOrderedMap()
+		hookCfg.Set("type", "command")
+		hookCfg.Set("command", "context-mode hook gemini-cli beforetool")
+		hookCfg.Set("timeout", 10)
+
+		entry := util.NewOrderedMap()
+		entry.Set("matcher", "web_fetch|Bash|read_file")
+		entry.Set("hooks", []interface{}{hookCfg})
+
+		btArr = append(btArr, entry)
+		hooks.Set("BeforeTool", btArr)
+		if next := util.StringifyJSON(cfg); next != raw {
+			_ = util.WriteFile(p, next)
+		}
+	}
+}
+
+// removeContextModeBeforeToolEntries filters out official context-mode entries.
+func removeContextModeBeforeToolEntries(btArr []interface{}) []interface{} {
+	var kept []interface{}
+	for _, e := range btArr {
+		em, ok := e.(*util.OrderedMap)
+		if !ok {
+			kept = append(kept, e)
+			continue
+		}
+		hooksArr, ok := em.Get("hooks")
+		if !ok {
+			kept = append(kept, e)
+			continue
+		}
+		ha, ok := hooksArr.([]interface{})
+		if !ok {
+			kept = append(kept, e)
+			continue
+		}
+		found := false
+		for _, h := range ha {
+			hm, ok := h.(*util.OrderedMap)
+			if ok {
+				if c, ok := hm.Get("command"); ok {
+					if s, ok := c.(string); ok && strings.Contains(s, "context-mode hook gemini") {
+						found = true
+						break
+					}
+				}
+			}
+		}
+		if !found {
+			kept = append(kept, e)
+		}
+	}
+	return kept
 }
 
 // RemoveAntigravityRtkHook removes the PreToolUse hook for agy.
@@ -187,20 +262,43 @@ func RemoveAntigravityRtkHook() {
 func RemoveAntigravityContextModeHook() {
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
-	if !ok {
-		return
+	if ok {
+		cfg := util.TryParseJsonc(raw)
+		if cfg != nil {
+			if _, ok := cfg.Get("ctx"); ok {
+				cfg.Delete("ctx")
+				_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+			}
+			if _, ok := cfg.Get("tokless-context-mode"); ok {
+				cfg.Delete("tokless-context-mode")
+				_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+			}
+		}
 	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return
-	}
-	if _, ok := cfg.Get("ctx"); ok {
-		cfg.Delete("ctx")
-		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
-	}
-	if _, ok := cfg.Get("tokless-context-mode"); ok {
-		cfg.Delete("tokless-context-mode")
-		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+	// Also remove from all settings surfaces (IDE/desktop/CLI).
+	for _, p := range allInternalSettingsFiles() {
+		raw, ok := util.ReadFileSafe(p)
+		if !ok { continue }
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil { continue }
+		hv, ok := cfg.Get("hooks")
+		if !ok { continue }
+		hooks, ok := hv.(*util.OrderedMap)
+		if !ok { continue }
+		v, ok := hooks.Get("BeforeTool")
+		if !ok { continue }
+		btArr, ok := v.([]interface{})
+		if !ok { continue }
+		kept := removeContextModeBeforeToolEntries(btArr)
+		if len(kept) != len(btArr) {
+			if len(kept) == 0 {
+				hooks.Delete("BeforeTool")
+				if hooks.Len() == 0 { cfg.Delete("hooks") }
+			} else {
+				hooks.Set("BeforeTool", kept)
+			}
+			_ = util.WriteFile(p, util.StringifyJSON(cfg))
+		}
 	}
 }
 
@@ -275,7 +373,7 @@ func HasAntigravityContextModeHook() bool {
 	if !ok {
 		return false
 	}
-	pre, ok := group.Get("PreInvocation")
+	pre, ok := group.Get("PreToolUse")
 	if !ok {
 		return false
 	}
@@ -307,7 +405,7 @@ func HasAntigravityContextModeHook() bool {
 	if !ok {
 		return false
 	}
-	return strings.Contains(cmdStr, "context-mode-hook agy preinvocation")
+	return strings.Contains(cmdStr, "context-mode hook gemini")
 }
 
 // InstallAntigravityCodegraphIndexHook installs a PreInvocation hook that
