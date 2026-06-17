@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -137,8 +136,7 @@ func RunCodegraphIndexHook() int {
 	}
 	cmd := exec.Command(bin, "init", "-i")
 	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	_ = cmd.Start()
+	backgroundSpawn(cmd)
 	return 0
 }
 
@@ -147,11 +145,10 @@ func RunContextModeWarmup() int {
 	if contextModeSentinelAlive() {
 		return 0
 	}
-	spawn := util.PickMcpSpawn("context-mode", "serve", "--mcp")
-	cmd := exec.Command(spawn.Command, spawn.Args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	_ = cmd.Start()
-	return 0
+		spawn := util.PickMcpSpawn("context-mode", "serve", "--mcp")
+		cmd := exec.Command(spawn.Command, spawn.Args...)
+		backgroundSpawn(cmd)
+		return 0
 }
 
 func contextModeSentinelAlive() bool {
@@ -173,11 +170,7 @@ func contextModeSentinelAlive() bool {
 		if err != nil {
 			continue
 		}
-		p, err := os.FindProcess(pid)
-		if err != nil {
-			continue
-		}
-		if p.Signal(syscall.Signal(0)) == nil {
+		if processAlive(pid) {
 			return true
 		}
 	}
