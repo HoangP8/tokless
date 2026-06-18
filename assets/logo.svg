@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 56" role="img" aria-label="tokless">
+  <title>tokless</title>
+  <defs>
+    <linearGradient id="lessFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3fb950" stop-opacity="1"/>
+      <stop offset="1" stop-color="#3fb950" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+  <text x="14" y="42"
+        font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', 'DejaVu Sans Mono', 'Courier New', monospace"
+        font-size="38"
+        font-weight="700"
+        letter-spacing="-1.5"
+        fill="#c9d1d9">
+    <tspan>tok</tspan><tspan fill="url(#lessFade)" font-weight="500">less</tspan><tspan fill="#3fb950" opacity="0.55">_</tspan>
+  </text>
+</svg>

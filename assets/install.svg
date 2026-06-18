@@ -11,7 +11,22 @@
     <text x="22" y="66"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash</tspan></text>
 
     <text x="22" y="112"><tspan fill="#58a6ff" font-weight="bold">? </tspan><tspan fill="#f0f6fc" font-weight="bold">Select agents to install tokless</tspan></text>
-    <text x="22" y="134" fill="#6e7681">  ↑/↓ move · &lt;space&gt; select · &lt;a&gt; all · &lt;enter&gt; confirm</text>
+    <g font-size="11" font-weight="bold">
+      <rect x="30" y="121" width="34" height="18" rx="4" fill="#f0883e"/>
+      <text x="47" y="134" fill="#0d1117" text-anchor="middle">↑/↓</text>
+      <rect x="112" y="121" width="50" height="18" rx="4" fill="#f0883e"/>
+      <text x="137" y="134" fill="#0d1117" text-anchor="middle">space</text>
+      <rect x="222" y="121" width="26" height="18" rx="4" fill="#f0883e"/>
+      <text x="235" y="134" fill="#0d1117" text-anchor="middle">a</text>
+      <rect x="290" y="121" width="56" height="18" rx="4" fill="#f0883e"/>
+      <text x="318" y="134" fill="#0d1117" text-anchor="middle">enter</text>
+    </g>
+    <g fill="#6e7681" font-size="13">
+      <text x="70" y="134">move</text>
+      <text x="170" y="134">select</text>
+      <text x="256" y="134">all</text>
+      <text x="354" y="134">confirm</text>
+    </g>
 
     <text y="164"><tspan x="30" fill="#58a6ff">❯</tspan><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">Claude Code</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
     <text y="188"><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">OpenCode</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
