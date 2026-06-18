@@ -28,32 +28,17 @@ func rtkRewrite(cmdLine string) (string, bool) {
 	cmd := exec.CommandContext(ctx, rtkPath, "rewrite", cmdLine)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "[rtk] rewrite failed: "+err.Error())
-		return "", false
-	}
+	cmd.Stderr = io.Discard
+	_ = cmd.Run()
 
 	newCmd := strings.TrimSpace(stdout.String())
-	if newCmd == "" || strings.HasPrefix(newCmd, "No rewrite") || newCmd == cmdLine {
+	if newCmd == "" || newCmd == cmdLine {
 		return "", false
 	}
-	if isShimOutput(newCmd) {
-		fmt.Fprintln(os.Stderr, "[rtk] rewrite produced shim-like output, rejecting: "+newCmd)
+	if !strings.HasPrefix(newCmd, "rtk ") {
 		return "", false
 	}
 	return newCmd, true
-}
-
-// isShimOutput rejects bare-token output (e.g. "ok" from a broken shim).
-func isShimOutput(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return true
-	}
-	if !strings.Contains(s, " ") && !strings.ContainsAny(s, "|&;<>(){}$\\\"'") {
-		return true
-	}
-	return false
 }
 
 // RunRtkHook handles the transparent command rewriting for Antigravity's PreToolUse hook.
