@@ -88,7 +88,7 @@ func TestNpmGlobalInstall_FallbackUsed(t *testing.T) {
 		return ExecResult{Code: 0}
 	}
 
-	v, ok := NpmGlobalInstall("context-mode", "latest")
+	v, ok, _ := NpmGlobalInstall("context-mode", "latest")
 	if !ok || v != "4.5.6" {
 		t.Fatalf("fallback should install 4.5.6, got %q/%v", v, ok)
 	}
@@ -110,7 +110,7 @@ func TestNpmGlobalInstall_HappyPathUnchanged(t *testing.T) {
 		return ExecResult{Code: 0}
 	}
 
-	v, ok := NpmGlobalInstall("context-mode", "latest")
+	v, ok, _ := NpmGlobalInstall("context-mode", "latest")
 	if !ok || v != "1.0.0" {
 		t.Fatalf("happy path should return 1.0.0, got %q/%v", v, ok)
 	}

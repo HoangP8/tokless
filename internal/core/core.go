@@ -56,6 +56,9 @@ type ToolManifest struct {
 	Channel      Channel
 	NotTrackable bool
 	NeedsGit     bool
+	// MinNodeMajor is the minimum Node.js major version required to install.
+	// 0 = no constraint. context-mode needs Node 22+ (better-sqlite3 native + engines).
+	MinNodeMajor int
 	Install      func(opts RunOpts) (bool, error)
 	WireFor      map[string]AgentFn
 	UnwireFor    map[string]AgentFn

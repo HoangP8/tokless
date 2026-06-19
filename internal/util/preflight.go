@@ -3,15 +3,33 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-// EnsureDeps detects all missing external deps up front and offers one
-// combined install.
-func EnsureDeps(needNode, needGit bool) (nodeOK, gitOK bool) {
+var nodeAgeChecked bool
+
+func NodeAgeAlreadyChecked() bool { return nodeAgeChecked }
+
+// EnsureDeps detects missing deps up front and offers one combined install.
+// minNode prompts y/n upgrade when installed Node is too old for native packages.
+func EnsureDeps(needNode, needGit bool, minNode int) (nodeOK, gitOK bool) {
 	nodeOK = !needNode || nodeToolsReady()
 	gitOK = !needGit || Which("git") != ""
 	if nodeOK && gitOK {
+		if needNode && minNode > 0 && NodeMajor() > 0 && NodeMajor() < minNode {
+			nodeAgeChecked = true
+			L.Warn("Node.js v" + strconv.Itoa(NodeMajor()) + " is too old for some tools (need v" + strconv.Itoa(minNode) + "+).")
+			if Confirm("Upgrade Node.js now? (y/n)", true) {
+				if installNode() && nodeToolsReady() && NodeMajor() >= minNode {
+					L.Ok("Node.js upgraded.")
+				} else {
+					L.Err("Node upgrade didn't reach v" + strconv.Itoa(minNode) + ". Some tools may fail to install.")
+				}
+			} else {
+				L.Sub("Skipping. Update Node: https://nodejs.org/en/download")
+			}
+		}
 		return
 	}
 	var missing []string
@@ -105,6 +123,9 @@ func installNode() bool {
 	}
 	return installNodeUnix()
 }
+
+// InstallNodeForTools exposes the node upgrade path for per-tool retries.
+func InstallNodeForTools() bool { return installNode() }
 
 func installNodeUnix() bool {
 	return installNodeUnixTarball()

@@ -116,7 +116,8 @@ func installSucceeded(target string, actual *string) (string, bool) {
 }
 
 // NpmGlobalInstall installs an npm package globally.
-func NpmGlobalInstall(pkg, spec string) (string, bool) {
+// On exhaustion returns ("", false, nil) — never crashes, logs each attempt.
+func NpmGlobalInstall(pkg, spec string) (string, bool, error) {
 	if spec == "" {
 		spec = "latest"
 	}
@@ -134,27 +135,41 @@ func NpmGlobalInstall(pkg, spec string) (string, bool) {
 		defer cleanupDir(cacheDir)
 	}
 
-	for _, args := range buildNpmAttempts(pkg, resolvedVersion, tarball, cacheDir) {
+	for i, args := range buildNpmAttempts(pkg, resolvedVersion, tarball, cacheDir) {
 		r := npmRun(args)
 		if r.Code != 0 {
+			L.Debug("npm attempt " + strconv.Itoa(i+1) + " failed: " + firstNpmLine(r.Stderr, r.Stdout))
 			continue
 		}
 		actual := npmReadInstalled(pkg)
 		if v, good := installSucceeded(target, actual); good {
 			ensureNpmGlobalBinOnPath()
-			return v, true
+			return v, true, nil
 		}
+		L.Debug("npm attempt " + strconv.Itoa(i+1) + " exit 0 but package not installed")
 	}
 
-	// Final fallback
+	// Final fallback: user-local prefix.
 	token := pkg + "@" + spec
 	if resolvedVersion != "" {
 		token = pkg + "@" + resolvedVersion
 	}
 	if v, ok := npmUserPrefixInstall(pkg, token, cacheDir); ok {
-		return v, true
+		return v, true, nil
 	}
-	return "", false
+	return "", false, nil
+}
+
+func firstNpmLine(stderr, stdout string) string {
+	for _, s := range []string{stderr, stdout} {
+		for _, l := range strings.Split(s, "\n") {
+			l = strings.TrimSpace(l)
+			if l != "" {
+				return l
+			}
+		}
+	}
+	return "no output"
 }
 
 func userLocalNpmPrefix() string {

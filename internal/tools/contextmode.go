@@ -24,11 +24,27 @@ func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
 		opts.Reportf("already installed", 1)
 		return true, nil
 	}
+	// context-mode needs Node 22+ (better-sqlite3 native prebuild).
+	if !util.NodeAgeAlreadyChecked() {
+		if maj := util.NodeMajor(); maj > 0 && maj < contextModeMinNode {
+			util.L.Warn("Node.js v" + strconv.Itoa(maj) + " is too old for context-mode (need v" + strconv.Itoa(contextModeMinNode) + "+).")
+			if util.Confirm("Upgrade Node.js now? (y/n)", true) {
+				if !util.InstallNodeForTools() {
+					util.L.Err("couldn't upgrade Node.js. context-mode needs v" + strconv.Itoa(contextModeMinNode) + "+.")
+					util.L.Sub("Manual: https://nodejs.org/en/download")
+					return false, nil
+				}
+			} else {
+				util.L.Sub("Skipping. context-mode may fail to install.")
+			}
+		}
+	}
 	opts.Reportf("npm install -g", 0.4)
-	v, ok := util.NpmGlobalInstall("context-mode", "latest")
+	v, ok, _ := util.NpmGlobalInstall("context-mode", "latest")
 	if !ok {
 		util.L.Err("context-mode install failed across all strategies (npm + tarball fallback).")
-		if hint := util.NodeTooOldHint(18); hint != "" {
+		util.L.Sub("Each attempt was logged above. Common causes: old Node, no build tools, or a registry mirror.")
+		if hint := util.NodeTooOldHint(contextModeMinNode); hint != "" {
 			util.L.Sub(hint)
 		}
 		return false, nil
@@ -37,6 +53,8 @@ func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
 	util.L.Sub(util.C.Dim("context-mode @" + v + " installed"))
 	return true, nil
 }
+
+const contextModeMinNode = 22
 
 func pluginIsContextMode(entry string) bool {
 	return entry == "context-mode" || strings.HasPrefix(entry, "context-mode@")
@@ -649,13 +667,14 @@ func ctxVerifyCodex() bool {
 }
 
 var contextMode = &core.ToolManifest{
-	ID:          "context-mode",
-	Label:       "Context-Mode",
-	Description: "Routes long context off-thread to a sandbox, keeping the agent's window small.",
-	Homepage:    "https://github.com/mksglu/context-mode",
-	InstallHint: "npm i -g context-mode",
-	Channel:     core.ChannelNpm,
-	Install:     ctxEnsureInstalled,
+	ID:           "context-mode",
+	Label:        "Context-Mode",
+	Description:  "Routes long context off-thread to a sandbox, keeping the agent's window small.",
+	Homepage:     "https://github.com/mksglu/context-mode",
+	InstallHint:  "npm i -g context-mode",
+	Channel:      core.ChannelNpm,
+	MinNodeMajor: contextModeMinNode,
+	Install:      ctxEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
 		"claude":      ctxWireClaude,
 		"opencode":    ctxWireOpenCode,
