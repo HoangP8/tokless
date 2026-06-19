@@ -38,7 +38,7 @@ func codegraphEnsureInstalled(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	opts.Reportf("npm install -g", 0.4)
-	_, ok := util.NpmGlobalInstall("@colbymchenry/codegraph", "latest")
+	_, ok, _ := util.NpmGlobalInstall("@colbymchenry/codegraph", "latest")
 	if ok {
 		opts.Reportf("ready", 1)
 	}
