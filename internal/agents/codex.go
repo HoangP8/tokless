@@ -433,6 +433,7 @@ func InstallCodexRulesAllowlist() {
 prefix_rule(pattern = ["rtk"], decision = "allow")
 prefix_rule(pattern = ["tokless"], decision = "allow")
 prefix_rule(pattern = ["git"], decision = "allow")
+prefix_rule(pattern = ["cd"], decision = "allow")
 prefix_rule(pattern = ["ls"], decision = "allow")
 prefix_rule(pattern = ["node"], decision = "allow")
 prefix_rule(pattern = ["npm"], decision = "allow")
