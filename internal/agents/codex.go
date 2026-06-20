@@ -230,10 +230,8 @@ func InstallCodexRtkHook() {
 		_ = util.WriteFile(p.Config, cnext)
 	}
 
-	// 3. No rtk markdown instruction for codex — remove rtk's own RTK.md if any.
 	_ = os.Remove(filepath.Join(p.Dir, "RTK.md"))
 
-	// 4. Granular approval companions: PermissionRequest hook + shell allowlist.
 	InstallCodexPermissionHook()
 	InstallCodexRulesAllowlist()
 }
@@ -427,8 +425,7 @@ func codexRulesFile() string {
 func InstallCodexRulesAllowlist() {
 	rulesFile := codexRulesFile()
 	_ = util.EnsureDir(filepath.Dir(rulesFile))
-	_ = util.WriteFile(rulesFile, `# tokless-managed codex allowlist. Do not edit — re-synced on upgrade.
-# Our tools are pre-approved; everything else still prompts.
+	_ = util.WriteFile(rulesFile, `# tokless-managed codex allowlist — our tools pre-approved, everything else prompts.
 
 prefix_rule(pattern = ["rtk"], decision = "allow")
 prefix_rule(pattern = ["tokless"], decision = "allow")
