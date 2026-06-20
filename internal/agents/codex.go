@@ -469,13 +469,7 @@ func HasCodexRulesAllowlist() bool {
 }
 
 func applyCodexApprovalPolicy(raw string) string {
-	out := util.SetTomlTopKey(raw, "approval_policy", "on-request")
-	out = util.SetTomlTopKey(out, "sandbox_mode", "workspace-write")
-	// AbsolutePathBuf does not expand $HOME/~ — must be a real absolute path.
-	block := util.NewTomlBlock("sandbox_workspace_write")
-	block.Set("writable_roots", []string{filepath.Join(util.Home(), ".cache")})
-	out = util.UpsertBlock(out, block, false)
-	return out
+	return util.SetTomlTopKey(raw, "approval_policy", "on-request")
 }
 
 // mapChild fetches an OrderedMap child by key.

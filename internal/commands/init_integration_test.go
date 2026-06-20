@@ -127,16 +127,6 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(codexConfigStr, `approval_policy = "on-request"`) {
 		t.Errorf("config.toml doesn't set approval_policy=on-request, got: %s", codexConfigStr)
 	}
-	if !strings.Contains(codexConfigStr, `sandbox_mode = "workspace-write"`) {
-		t.Errorf("config.toml doesn't set sandbox_mode=workspace-write, got: %s", codexConfigStr)
-	}
-	if !strings.Contains(codexConfigStr, `[sandbox_workspace_write]`) {
-		t.Errorf("config.toml missing [sandbox_workspace_write], got: %s", codexConfigStr)
-	}
-	// writable_roots must be absolute — codex's AbsolutePathBuf does not expand $HOME/~.
-	if !strings.Contains(codexConfigStr, `writable_roots = ["`+tempdir+`/.cache"]`) {
-		t.Errorf("config.toml writable_roots must be absolute (no $HOME), got: %s", codexConfigStr)
-	}
 
 	// 4. <home>/.codex/hooks.json contains "context-mode hook codex pretooluse"
 	codexHooksPath := filepath.Join(tempdir, ".codex", "hooks.json")
