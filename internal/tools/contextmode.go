@@ -220,11 +220,7 @@ func codexHookEntry(event string) *util.OrderedMap {
 	}
 	hook := util.NewOrderedMap()
 	hook.Set("type", "command")
-	if event == "SessionStart" {
-		hook.Set("command", "tokless codex-sessionstart")
-	} else {
-		hook.Set("command", "context-mode hook codex "+strings.ToLower(event))
-	}
+	hook.Set("command", "context-mode hook codex "+strings.ToLower(event))
 	entry.Set("hooks", []any{hook})
 	return entry
 }
