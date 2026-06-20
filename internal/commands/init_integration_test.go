@@ -124,8 +124,18 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(codexConfigStr, "[features]") {
 		t.Errorf("config.toml doesn't contain '[features]', got: %s", codexConfigStr)
 	}
-	if !strings.Contains(codexConfigStr, `approval_policy = "never"`) {
-		t.Errorf("config.toml doesn't auto-approve (approval_policy=never), got: %s", codexConfigStr)
+	if !strings.Contains(codexConfigStr, `approval_policy = "on-request"`) {
+		t.Errorf("config.toml doesn't set approval_policy=on-request, got: %s", codexConfigStr)
+	}
+	if !strings.Contains(codexConfigStr, `sandbox_mode = "workspace-write"`) {
+		t.Errorf("config.toml doesn't set sandbox_mode=workspace-write, got: %s", codexConfigStr)
+	}
+	if !strings.Contains(codexConfigStr, `[sandbox_workspace_write]`) {
+		t.Errorf("config.toml missing [sandbox_workspace_write], got: %s", codexConfigStr)
+	}
+	// writable_roots must be absolute — codex's AbsolutePathBuf does not expand $HOME/~.
+	if !strings.Contains(codexConfigStr, `writable_roots = ["`+tempdir+`/.cache"]`) {
+		t.Errorf("config.toml writable_roots must be absolute (no $HOME), got: %s", codexConfigStr)
 	}
 
 	// 4. <home>/.codex/hooks.json contains "context-mode hook codex pretooluse"
@@ -149,6 +159,25 @@ func TestInitSandboxWiring(t *testing.T) {
 	}
 	if !strings.Contains(codexHooksStr, "/usr/bin/user-guard.py") {
 		t.Errorf("user's pre-existing hook was overwritten — must be preserved, got: %s", codexHooksStr)
+	}
+	if !strings.Contains(codexHooksStr, "codex-perm codex") {
+		t.Errorf("hooks.json missing PermissionRequest hook (codex-perm codex), got: %s", codexHooksStr)
+	}
+	if !strings.Contains(codexHooksStr, "PermissionRequest") {
+		t.Errorf("hooks.json missing PermissionRequest event key, got: %s", codexHooksStr)
+	}
+	// default.rules allowlist
+	rulesPath := filepath.Join(tempdir, ".codex", "rules", "default.rules")
+	rulesData, err := os.ReadFile(rulesPath)
+	if err != nil {
+		t.Fatalf("failed to read default.rules: %v", err)
+	}
+	rulesStr := string(rulesData)
+	if !strings.Contains(rulesStr, "tokless-managed codex allowlist") {
+		t.Errorf("default.rules missing tokless marker, got: %s", rulesStr)
+	}
+	if !strings.Contains(rulesStr, `prefix_rule(pattern = ["rtk"], decision = "allow")`) {
+		t.Errorf("default.rules missing rtk prefix_rule, got: %s", rulesStr)
 	}
 
 	// 5. <home>/.gemini/antigravity/mcp_config.json contains both MCP tools

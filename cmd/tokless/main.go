@@ -111,6 +111,9 @@ func run() int {
 			return commands.RunRtkHookClaude()
 		}
 	}
+	if len(os.Args) >= 3 && os.Args[1] == "codex-perm" && os.Args[2] == "codex" {
+		return commands.RunCodexPermHook()
+	}
 	if len(os.Args) >= 4 && os.Args[1] == "context-mode-hook" && os.Args[2] == "agy" && os.Args[3] == "preinvocation" {
 		return commands.RunContextModePreInvocationAgy()
 	}
