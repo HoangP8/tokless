@@ -209,7 +209,7 @@ func copyOpenCodeAgentsMd(opencodeDir string) {
 
 // --- Codex ---
 
-var codexHookEvents = []string{"PreToolUse", "SessionStart", "PreCompact", "UserPromptSubmit"}
+var codexHookEvents = []string{"PreToolUse", "SessionStart", "PreCompact"}
 
 const codexPreToolMatcher = "local_shell|shell|shell_command|exec_command|Bash|Shell|apply_patch|Edit|Write|grep_files|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_fetch_and_index|ctx_search|ctx_index|mcp__"
 
@@ -266,6 +266,7 @@ func wireCodexManual() bool {
 	if len(spawn.Args) > 0 {
 		block.Set("args", spawn.Args)
 	}
+	block.Set("enabled", true)
 	_ = util.WriteFile(cx.Config, util.UpsertBlock(raw, block, false))
 
 	hooksPath := filepath.Join(cx.Dir, "hooks.json")
@@ -311,7 +312,7 @@ func mergeCodexHooks(existing *util.OrderedMap) *util.OrderedMap {
 		filtered = append(filtered, codexHookEntry(event))
 		hooks.Set(event, filtered)
 	}
-	for _, event := range []string{"PostToolUse", "Stop"} {
+	for _, event := range []string{"PostToolUse", "Stop", "UserPromptSubmit"} {
 		if wired[event] {
 			continue
 		}
