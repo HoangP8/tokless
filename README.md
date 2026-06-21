@@ -8,6 +8,13 @@
   [![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version)](https://github.com/HoangP8/tokless/releases)
   [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)](https://github.com/HoangP8/tokless)
   [![license](https://img.shields.io/github/license/HoangP8/tokless)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
+
+  <br />
+  <br />
+
+  | 📅 Next week plan (22/6 - 28/6) |
+  | :--- |
+  | <ul><li>Fix Codex & AGY hooks for better MCP (codegraph + context-mode) compliance rate</li><li>Add Pi support</li><li>Add Cursor support</li></ul> |
 </div>
 
 ## Introduction
