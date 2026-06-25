@@ -262,7 +262,7 @@ func overrideClaudeRtkHook() {
 	}
 	agents.AllowClaudeBashPattern("Bash(rtk *)")
 	_ = os.Remove(filepath.Join(cp.Dir, "RTK.md"))
-	stripRtkRefFromClaudeMd(filepath.Join(cp.Dir, "CLAUDE.md"))
+	stripRtkRefFromMd(filepath.Join(cp.Dir, "CLAUDE.md"))
 }
 
 func toklessAbs() string {
@@ -276,9 +276,9 @@ func toklessAbs() string {
 	return exe
 }
 
-// stripRtkRefFromClaudeMd removes only the @RTK.md reference line from CLAUDE.md,
-// preserving all other user content.
-func stripRtkRefFromClaudeMd(path string) {
+// stripRtkRefFromMd removes only the @RTK.md reference line from a markdown
+// file (CLAUDE.md, AGENTS.md, GEMINI.md), preserving all other user content.
+func stripRtkRefFromMd(path string) {
 	raw, ok := util.ReadFileSafe(path)
 	if !ok {
 		return
@@ -287,7 +287,7 @@ func stripRtkRefFromClaudeMd(path string) {
 	var kept []string
 	for _, l := range lines {
 		t := strings.TrimSpace(l)
-		if t == "@RTK.md" || t == "@RTK.md\n" {
+		if strings.HasPrefix(t, "@") && strings.HasSuffix(t, "RTK.md") {
 			continue
 		}
 		kept = append(kept, l)
