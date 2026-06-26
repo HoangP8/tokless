@@ -155,22 +155,7 @@ func unregisterCavemanOpencode() {
 const (
 	cavemanAgentsBegin = "<!-- caveman-begin -->"
 	cavemanAgentsEnd   = "<!-- caveman-end -->"
-	cavemanRuleBody    = `Respond terse like smart caveman. All technical substance stay. Only fluff die.
-
-Rules:
-- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging
-- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.
-- Pattern: [thing] [action] [reason]. [next step].
-- Not: "Sure! I'd be happy to help you with that."
-- Yes: "Bug in auth middleware. Fix:"
-
-Switch level: /caveman lite|full|ultra|wenyan
-Stop: "stop caveman" or "normal mode"
-
-Auto-Clarity: drop caveman for security warnings, irreversible actions, user confused. Resume after.
-
-Boundaries: code/commits/PRs written normal.
-`
+	cavemanRuleBody = "CAVEMAN MODE ACTIVE — level: full\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\n\n## Persistence\n\nACTIVE EVERY RESPONSE. No revert after many turns. No filler drift. Still active if unsure. Off only: \"stop caveman\" / \"normal mode\".\n\nCurrent level: **full**. Switch: `/caveman lite|full|ultra`.\n\n## Rules\n\nDrop: articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/of course/happy to), hedging. Fragments OK. Short synonyms (big not extensive, fix not \"implement a solution for\"). Technical terms exact. Code blocks unchanged. Errors quoted exact.\n\nPattern: `[thing] [action] [reason]. [next step].`\n\nNot: \"Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by...\"\nYes: \"Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:\"\n\n## Auto-Clarity\n\nDrop caveman for: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, user asks to clarify or repeats question. Resume caveman after clear part done.\n\n## Boundaries\n\nCode/commits/PRs: write normal. \"stop caveman\" or \"normal mode\": revert. Level persist until changed or session end."
 )
 
 // writeCavemanAgentsMd appends caveman's fenced ruleset to opencode's AGENTS.md.
@@ -180,14 +165,26 @@ func writeCavemanAgentsMd(ocDir string) {
 
 func writeCavemanRuleset(p string) {
 	_ = util.EnsureDir(filepath.Dir(p))
-	fenced := cavemanAgentsBegin + "\n" + cavemanRuleBody + cavemanAgentsEnd + "\n"
+	fenced := cavemanAgentsBegin + "\n" + cavemanRuleBody + "\n" + cavemanAgentsEnd + "\n"
 	existing, ok := util.ReadFileSafe(p)
 	if !ok {
 		_ = util.WriteFile(p, fenced)
 		return
 	}
-	if strings.Contains(existing, cavemanAgentsBegin) && strings.Contains(existing, cavemanAgentsEnd) {
-		return
+	if bi := strings.Index(existing, cavemanAgentsBegin); bi >= 0 {
+		ei := strings.Index(existing[bi:], cavemanAgentsEnd)
+		if ei >= 0 {
+			innerStart := bi + len(cavemanAgentsBegin)
+			innerEnd := bi + ei
+			existingInner := strings.TrimSpace(existing[innerStart:innerEnd])
+			if existingInner == strings.TrimSpace(cavemanRuleBody) {
+				return
+			}
+			rest := existing[:bi] + existing[innerEnd+len(cavemanAgentsEnd):]
+			rest = strings.TrimRight(rest, "\n") + "\n\n"
+			_ = util.WriteFile(p, rest+fenced)
+			return
+		}
 	}
 	sep := "\n\n"
 	if strings.HasSuffix(existing, "\n\n") {
@@ -196,6 +193,21 @@ func writeCavemanRuleset(p string) {
 		sep = "\n"
 	}
 	_ = util.WriteFile(p, existing+sep+fenced)
+}
+
+func ensureBlankLineBetween(p string) {
+	raw, ok := util.ReadFileSafe(p)
+	if !ok {
+		return
+	}
+	endIdx := strings.Index(raw, cavemanAgentsEnd)
+	if endIdx < 0 {
+		return
+	}
+	afterStart := endIdx + len(cavemanAgentsEnd)
+	tail := raw[afterStart:]
+	trimmed := strings.TrimLeft(tail, "\n")
+	_ = util.WriteFile(p, raw[:afterStart]+"\n\n"+trimmed)
 }
 
 // removeCavemanRuleset strips the fenced block from a global instructions file,
@@ -409,6 +421,7 @@ var caveman = &core.ToolManifest{
 				registerCavemanOpencode()
 
 				op := util.OpenCodePathsResolved()
+				ensureBlankLineBetween(filepath.Join(op.Dir, "AGENTS.md"))
 				pkgPath := filepath.Join(op.Dir, "plugins", "caveman", "package.json")
 				if raw, ok := util.ReadFileSafe(pkgPath); ok {
 					var pkg map[string]interface{}
@@ -430,11 +443,13 @@ var caveman = &core.ToolManifest{
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
 			args := cavemanSkillsAddArgs("codex")
-			ran, err := cavemanExec("npx", args, opts, "npx "+strings.Join(args, " "))
+			ran, err := cavemanExec("npx", args, opts, "npx "+strings.Join(args, ""))
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
 			relocateCavemanSkills(codexSkillsDir())
+			writeCavemanRuleset(codexCavemanMemory())
+			ensureBlankLineBetween(codexCavemanMemory())
 			stampCavemanVersion()
 			return codexCavemanInstalled(), err
 		},
@@ -446,6 +461,7 @@ var caveman = &core.ToolManifest{
 			}
 			relocateCavemanSkills(util.AntigravityPathsResolved().SkillsDir)
 			writeCavemanGeminiMd()
+			ensureBlankLineBetween(geminiCavemanMd())
 			stampCavemanVersion()
 			return antigravityCavemanInstalled(), err
 		},
