@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/HoangP8/tokless/internal/core"
+	toolsPkg "github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -216,6 +217,7 @@ func RunInit(opts InitOptions) int {
 	}
 	wireBar.Done("")
 	util.SetQuiet(false)
+	toolsPkg.EnsureInstructionSeparators(wireIDs)
 
 	util.L.Raw("")
 	var fullyOK []string
