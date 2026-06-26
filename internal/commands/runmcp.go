@@ -27,5 +27,5 @@ func RunMcp(argv []string) int {
 	if err != nil {
 		path = argv[0]
 	}
-	return handoffMcp(path, argv, os.Environ())
+	return runMcpProxy(agent, path, argv, os.Environ())
 }

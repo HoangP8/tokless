@@ -120,6 +120,9 @@ func run() int {
 	if len(os.Args) >= 4 && os.Args[1] == "context-mode-hook" && os.Args[2] == "agy" && os.Args[3] == "pretooluse" {
 		return commands.RunContextModePreToolUseAgy()
 	}
+	if len(os.Args) >= 4 && os.Args[1] == "context-mode-hook" && os.Args[2] == "codex" && os.Args[3] == "pretooluse" {
+		return commands.RunContextModePreToolUseCodex()
+	}
 	if len(os.Args) >= 3 && os.Args[1] == "agy-hook" && os.Args[2] == "codegraph-index" {
 		return commands.RunCodegraphIndexHook()
 	}

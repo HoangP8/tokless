@@ -40,6 +40,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	}
 	servers.Set(toolID, desired)
 	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
+	injectMcpInstructions("claude", toolID, p.Instructions, spawn)
 	return true, p.GlobalJSON
 }
 
@@ -119,6 +120,7 @@ func RemoveClaudeMcp(toolID string) bool {
 	}
 	sm.Delete(toolID)
 	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
+	util.RemoveInstructionsFileBlock(p.Instructions, "claude", toolID)
 	return true
 }
 
