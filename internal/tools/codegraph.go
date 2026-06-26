@@ -182,6 +182,7 @@ func codegraphWire(agent string) core.AgentFn {
 		if ran := codegraphRealInstall(opts); !ran {
 			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
 		}
+		stripCodegraphInstructionBlocks(agent)
 		codegraphConfigureMcp(agent)
 		unwireAutoIndex(agent)
 		if agent == "antigravity" {
@@ -203,6 +204,58 @@ func unwireAutoIndex(agent string) {
 		unwireOpencodeAutoIndex()
 	case "antigravity":
 		unwireGeminiAutoIndex()
+	}
+}
+
+// stripCodegraphInstructionBlocks removes codegraph's own installer-written instruction
+// blocks so tokless injectMcpInstructions is the single source of truth.
+func stripCodegraphInstructionBlocks(agent string) {
+	var path string
+	switch agent {
+	case "claude":
+		path = util.ClaudeCodePaths().Instructions
+	case "opencode":
+		path = util.OpenCodePathsResolved().Instructions
+	case "codex":
+		path = util.CodexPathsResolved().Instructions
+	case "antigravity":
+		path = util.AntigravityPathsResolved().Instructions
+	default:
+		return
+	}
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		return
+	}
+	for {
+		openIdx := strings.Index(raw, "<!-- CODEGRAPH_START -->")
+		if openIdx < 0 {
+			break
+		}
+		closeIdx := strings.Index(raw[openIdx:], "<!-- CODEGRAPH_END -->")
+		if closeIdx < 0 {
+			break
+		}
+		closeEnd := openIdx + closeIdx + len("<!-- CODEGRAPH_END -->")
+		oi, ci := openIdx, closeEnd
+		if oi > 0 && raw[oi-1] == '\n' {
+			oi--
+		}
+		for ci < len(raw) && raw[ci] == '\n' {
+			ci++
+			if ci > closeEnd {
+				break
+			}
+		}
+		if ci < len(raw) && raw[ci] == '\n' && raw[ci-1] == '\n' {
+			ci++
+		}
+		raw = strings.TrimRight(raw[:oi]+raw[ci:], "\n")
+	}
+	if raw == "" {
+		_ = os.Remove(path)
+	} else {
+		_ = util.WriteFile(path, raw+"\n")
 	}
 }
 

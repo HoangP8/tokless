@@ -117,6 +117,7 @@ func npmViewLatest(pkg string) *string {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, "npm", "info", pkg+"@latest", "version", "--json")
+	c.Env = append(os.Environ(), "NPM_CONFIG_PREFER_OFFLINE=false", "NPM_CONFIG_PREFER_ONLINE=true")
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = nil
