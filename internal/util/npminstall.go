@@ -15,8 +15,9 @@ const defaultRegistryURL = "https://registry.npmjs.org/"
 
 // npmRegistryBase returns the user's configured npm registry.
 func npmRegistryBase() string {
-	if Which("npm") != "" {
-		r := Run("npm", []string{"config", "get", "registry"}, RunOptions{Capture: true})
+	npmBin := ResolveNpmBinary()
+	if npmBin != "" {
+		r := Run(npmBin, []string{"config", "get", "registry"}, RunOptions{Capture: true})
 		v := strings.TrimSpace(r.Stdout)
 		if r.Code == 0 && strings.HasPrefix(v, "http") {
 			if !strings.HasSuffix(v, "/") {
@@ -75,10 +76,18 @@ func resolveFromRegistry(pkg, spec string) (string, string, bool) {
 
 var npmResolve = resolveFromRegistry
 var npmRun = func(args []string) ExecResult {
-	return Run("npm", args, RunOptions{Capture: true})
+	npmBin := ResolveNpmBinary()
+	if npmBin == "" {
+		return ExecResult{Code: 127, Stderr: "npm not found"}
+	}
+	return Run(npmBin, args, RunOptions{Capture: true})
 }
 var npmRunEnv = func(args, env []string) ExecResult {
-	return Run("npm", args, RunOptions{Capture: true, Env: env})
+	npmBin := ResolveNpmBinary()
+	if npmBin == "" {
+		return ExecResult{Code: 127, Stderr: "npm not found"}
+	}
+	return Run(npmBin, args, RunOptions{Capture: true, Env: env})
 }
 var npmReadInstalled = func(pkg string) *string {
 	return npmInstalledVersion(pkg)
@@ -227,7 +236,11 @@ func npmUserPrefixInstall(pkg, token, cacheDir string) (string, bool) {
 }
 
 var npmPrefix = func() string {
-	r := Run("npm", []string{"config", "get", "prefix"}, RunOptions{Capture: true})
+	npmBin := ResolveNpmBinary()
+	if npmBin == "" {
+		return ""
+	}
+	r := Run(npmBin, []string{"config", "get", "prefix"}, RunOptions{Capture: true})
 	if r.Code != 0 {
 		return ""
 	}
@@ -266,10 +279,11 @@ func cleanupDir(dir string) {
 
 // NodeMajor returns the installed Node.js major version, or 0 if unknown.
 func NodeMajor() int {
-	if Which("node") == "" {
+	nodeBin := ResolveNodeBinary()
+	if nodeBin == "" {
 		return 0
 	}
-	r := Run("node", []string{"--version"}, RunOptions{Capture: true})
+	r := Run(nodeBin, []string{"--version"}, RunOptions{Capture: true})
 	v := strings.TrimPrefix(strings.TrimSpace(r.Stdout), "v")
 	if i := strings.IndexByte(v, '.'); i > 0 {
 		v = v[:i]

@@ -111,12 +111,13 @@ func npmLatest(pkg string) *string {
 // npmViewLatest resolves a package's latest version via the npm CLI (nil if npm
 // is absent, times out, or errors). Uses --json to avoid notifier/stderr noise.
 func npmViewLatest(pkg string) *string {
-	if Which("npm") == "" {
+	npmBin := ResolveNpmBinary()
+	if npmBin == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	c := exec.CommandContext(ctx, "npm", "info", pkg+"@latest", "version", "--json")
+	c := exec.CommandContext(ctx, npmBin, "info", pkg+"@latest", "version", "--json")
 	c.Env = append(os.Environ(), "NPM_CONFIG_PREFER_OFFLINE=false", "NPM_CONFIG_PREFER_ONLINE=true")
 	var out bytes.Buffer
 	c.Stdout = &out
@@ -169,22 +170,58 @@ func rtkInstalledVersion() *string {
 }
 
 func npmInstalledVersion(pkg string) *string {
-	if Which("npm") == "" {
+	npmBin := ResolveNpmBinary()
+	if npmBin != "" {
+		r := Run(npmBin, []string{"ls", "-g", "--depth=0", "--json", pkg}, RunOptions{Capture: true})
+		var j struct {
+			Dependencies map[string]struct {
+				Version string `json:"version"`
+			} `json:"dependencies"`
+		}
+		if json.Unmarshal([]byte(r.Stdout), &j) == nil {
+			if d, ok := j.Dependencies[pkg]; ok && d.Version != "" {
+				return strp(d.Version)
+			}
+		}
+		if v := npmPrefixInstalledVersion(userLocalNpmPrefix(), pkg); v != nil {
+			return v
+		}
+	}
+	return bunInstalledVersion(pkg)
+}
+
+// bunInstalledVersion resolves a bun-linked bin (e.g. ~/.bun/bin/<pkg>) to its
+// package.json and reads the version. Also checks ~/.bun/install/global.
+func bunInstalledVersion(pkg string) *string {
+	h := Home()
+	
+	// 1. Resolve symlink: ~/.bun/bin/<pkg> -> ../../node_modules/<pkg>/...
+	binLink := filepath.Join(h, ".bun", "bin", pkg)
+	if real, err := filepath.EvalSymlinks(binLink); err == nil && real != "" {
+		dir := filepath.Dir(real)
+		if v := readPkgVersion(filepath.Join(dir, "package.json")); v != nil {
+			return v
+		}
+	}
+	// 2. Bun global install: ~/.bun/install/global/node_modules/<pkg>/package.json
+	if v := readPkgVersion(filepath.Join(h, ".bun", "install", "global", "node_modules", pkg, "package.json")); v != nil {
+		return v
+	}
+	return nil
+}
+
+func readPkgVersion(pj string) *string {
+	b, err := os.ReadFile(pj)
+	if err != nil {
 		return nil
 	}
-	r := Run("npm", []string{"ls", "-g", "--depth=0", "--json", pkg}, RunOptions{Capture: true})
-	var j struct {
-		Dependencies map[string]struct {
-			Version string `json:"version"`
-		} `json:"dependencies"`
+	var p struct {
+		Version string `json:"version"`
 	}
-	if json.Unmarshal([]byte(r.Stdout), &j) != nil {
+	if json.Unmarshal(b, &p) != nil || p.Version == "" {
 		return nil
 	}
-	if d, ok := j.Dependencies[pkg]; ok && d.Version != "" {
-		return strp(d.Version)
-	}
-	return npmPrefixInstalledVersion(userLocalNpmPrefix(), pkg)
+	return strp(p.Version)
 }
 
 // GatherVersions returns version info for all tools, cached for 6h.
