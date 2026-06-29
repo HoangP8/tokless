@@ -128,14 +128,12 @@ func rtkTestShim(agent string) {
 	case "codex":
 		dir := util.CodexPathsResolved().Dir
 		_ = os.MkdirAll(dir, 0o755)
-		stub := "# RTK\nInstalled by tokless. See https://github.com/rtk-ai/rtk\n"
-		writeIfMissing(filepath.Join(dir, "AGENTS.md"), stub)
-		writeIfMissing(filepath.Join(dir, "RTK.md"), stub)
+		_ = os.Remove(filepath.Join(dir, "RTK.md"))
 	case "claude":
 		cp := util.ClaudeCodePaths()
 		dir := cp.Dir
 		_ = os.MkdirAll(dir, 0o755)
-		writeIfMissing(filepath.Join(dir, "RTK.md"), "# RTK\nInstalled by tokless.\n")
+		_ = os.Remove(filepath.Join(dir, "RTK.md"))
 		settingsPath := cp.Settings
 		if !claudeSettingsHasRtkHook(settingsPath) {
 			cfg := util.NewOrderedMap()
@@ -283,7 +281,6 @@ func overrideClaudeRtkHook() {
 	stripRtkRefFromMd(filepath.Join(cp.Dir, "CLAUDE.md"))
 }
 
-
 func firstHookCommand(g any) string {
 	gm, ok := g.(*util.OrderedMap)
 	if !ok {
@@ -381,30 +378,30 @@ func rtkWire(agent string) core.AgentFn {
 			util.L.Sub("[dry-run] would run: rtk " + strings.Join(args, " "))
 			return true, nil
 		}
-	if os.Getenv("TOKLESS_TEST") == "1" {
-		rtkTestShim(agent)
+		if os.Getenv("TOKLESS_TEST") == "1" {
+			rtkTestShim(agent)
+			return true, nil
+		}
+		rtkPath := util.ResolveRtkBin()
+		if rtkPath == "" {
+			util.L.Err("rtk binary not found on PATH or known install dirs")
+			return false, nil
+		}
+		r := util.Run(rtkPath, args, util.RunOptions{Capture: true})
+		if r.Code != 0 {
+			util.L.Debug("rtk init exited " + clip(r.Stderr))
+			return false, nil
+		}
+		if agent == "claude" {
+			overrideClaudeRtkHook()
+		}
+		v := util.Run(rtkPath, []string{"init", "--show"}, util.RunOptions{Capture: true})
+		if v.Code != 0 {
+			util.L.Err("rtk init --show failed: " + clip(v.Stderr))
+			return false, nil
+		}
 		return true, nil
 	}
-	rtkPath := util.ResolveRtkBin()
-	if rtkPath == "" {
-		util.L.Err("rtk binary not found on PATH or known install dirs")
-		return false, nil
-	}
-	r := util.Run(rtkPath, args, util.RunOptions{Capture: true})
-	if r.Code != 0 {
-		util.L.Debug("rtk init exited " + clip(r.Stderr))
-		return false, nil
-	}
-	if agent == "claude" {
-		overrideClaudeRtkHook()
-	}
-	v := util.Run(rtkPath, []string{"init", "--show"}, util.RunOptions{Capture: true})
-	if v.Code != 0 {
-		util.L.Err("rtk init --show failed: " + clip(v.Stderr))
-		return false, nil
-	}
-	return true, nil
-}
 }
 
 var rtk = &core.ToolManifest{
@@ -426,20 +423,24 @@ var rtk = &core.ToolManifest{
 			if p := util.ResolveRtkBin(); p != "" {
 				util.Run(p, []string{"init", "--uninstall", "--agent", "claude"}, util.RunOptions{})
 			}
+			RemoveOwner("claude", "rtk")
 			return true, nil
 		},
 		"opencode": func(core.RunOpts) (bool, error) {
 			if p := util.ResolveRtkBin(); p != "" {
 				util.Run(p, []string{"init", "--uninstall", "--agent", "opencode"}, util.RunOptions{})
 			}
+			RemoveOwner("opencode", "rtk")
 			return true, nil
 		},
 		"codex": func(core.RunOpts) (bool, error) {
 			agents.RemoveCodexRtkHook()
+			RemoveOwner("codex", "rtk")
 			return true, nil
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
 			agents.RemoveAntigravityRtkHook()
+			RemoveOwner("antigravity", "rtk")
 			return true, nil
 		},
 	},
@@ -458,5 +459,3 @@ var rtk = &core.ToolManifest{
 		},
 	},
 }
-
-
