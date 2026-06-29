@@ -108,7 +108,7 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("opencode.jsonc doesn't contain 'codegraph', got: %s", opencodeStr)
 	}
 
-	// 3. <home>/.codex/config.toml contains "[mcp_servers.codegraph]", "[mcp_servers.context-mode]", and "[features]"
+	// 3. <home>/.codex/config.toml contains "[mcp_servers.codegraph]", "[mcp_servers.context_mode]", and no context-mode hooks.
 	codexConfigPath := filepath.Join(tempdir, ".codex", "config.toml")
 	codexConfigData, err := os.ReadFile(codexConfigPath)
 	if err != nil {
@@ -118,25 +118,37 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(codexConfigStr, "[mcp_servers.codegraph]") {
 		t.Errorf("config.toml doesn't contain '[mcp_servers.codegraph]', got: %s", codexConfigStr)
 	}
-	if !strings.Contains(codexConfigStr, "[mcp_servers.context-mode]") {
-		t.Errorf("config.toml doesn't contain '[mcp_servers.context-mode]', got: %s", codexConfigStr)
+	if !strings.Contains(codexConfigStr, "[mcp_servers.context_mode]") {
+		t.Errorf("config.toml doesn't contain '[mcp_servers.context_mode]', got: %s", codexConfigStr)
 	}
-	if !strings.Contains(codexConfigStr, "[features]") {
-		t.Errorf("config.toml doesn't contain '[features]', got: %s", codexConfigStr)
+	if strings.Contains(codexConfigStr, "[mcp_servers.context-mode]") {
+		t.Errorf("config.toml still contains legacy '[mcp_servers.context-mode]', got: %s", codexConfigStr)
+	}
+	if !strings.Contains(codexConfigStr, "hooks = true") {
+		t.Errorf("context-mode should enable Codex hooks like upstream config, got: %s", codexConfigStr)
 	}
 	if !strings.Contains(codexConfigStr, `approval_policy = "on-request"`) {
 		t.Errorf("config.toml doesn't set approval_policy=on-request, got: %s", codexConfigStr)
 	}
 
-	// 4. <home>/.codex/hooks.json contains "context-mode hook codex pretooluse"
+	// 4. <home>/.codex/hooks.json contains tokless runtime hooks plus one
+	// minimal context-mode PreToolUse redirect hook. MCP + AGENTS.md stay base.
 	codexHooksPath := filepath.Join(tempdir, ".codex", "hooks.json")
 	codexHooksData, err := os.ReadFile(codexHooksPath)
 	if err != nil {
 		t.Fatalf("failed to read hooks.json: %v", err)
 	}
 	codexHooksStr := string(codexHooksData)
-	if !strings.Contains(strings.ToLower(codexHooksStr), "context-mode hook codex pretooluse") {
-		t.Errorf("hooks.json doesn't contain 'context-mode hook codex pretooluse', got: %s", codexHooksStr)
+	if !strings.Contains(codexHooksStr, "context-mode hook codex pretooluse") {
+		t.Errorf("hooks.json missing minimal context-mode hook, got: %s", codexHooksStr)
+	}
+	if !strings.Contains(codexHooksStr, "local_shell|shell|shell_command|exec_command|Bash|Shell|apply_patch|Edit|Write|grep_files|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_fetch_and_index|ctx_search|ctx_index|mcp__") {
+		t.Errorf("Codex PreToolUse matcher should match upstream context-mode config, got: %s", codexHooksStr)
+	}
+	for _, bad := range []string{"SessionStart", "PreCompact", "PostToolUse", "UserPromptSubmit", "context-mode hook codex sessionstart"} {
+		if strings.Contains(codexHooksStr, bad) {
+			t.Errorf("hooks.json should not contain legacy context-mode hook %q, got: %s", bad, codexHooksStr)
+		}
 	}
 	if !strings.Contains(codexHooksStr, "rtk-hook codex") {
 		t.Errorf("hooks.json doesn't contain the rtk hook 'rtk-hook codex', got: %s", codexHooksStr)
@@ -196,19 +208,15 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity: official context-mode PreToolUse hook + GEMINI.md routing instructions.
+	// 6. Antigravity: rtk/codegraph hooks only; context-mode uses MCP + GEMINI.md.
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
 	}
-	if !strings.Contains(string(hooksContent), "context-mode hook gemini") {
-		t.Errorf("antigravity hooks.json missing official context-mode PreToolUse hook, got: %s", string(hooksContent))
-	}
-	if !strings.Contains(string(hooksContent), `"ctx":`) {
-		t.Errorf("antigravity hooks.json missing ctx group, got: %s", string(hooksContent))
-	}
-	if !strings.Contains(string(hooksContent), "PreToolUse") {
-		t.Errorf("antigravity hooks.json missing PreToolUse in ctx group")
+	for _, bad := range []string{"context-mode hook antigravity-cli", "context-mode-hook agy", "context-mode hook gemini", "beforetool"} {
+		if strings.Contains(string(hooksContent), bad) {
+			t.Errorf("antigravity context-mode hook should not be installed (%q), got: %s", bad, string(hooksContent))
+		}
 	}
 	if !strings.Contains(string(hooksContent), "tokless-codegraph-index") {
 		t.Errorf("antigravity hooks.json missing codegraph-index hook group, got: %s", string(hooksContent))
@@ -219,8 +227,15 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(string(hooksContent), "PostToolUse") {
 		t.Errorf("antigravity hooks.json missing PostToolUse (IDE session-start event), got: %s", string(hooksContent))
 	}
-	if !util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "context-mode-routing.md")) {
-		t.Errorf("antigravity context-mode routing file not installed at ~/.gemini/config/tokless/")
+	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "context-mode-routing.md")) {
+		t.Errorf("antigravity context-mode should not write intermediate routing file")
+	}
+	geminiMd, err := os.ReadFile(filepath.Join(tempdir, ".gemini", "GEMINI.md"))
+	if err != nil {
+		t.Fatalf("failed to read antigravity GEMINI.md: %v", err)
+	}
+	if !strings.Contains(string(geminiMd), "<!-- CONTEXT-MODE_START -->") || !strings.Contains(string(geminiMd), "context-mode") {
+		t.Errorf("antigravity GEMINI.md missing context-mode routing section, got: %s", string(geminiMd))
 	}
 	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "rtk-rewrite.sh")) ||
 		util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless-rtk-rewrite.sh")) {
@@ -234,7 +249,7 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("fabricated antigravity-codegraph-rules.md should not be written")
 	}
 	if _, err := os.Stat(filepath.Join(proj, "GEMINI.md")); err == nil {
-		t.Errorf("antigravity GEMINI.md routing file should NOT be written (hook replaces it)")
+		t.Errorf("project-local antigravity GEMINI.md routing file should NOT be written")
 	}
 
 	// 7. Antigravity codegraph MCP launch is wrapped through `tokless run-mcp`

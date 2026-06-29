@@ -152,7 +152,7 @@ func RunInit(opts InitOptions) int {
 		if installedIDs[id] {
 			wireIDs = append(wireIDs, id)
 		} else {
-			skipped = append(skipped, id)
+			wireIDs = append(wireIDs, id)
 		}
 	}
 	for _, id := range skipped {

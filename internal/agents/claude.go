@@ -40,7 +40,6 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	}
 	servers.Set(toolID, desired)
 	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
-	injectMcpInstructions("claude", toolID, p.Instructions, spawn)
 	return true, p.GlobalJSON
 }
 
@@ -68,6 +67,49 @@ func AllowClaudeMcpTool(toolID string) {
 	allow = append(allow, entry)
 	perms.Set("allow", allow)
 	cfg.Set("permissions", perms)
+	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
+}
+
+func DisallowClaudeMcpTool(toolID string) {
+	p := util.ClaudeCodePaths()
+	raw, ok := util.ReadFileSafe(p.Settings)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	perms, ok := cfg.Get("permissions")
+	if !ok {
+		return
+	}
+	pm, ok := perms.(*util.OrderedMap)
+	if !ok {
+		return
+	}
+	v, ok := pm.Get("allow")
+	if !ok {
+		return
+	}
+	allow, ok := v.([]any)
+	if !ok {
+		return
+	}
+	want := "mcp__" + toolID + "__.*"
+	kept := make([]any, 0, len(allow))
+	changed := false
+	for _, x := range allow {
+		if s, ok := x.(string); ok && s == want {
+			changed = true
+			continue
+		}
+		kept = append(kept, x)
+	}
+	if !changed {
+		return
+	}
+	pm.Set("allow", kept)
 	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
 }
 
@@ -99,29 +141,22 @@ func AllowClaudeBashPattern(pattern string) {
 
 func RemoveClaudeMcp(toolID string) bool {
 	p := util.ClaudeCodePaths()
-	raw, ok := util.ReadFileSafe(p.GlobalJSON)
-	if !ok {
-		return false
+	removed := false
+	if raw, ok := util.ReadFileSafe(p.GlobalJSON); ok {
+		if cfg := util.TryParseJsonc(raw); cfg != nil {
+			if servers, ok := cfg.Get("mcpServers"); ok {
+				if sm, ok := servers.(*util.OrderedMap); ok {
+					if _, has := sm.Get(toolID); has {
+						sm.Delete(toolID)
+						_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
+						removed = true
+					}
+				}
+			}
+		}
 	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	servers, ok := cfg.Get("mcpServers")
-	if !ok {
-		return false
-	}
-	sm, ok := servers.(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	if _, ok := sm.Get(toolID); !ok {
-		return false
-	}
-	sm.Delete(toolID)
-	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
-	util.RemoveInstructionsFileBlock(p.Instructions, "claude", toolID)
-	return true
+	DisallowClaudeMcpTool(toolID)
+	return removed
 }
 
 // claudeMcpEqual compares command/args/env by canonical JSON.
