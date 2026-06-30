@@ -23,6 +23,11 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
       - name: Test
         env:
           CGO_ENABLED: "1"
