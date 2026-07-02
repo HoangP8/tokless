@@ -3,7 +3,6 @@ package tools
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -61,7 +60,7 @@ func pluginIsContextMode(entry string) bool {
 	return entry == "context-mode" || strings.HasPrefix(entry, "context-mode@")
 }
 
-// setContextModePluginBare ensures the opencode.jsonc `plugin` array ends with
+// setContextModePluginBare ensures the opencode.jsonc plugin array ends with
 // the bare `context-mode` entry.
 func setContextModePluginBare(cfg *util.OrderedMap) {
 	plugins := getArr(cfg, "plugin")
@@ -106,9 +105,11 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		servers.Set("context-mode", entry)
 		_ = util.WriteFile(cp.GlobalJSON, util.StringifyJSON(cfg))
 		agents.AllowClaudeMcpTool("context-mode")
+		WriteOwner("claude", "context-mode")
 		return true, nil
 	}
 	agents.ConfigureClaudeMcp("context-mode")
+	WriteOwner("claude", "context-mode")
 	util.L.Sub(util.C.Dim("tip: to enable slash commands, type inside Claude Code: /plugin marketplace add mksglu/context-mode && /plugin install context-mode@context-mode"))
 	return true, nil
 }
@@ -125,10 +126,10 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	cfg := loadOrdered(op.Config)
 	setContextModePlugin(cfg)
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	WriteOwner("opencode", "context-mode")
 	if isTest() {
 		return true, nil
 	}
-	copyOpenCodeAgentsMd(op.Dir)
 	cleanAllContextModeCache()
 	runPostinstallInOpenCodeCache()
 	return true, nil
@@ -157,7 +158,7 @@ func setContextModePlugin(cfg *util.OrderedMap) {
 	}
 }
 
-// cleanAllContextModeCache clears stale/dangling cached dirs so bare @latest refetches.
+// cleanAllContextModeCache clears stale cached dirs so bare @latest refetches.
 func cleanAllContextModeCache() {
 	cacheRoot := filepath.Join(util.Home(), ".cache", "opencode", "packages")
 	entries, err := os.ReadDir(cacheRoot)
@@ -202,87 +203,6 @@ func runPostinstallInOpenCodeCache() {
 	}
 }
 
-func copyOpenCodeAgentsMd(opencodeDir string) {
-	dest := filepath.Join(opencodeDir, "AGENTS.md")
-	if util.Exists(dest) {
-		return
-	}
-	if util.Which("npm") == "" {
-		return
-	}
-	root := util.Run(util.ResolveNpmBinary(), []string{"root", "-g"}, util.RunOptions{Capture: true})
-	if root.Code != 0 {
-		return
-	}
-	src := filepath.Join(strings.TrimSpace(root.Stdout), "context-mode", "configs", "opencode", "AGENTS.md")
-	if !util.Exists(src) {
-		return
-	}
-	if b, err := os.ReadFile(src); err == nil {
-		_ = util.WriteFile(dest, string(b))
-	}
-}
-
-// contextModeInstructionBody loads the upstream context-mode instruction
-// template for the named agent.
-func contextModeInstructionBody(agent string) string {
-	var rel string
-	switch agent {
-	case "codex":
-		rel = filepath.Join("configs", "codex", "AGENTS.md")
-	case "antigravity":
-		rel = filepath.Join("configs", "antigravity", "GEMINI.md")
-	default:
-		return ""
-	}
-	var b []byte
-	if ctxDir := findContextModeDir(); ctxDir != "" {
-		b, _ = os.ReadFile(filepath.Join(ctxDir, rel))
-	}
-	if len(b) == 0 {
-		root := util.Run(util.ResolveNpmBinary(), []string{"root", "-g"}, util.RunOptions{Capture: true})
-		if root.Code != 0 {
-			return ""
-		}
-		b, _ = os.ReadFile(filepath.Join(strings.TrimSpace(root.Stdout), "context-mode", rel))
-	}
-	if len(b) == 0 {
-		return ""
-	}
-	body := string(b)
-	body = regexp.MustCompile(`(?m)^#{1,5}\s`).ReplaceAllStringFunc(body, func(s string) string {
-		return "#" + s
-	})
-	body = strings.ReplaceAll(body,
-		"Codex CLI hooks provide runtime enforcement when `[features].hooks = true`; these instructions remain mandatory model-side enforcement. Follow strictly.",
-		"Follow the routing rules below.")
-	body = strings.ReplaceAll(body,
-		"Antigravity has NO hooks — these instructions are ONLY enforcement.",
-		"")
-
-	lines := strings.Split(body, "\n")
-	var out []string
-	skip := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "configs/"+agent) && (strings.Contains(trimmed, "config.toml") || strings.Contains(trimmed, "hooks.json")) {
-			skip = true
-			continue
-		}
-		if skip && (trimmed == "" || strings.HasPrefix(trimmed, "```")) {
-			skip = false
-			if trimmed == "" {
-				continue
-			}
-		}
-		if skip {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.TrimRight(strings.Join(out, "\n"), "\n")
-}
-
 // --- Codex ---
 
 func ctxWireCodex(opts core.RunOpts) (bool, error) {
@@ -320,84 +240,16 @@ func wireCodexManual() bool {
 	return true
 }
 
-// writeCodexAgentsMd writes the upstream context-mode Codex instruction
-// template into `~/.codex/AGENTS.md`.
+// writeCodexAgentsMd writes the unified TOKLESS block with context-mode as one owner.
 func writeCodexAgentsMd() {
 	cx := util.CodexPathsResolved()
-	instructionsPath := cx.Instructions
-	if instructionsPath == "" {
+	if cx.Instructions == "" {
 		return
 	}
-	body := contextModeInstructionBody("codex")
-	if body == "" {
-		return
-	}
-	upsertCodexAgentsMdSection("<!-- CONTEXT-MODE_START -->", "<!-- CONTEXT-MODE_END -->", body)
+	WriteOwner("codex", "context-mode")
 }
 
-func removeCodexAgentsMdSection(open, close string) {
-	cx := util.CodexPathsResolved()
-	path := cx.Instructions
-	if path == "" {
-		return
-	}
-	existing, ok := util.ReadFileSafe(path)
-	if !ok {
-		return
-	}
-	oi := strings.Index(existing, open)
-	ci := strings.Index(existing, close)
-	if oi < 0 || ci <= oi {
-		return
-	}
-	ci += len(close)
-	for oi > 0 && existing[oi-1] == '\n' {
-		oi--
-	}
-	for ci < len(existing) && existing[ci] == '\n' {
-		ci++
-	}
-	next := strings.TrimRight(existing[:oi]+existing[ci:], "\n")
-	if strings.TrimSpace(next) == "" {
-		_ = os.Remove(path)
-		return
-	}
-	_ = util.WriteFile(path, next+"\n")
-}
-
-// upsertCodexAgentsMdSection merges a marked block into ~/.codex/AGENTS.md.
-func upsertCodexAgentsMdSection(open, close, body string) {
-	cx := util.CodexPathsResolved()
-	instructionsPath := cx.Instructions
-	if instructionsPath == "" {
-		return
-	}
-	existing := ""
-	if raw, ok := util.ReadFileSafe(instructionsPath); ok {
-		existing = raw
-	}
-	oi := strings.Index(existing, open)
-	ci := strings.Index(existing, close)
-	if oi >= 0 && ci > oi {
-		ci += len(close)
-		for ci < len(existing) && existing[ci] == '\n' {
-			ci++
-		}
-		r := existing[:oi] + open + "\n" + body + "\n" + close + "\n" + existing[ci:]
-		_ = util.WriteFile(instructionsPath, r)
-		return
-	}
-	if existing != "" && !strings.HasSuffix(existing, "\n") {
-		existing += "\n"
-	}
-	if existing != "" && !strings.HasSuffix(existing, "\n\n") {
-		existing += "\n"
-	}
-	_ = util.WriteFile(instructionsPath, existing+open+"\n"+body+"\n"+close+"\n")
-}
-
-// removeCodexContextModeHooks removes context-mode hook entries, keeping
-// unrelated hooks such as rtk/codegraph/user hooks intact.
+// removeCodexContextModeHooks removes context-mode hook entries, keeping unrelated hooks.
 func removeCodexContextModeHooks(existing *util.OrderedMap) *util.OrderedMap {
 	out := existing
 	if out == nil {
@@ -516,6 +368,7 @@ func ctxUnwireClaude(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	agents.RemoveClaudeMcp("context-mode")
+	RemoveOwner("claude", "context-mode")
 	return true, nil
 }
 
@@ -526,6 +379,7 @@ func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) {
 	op := util.OpenCodePathsResolved()
 	raw, ok := util.ReadFileSafe(op.Config)
 	if !ok {
+		RemoveOwner("opencode", "context-mode")
 		return true, nil
 	}
 	cfg := util.TryParseJsonc(raw)
@@ -549,6 +403,7 @@ func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) {
 		}
 	}
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	RemoveOwner("opencode", "context-mode")
 	return true, nil
 }
 
@@ -566,134 +421,36 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	}
 	agents.RemoveCodexContextModeHook()
 	cleanupCodexContextModeHooks()
+	RemoveOwner("codex", "context-mode")
 	return true, nil
 }
 
-// --- Antigravity (MCP + persistent GEMINI.md routing + one minimal hook) ---
+// --- Antigravity (MCP + GEMINI.md + one minimal PreToolUse hook) ---
 
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 
-func antigravityRoutingBody() string {
-	return contextModeInstructionBody("antigravity")
-}
-
-func geminiMdPath() string {
-	return filepath.Join(util.Home(), ".gemini", "GEMINI.md")
-}
-
-func upsertGeminiMdSection(open, close, content string) {
-	p := geminiMdPath()
-	existing, ok := util.ReadFileSafe(p)
-	if ok {
-		oi := strings.Index(existing, open)
-		ci := strings.Index(existing, close)
-		if oi >= 0 && ci > oi {
-			ci += len(close)
-			for ci < len(existing) && existing[ci] == '\n' {
-				ci++
-			}
-			r := existing[:oi] + content + "\n" + existing[ci:]
-			_ = util.WriteFile(p, strings.TrimRight(r, "\n")+"\n")
-			return
-		}
-		existing = strings.TrimRight(existing, "\n")
-		if existing != "" {
-			existing += "\n\n"
-		}
-		_ = util.WriteFile(p, existing+content+"\n")
-		return
-	}
-	_ = util.WriteFile(p, content+"\n")
-}
-
-func removeGeminiMdSection(open, close string) {
-	p := geminiMdPath()
-	existing, ok := util.ReadFileSafe(p)
-	if !ok {
-		return
-	}
-	oi := strings.Index(existing, open)
-	ci := strings.Index(existing, close)
-	if oi < 0 || ci <= oi {
-		return
-	}
-	ci += len(close)
-	for oi > 0 && existing[oi-1] == '\n' {
-		oi--
-	}
-	for ci < len(existing) && existing[ci] == '\n' {
-		ci++
-	}
-	c := existing[:oi] + existing[ci:]
-	c = strings.TrimRight(c, "\n")
-	if strings.TrimSpace(c) == "" {
-		_ = os.Remove(p)
-		return
-	}
-	_ = util.WriteFile(p, c+"\n")
-}
-
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add context-mode MCP and GEMINI.md routing for antigravity")
+		util.L.Sub("[dry-run] would add context-mode MCP, GEMINI.md, and minimal PreToolUse hook for antigravity")
 		return true, nil
 	}
 	agents.ConfigureAntigravityMcp("context-mode")
 	agents.CleanupLegacyAntigravityContextMode()
 	agents.RemoveAntigravityEntry("command(echo)")
-
-	body := antigravityRoutingBody()
-	if body != "" {
-		section := "<!-- CONTEXT-MODE_START -->\n" + body + "\n<!-- CONTEXT-MODE_END -->"
-		upsertGeminiMdSection("<!-- CONTEXT-MODE_START -->", "<!-- CONTEXT-MODE_END -->", section)
-	}
-
+	agents.InstallAntigravityContextModeHook()
+	WriteOwner("antigravity", "context-mode")
 	return ctxVerifyAntigravity(), nil
-}
-
-// findContextModeDir finds the context-mode npm package root directory.
-func findContextModeDir() string {
-	if util.Which("npm") != "" {
-		root := util.Run(util.ResolveNpmBinary(), []string{"root", "-g"}, util.RunOptions{Capture: true})
-		if root.Code == 0 {
-			ctxRoot := strings.TrimSpace(root.Stdout)
-			ctxPkg := filepath.Join(ctxRoot, "context-mode")
-			if util.Exists(filepath.Join(ctxPkg, "configs", "antigravity", "GEMINI.md")) {
-				return ctxPkg
-			}
-		}
-	}
-	if util.Which("node") != "" {
-		script := "try{const p=require.resolve('context-mode/package.json');process.stdout.write(require('path').dirname(p))}catch(e){}"
-		r := util.Run(util.ResolveNodeBinary(), []string{"-e", script}, util.RunOptions{Capture: true})
-		if r.Code == 0 && strings.TrimSpace(r.Stdout) != "" {
-			ctxRoot := strings.TrimSpace(r.Stdout)
-			if util.Exists(filepath.Join(ctxRoot, "configs", "antigravity", "GEMINI.md")) {
-				return ctxRoot
-			}
-		}
-	}
-	if cm := util.Which("context-mode"); cm != "" {
-		script := "const{realpathSync}=require('fs');const{dirname,join}=require('path');const r=realpathSync(process.argv[1]);process.stdout.write(join(dirname(dirname(r)),'context-mode'))"
-		r := util.Run(util.ResolveNodeBinary(), []string{"-e", script, cm}, util.RunOptions{Capture: true})
-		if r.Code == 0 && strings.TrimSpace(r.Stdout) != "" {
-			ctxRoot := strings.TrimSpace(r.Stdout)
-			if util.Exists(filepath.Join(ctxRoot, "configs", "antigravity", "GEMINI.md")) {
-				return ctxRoot
-			}
-		}
-	}
-	return ""
 }
 
 func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would remove context-mode MCP and GEMINI.md routing")
+		util.L.Sub("[dry-run] would remove context-mode MCP, GEMINI.md, and PreToolUse hook")
 		return true, nil
 	}
 	agents.RemoveAntigravityMcp("context-mode")
 	agents.CleanupLegacyAntigravityContextMode()
-	removeGeminiMdSection("<!-- CONTEXT-MODE_START -->", "<!-- CONTEXT-MODE_END -->")
+	agents.RemoveAntigravityContextModeHook()
+	RemoveOwner("antigravity", "context-mode")
 	if cwd, err := os.Getwd(); err == nil {
 		dest := filepath.Join(cwd, "GEMINI.md")
 		if raw, ok := util.ReadFileSafe(dest); ok && strings.Contains(raw, ctxGeminiMarker) {
@@ -704,7 +461,7 @@ func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 }
 
 func ctxVerifyAntigravity() bool {
-	return agents.AntigravityMcpHas("context-mode")
+	return agents.AntigravityMcpHas("context-mode") && agents.HasAntigravityContextModeHook()
 }
 
 // --- verify ---
@@ -767,7 +524,8 @@ func ctxVerifyCodex() bool {
 	if !strings.Contains(raw, "[mcp_servers.context_mode]") {
 		return false
 	}
-	if raw, ok := util.ReadFileSafe(cx.Instructions); !ok || !strings.Contains(raw, "<!-- CONTEXT-MODE_START -->") {
+	agentsRaw, ok := util.ReadFileSafe(cx.Instructions)
+	if !ok || !strings.Contains(agentsRaw, util.SectionsByOwner["context-mode"]) {
 		return false
 	}
 	if !agents.HasCodexContextModeHook() {
@@ -836,13 +594,13 @@ var contextMode = &core.ToolManifest{
 }
 
 // Register wires all tools into the core registry, in canonical order.
-// MD-block write order is determined by this sequence:
-// caveman → codegraph → context-mode → rtk.
+// MD-block write order follows this sequence.
 func Register() {
 	core.RegisterTool(rtk)
 	core.RegisterTool(caveman)
 	core.RegisterTool(codegraph)
 	core.RegisterTool(contextMode)
+	core.RegisterTool(ponytail)
 }
 
 // helpers shared in tools package

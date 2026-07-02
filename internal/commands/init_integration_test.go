@@ -208,14 +208,19 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity: rtk/codegraph hooks only; context-mode uses MCP + GEMINI.md.
+	// 6. Antigravity: rtk/codegraph hooks + minimal context-mode PreToolUse hook.
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
 	}
-	for _, bad := range []string{"context-mode hook antigravity-cli", "context-mode-hook agy", "context-mode hook gemini", "beforetool"} {
+	for _, want := range []string{"context-mode hook antigravity-cli pretooluse", `"PreToolUse"`, "run_command|view_file|grep_search|web_fetch|read_url_content"} {
+		if !strings.Contains(string(hooksContent), want) {
+			t.Errorf("antigravity context-mode minimal hook missing %q, got: %s", want, string(hooksContent))
+		}
+	}
+	for _, bad := range []string{"context-mode-hook agy", "context-mode hook gemini", "beforetool"} {
 		if strings.Contains(string(hooksContent), bad) {
-			t.Errorf("antigravity context-mode hook should not be installed (%q), got: %s", bad, string(hooksContent))
+			t.Errorf("antigravity context-mode hook should not contain %q, got: %s", bad, string(hooksContent))
 		}
 	}
 	if !strings.Contains(string(hooksContent), "tokless-codegraph-index") {
@@ -224,9 +229,6 @@ func TestInitSandboxWiring(t *testing.T) {
 	if !strings.Contains(string(hooksContent), "agy-hook codegraph-index") {
 		t.Errorf("antigravity hooks.json missing agy-hook codegraph-index command, got: %s", string(hooksContent))
 	}
-	if !strings.Contains(string(hooksContent), "PostToolUse") {
-		t.Errorf("antigravity hooks.json missing PostToolUse (IDE session-start event), got: %s", string(hooksContent))
-	}
 	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "context-mode-routing.md")) {
 		t.Errorf("antigravity context-mode should not write intermediate routing file")
 	}
@@ -234,7 +236,7 @@ func TestInitSandboxWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read antigravity GEMINI.md: %v", err)
 	}
-	if !strings.Contains(string(geminiMd), "<!-- CONTEXT-MODE_START -->") || !strings.Contains(string(geminiMd), "context-mode") {
+	if !strings.Contains(string(geminiMd), "## Context Tools (context-mode)") {
 		t.Errorf("antigravity GEMINI.md missing context-mode routing section, got: %s", string(geminiMd))
 	}
 	if util.Exists(filepath.Join(tempdir, ".gemini", "config", "tokless", "rtk-rewrite.sh")) ||

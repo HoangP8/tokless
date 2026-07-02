@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -58,14 +59,8 @@ func TestWireCodexManual_BoundedShape(t *testing.T) {
 	agents := string(agentsData)
 	t.Logf("=== AGENTS.md ===\n%s=== end ===", agents)
 
-	if !strings.Contains(agents, "<!-- CONTEXT-MODE_START -->") {
-		t.Error("AGENTS.md missing <!-- CONTEXT-MODE_START --> marker")
-	}
-	if !strings.Contains(agents, "<!-- CONTEXT-MODE_END -->") {
-		t.Error("AGENTS.md missing <!-- CONTEXT-MODE_END --> marker")
-	}
-	if !strings.Contains(agents, "## context-mode") {
-		t.Error("AGENTS.md missing '## context-mode' section heading")
+	if !strings.Contains(agents, "## Context Tools (context-mode)") {
+		t.Error("AGENTS.md missing Context Tools section heading")
 	}
 
 	for _, bad := range []string{"context_window_protection"} {
@@ -238,7 +233,7 @@ func TestWireCodexManual_CleansProjectLocalCodexHooks(t *testing.T) {
 	}
 }
 
-func TestWireAntigravity_McpAndGeminiNoContextModeHook(t *testing.T) {
+func TestWireAntigravity_McpAndGeminiMinimalContextModeHook(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
@@ -276,7 +271,7 @@ func TestWireAntigravity_McpAndGeminiNoContextModeHook(t *testing.T) {
 		t.Fatalf("read GEMINI.md: %v", err)
 	}
 	gemini := string(geminiData)
-	for _, want := range []string{"# User rules", "keep me", "<!-- CONTEXT-MODE_START -->", "## context-mode"} {
+	for _, want := range []string{"# User rules", "keep me", "## Context Tools (context-mode)"} {
 		if !strings.Contains(gemini, want) {
 			t.Fatalf("GEMINI.md missing %q:\n%s", want, gemini)
 		}
@@ -298,9 +293,14 @@ func TestWireAntigravity_McpAndGeminiNoContextModeHook(t *testing.T) {
 		t.Fatalf("read antigravity hooks: %v", err)
 	}
 	hooks := string(data)
-	for _, bad := range []string{"context-mode hook antigravity-cli", "context-mode-hook agy", "context-mode hook gemini", "beforetool"} {
+	for _, want := range []string{"context-mode hook antigravity-cli pretooluse", `"PreToolUse"`, "run_command|view_file|grep_search|web_fetch|read_url_content"} {
+		if !strings.Contains(hooks, want) {
+			t.Fatalf("antigravity context-mode hook missing %q:\n%s", want, hooks)
+		}
+	}
+	for _, bad := range []string{"PostToolUse", "Stop", "context-mode hook gemini", "beforetool"} {
 		if strings.Contains(hooks, bad) {
-			t.Fatalf("antigravity context-mode hook should not be installed, found %q:\n%s", bad, hooks)
+			t.Fatalf("antigravity context-mode hook has unwanted %q:\n%s", bad, hooks)
 		}
 	}
 	if _, err := os.Stat(filepath.Dir(pluginHooks)); err == nil {
@@ -316,6 +316,77 @@ func TestWireAntigravity_McpAndGeminiNoContextModeHook(t *testing.T) {
 	}
 	if strings.Contains(string(settingsData), "command(echo)") {
 		t.Fatalf("context-mode hook should not add tokless echo permission:\n%s", settingsData)
+	}
+}
+
+func TestCtxVerifyAntigravity_RequiresHook(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("TOKLESS_TEST", "1")
+	defer util.SetHomeOverride("")
+
+	geminiPath := filepath.Join(tmp, ".gemini", "GEMINI.md")
+	if err := os.MkdirAll(filepath.Dir(geminiPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(geminiPath, []byte("# User rules\n\nkeep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if ctxVerifyAntigravity() {
+		t.Fatal("ctxVerifyAntigravity should be false before wire")
+	}
+	if _, err := ctxWireAntigravity(coreRunOptsForTest()); err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	if !ctxVerifyAntigravity() {
+		t.Fatal("ctxVerifyAntigravity should be true after wire")
+	}
+
+	agents.RemoveAntigravityContextModeHook()
+	if ctxVerifyAntigravity() {
+		t.Fatal("ctxVerifyAntigravity should be false after hook removed")
+	}
+}
+
+func TestCleanupLegacyAntigravityContextMode_PreservesMinimalHook(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	defer util.SetHomeOverride("")
+
+	hooksPath := filepath.Join(tmp, ".gemini", "config", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := `{
+		"hooks":{
+			"PreToolUse":[
+				{"matcher":"run_command|view_file|grep_search|web_fetch|read_url_content","hooks":[{"type":"command","command":"context-mode hook antigravity-cli pretooluse","timeout":10}]},
+				{"matcher":"Bash","hooks":[{"type":"command","command":"tokless context-mode-hook agy pretooluse"}]}
+			],
+			"SessionStart":[{"hooks":[{"type":"command","command":"context-mode hook agy sessionstart"}]}]
+		}
+	}`
+	if err := os.WriteFile(hooksPath, []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	agents.CleanupLegacyAntigravityContextMode()
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("read hooks: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "context-mode hook antigravity-cli pretooluse") {
+		t.Fatalf("minimal hook removed:\n%s", s)
+	}
+	for _, bad := range []string{"tokless context-mode-hook", "context-mode hook agy sessionstart", "SessionStart"} {
+		if strings.Contains(s, bad) {
+			t.Fatalf("legacy hook remains %q:\n%s", bad, s)
+		}
 	}
 }
 

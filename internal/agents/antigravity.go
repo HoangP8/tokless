@@ -60,6 +60,183 @@ func antigravityHooksFile() string {
 	return filepath.Join(util.Home(), ".gemini", "config", "hooks.json")
 }
 
+// HasAntigravityContextModeHook checks the minimal PreToolUse hook.
+func HasAntigravityContextModeHook() bool {
+	raw, ok := util.ReadFileSafe(antigravityHooksFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	groupObj, ok := cfg.Get("context-mode")
+	if !ok {
+		return false
+	}
+	group, ok := groupObj.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	pre, ok := group.Get("PreToolUse")
+	if !ok {
+		return false
+	}
+	arr, ok := pre.([]interface{})
+	if !ok || len(arr) == 0 {
+		return false
+	}
+	entry, ok := arr[0].(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	matcher, ok := entry.Get("matcher")
+	if !ok || matcher != "run_command|view_file|grep_search|web_fetch|read_url_content" {
+		return false
+	}
+	hooksObj, ok := entry.Get("hooks")
+	if !ok {
+		return false
+	}
+	hooksArr, ok := hooksObj.([]interface{})
+	if !ok || len(hooksArr) == 0 {
+		return false
+	}
+	hook, ok := hooksArr[0].(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	cmd, ok := hook.Get("command")
+	if !ok {
+		return false
+	}
+	cmdStr, ok := cmd.(string)
+	if !ok {
+		return false
+	}
+	return cmdStr == "context-mode hook antigravity-cli pretooluse"
+}
+
+// InstallAntigravityContextModeHook installs a minimal PreToolUse hook.
+func InstallAntigravityContextModeHook() {
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	var cfg *util.OrderedMap
+	if ok {
+		cfg = util.TryParseJsonc(raw)
+	}
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+
+	hookCfg := util.NewOrderedMap()
+	hookCfg.Set("type", "command")
+	hookCfg.Set("command", "context-mode hook antigravity-cli pretooluse")
+	hookCfg.Set("timeout", 10)
+
+	entry := util.NewOrderedMap()
+	entry.Set("matcher", "run_command|view_file|grep_search|web_fetch|read_url_content")
+	entry.Set("hooks", []interface{}{hookCfg})
+
+	group := util.NewOrderedMap()
+	group.Set("PreToolUse", []interface{}{entry})
+
+	cfg.Set("context-mode", group)
+
+	if next := util.StringifyJSON(cfg); next != raw {
+		_ = util.WriteFile(hooksFile, next)
+	}
+}
+
+// RemoveAntigravityContextModeHook removes the context-mode hook group.
+func RemoveAntigravityContextModeHook() {
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	if _, ok := cfg.Get("context-mode"); ok {
+		cfg.Delete("context-mode")
+		if cfg.Len() == 0 {
+			_ = os.Remove(hooksFile)
+			return
+		}
+		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+	}
+}
+
+// CleanupLegacyAntigravityContextMode removes legacy context-mode hook surfaces,
+// keeping the exact new minimal PreToolUse command intact.
+func CleanupLegacyAntigravityContextMode() {
+	_ = os.RemoveAll(filepath.Join(util.Home(), ".gemini", "config", "plugins", "context-mode"))
+
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	changed := false
+	if _, ok := cfg.Get("ctx"); ok {
+		cfg.Delete("ctx")
+		changed = true
+	}
+	if _, ok := cfg.Get("tokless-context-mode"); ok {
+		cfg.Delete("tokless-context-mode")
+		changed = true
+	}
+	for _, groupName := range append([]string(nil), cfg.Keys()...) {
+		groupObj, ok := cfg.Get(groupName)
+		if !ok {
+			continue
+		}
+		group, ok := groupObj.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		for _, event := range append([]string(nil), group.Keys()...) {
+			v, ok := group.Get(event)
+			if !ok {
+				continue
+			}
+			entries, ok := v.([]interface{})
+			if !ok {
+				continue
+			}
+			kept := filterContextModeHookEntries(entries)
+			if len(kept) != len(entries) {
+				changed = true
+				if len(kept) == 0 {
+					group.Delete(event)
+				} else {
+					group.Set(event, kept)
+				}
+			}
+		}
+		if group.Len() == 0 {
+			cfg.Delete(groupName)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if cfg.Len() == 0 {
+		_ = os.Remove(hooksFile)
+		return
+	}
+	if next := util.StringifyJSON(cfg); next != raw {
+		_ = util.WriteFile(hooksFile, next)
+	}
+}
+
 func antigravityRewriteScript() string {
 	return filepath.Join(util.Home(), ".gemini", "config", "tokless", "rtk-rewrite.sh")
 }
@@ -188,73 +365,7 @@ func HasAntigravityRtkHook() bool {
 	return strings.Contains(cmdStr, "rtk-hook agy")
 }
 
-// CleanupLegacyAntigravityContextMode strips every context-mode hook surface
-// tokless or the upstream agy plugin may have installed.
-func CleanupLegacyAntigravityContextMode() {
-	_ = os.RemoveAll(filepath.Join(util.Home(), ".gemini", "config", "plugins", "context-mode"))
-
-	hooksFile := antigravityHooksFile()
-	raw, ok := util.ReadFileSafe(hooksFile)
-	if !ok {
-		return
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return
-	}
-	changed := false
-	if _, ok := cfg.Get("ctx"); ok {
-		cfg.Delete("ctx")
-		changed = true
-	}
-	if _, ok := cfg.Get("tokless-context-mode"); ok {
-		cfg.Delete("tokless-context-mode")
-		changed = true
-	}
-	for _, groupName := range append([]string(nil), cfg.Keys()...) {
-		groupObj, ok := cfg.Get(groupName)
-		if !ok {
-			continue
-		}
-		group, ok := groupObj.(*util.OrderedMap)
-		if !ok {
-			continue
-		}
-		for _, event := range append([]string(nil), group.Keys()...) {
-			v, ok := group.Get(event)
-			if !ok {
-				continue
-			}
-			entries, ok := v.([]interface{})
-			if !ok {
-				continue
-			}
-			kept := filterContextModeHookEntries(entries)
-			if len(kept) != len(entries) {
-				changed = true
-				if len(kept) == 0 {
-					group.Delete(event)
-				} else {
-					group.Set(event, kept)
-				}
-			}
-		}
-		if group.Len() == 0 {
-			cfg.Delete(groupName)
-			changed = true
-		}
-	}
-	if !changed {
-		return
-	}
-	if cfg.Len() == 0 {
-		_ = os.Remove(hooksFile)
-		return
-	}
-	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(hooksFile, next)
-	}
-}
+const antigravityContextModeHookCommand = "context-mode hook antigravity-cli pretooluse"
 
 func filterContextModeHookEntries(arr []interface{}) []interface{} {
 	var kept []interface{}
@@ -281,9 +392,14 @@ func filterContextModeHookEntries(arr []interface{}) []interface{} {
 				continue
 			}
 			if c, ok := hm.Get("command"); ok {
-				if s, ok := c.(string); ok && strings.Contains(s, "context-mode") {
-					drop = true
-					break
+				if s, ok := c.(string); ok {
+					if s == antigravityContextModeHookCommand {
+						continue
+					}
+					if strings.Contains(s, "context-mode") {
+						drop = true
+						break
+					}
 				}
 			}
 		}
