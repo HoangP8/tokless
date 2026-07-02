@@ -194,6 +194,8 @@ func npmInstalledVersion(pkg string) *string {
 	return bunInstalledVersion(pkg)
 }
 
+func NpmInstalledVersionExported(pkg string) *string { return npmInstalledVersion(pkg) }
+
 // bunInstalledVersion resolves a bun-linked bin (e.g. ~/.bun/bin/<pkg>) to its
 // package.json and reads the version. Also checks ~/.bun/install/global.
 func bunInstalledVersion(pkg string) *string {

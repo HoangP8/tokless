@@ -16,6 +16,48 @@ func RunUninstall(opts InitOptions) int {
 	return disableImpl(opts, true, "Uninstalled")
 }
 
+// purgeBinaries prompts the user and removes the binaries /
+// npm globals tokless installed.
+func purgeBinaries(opts InitOptions) int {
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would purge tokless-installed binaries + npm globals")
+		return 0
+	}
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return 0
+	}
+	doPurge := opts.Yes
+	if !doPurge && util.IsInteractive() {
+		doPurge = util.Confirm("Also remove binaries/packages tokless installed (rtk, npm globals)?", false)
+	}
+	if !doPurge {
+		return 0
+	}
+	return runPurge()
+}
+
+// runPurge removes rtk binary and npm globals. Best-effort; errors logged.
+func runPurge() int {
+	n := 0
+	if p := util.ResolveRtkBin(); p != "" && util.Exists(p) {
+		if r := util.Run(p, []string{"init", "--uninstall"}, util.RunOptions{Capture: true}); r.Code == 0 {
+			_ = os.Remove(p)
+			n++
+		}
+	}
+	npm := util.ResolveNpmBinary()
+	if npm != "" {
+		for _, pkg := range []string{"context-mode", "@colbymchenry/codegraph"} {
+			if util.NpmInstalledVersionExported(pkg) != nil {
+				if r := util.Run(npm, []string{"uninstall", "-g", pkg}, util.RunOptions{Capture: true}); r.Code == 0 {
+					n++
+				}
+			}
+		}
+	}
+	return n
+}
+
 func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	util.L.Raw("")
 	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless")) + util.C.Gray("  "+lower(verb)))
@@ -67,6 +109,7 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	bar.Done("")
 
 	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {
+		_ = purgeBinaries(opts)
 		cacheDir := filepath.Join(util.Home(), ".cache", "tokless")
 		if util.Exists(cacheDir) {
 			_ = os.RemoveAll(cacheDir)
