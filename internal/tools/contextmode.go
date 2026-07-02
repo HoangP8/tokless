@@ -425,30 +425,32 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-// --- Antigravity (MCP + GEMINI.md + one minimal PreToolUse hook) ---
+// --- Antigravity (MCP + GEMINI.md, no PreToolUse hook) ---
 
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add context-mode MCP, GEMINI.md, and minimal PreToolUse hook for antigravity")
+		util.L.Sub("[dry-run] would add context-mode MCP and GEMINI.md for antigravity")
 		return true, nil
 	}
 	agents.ConfigureAntigravityMcp("context-mode")
 	agents.CleanupLegacyAntigravityContextMode()
+	agents.CleanupDeadIdeHooks()
 	agents.RemoveAntigravityEntry("command(echo)")
-	agents.InstallAntigravityContextModeHook()
+	agents.RemoveAntigravityContextModeHook()
 	WriteOwner("antigravity", "context-mode")
 	return ctxVerifyAntigravity(), nil
 }
 
 func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would remove context-mode MCP, GEMINI.md, and PreToolUse hook")
+		util.L.Sub("[dry-run] would remove context-mode MCP and GEMINI.md")
 		return true, nil
 	}
 	agents.RemoveAntigravityMcp("context-mode")
 	agents.CleanupLegacyAntigravityContextMode()
+	agents.CleanupDeadIdeHooks()
 	agents.RemoveAntigravityContextModeHook()
 	RemoveOwner("antigravity", "context-mode")
 	if cwd, err := os.Getwd(); err == nil {
@@ -461,7 +463,7 @@ func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 }
 
 func ctxVerifyAntigravity() bool {
-	return agents.AntigravityMcpHas("context-mode") && agents.HasAntigravityContextModeHook()
+	return agents.AntigravityMcpHas("context-mode") && !agents.HasAntigravityContextModeHook()
 }
 
 // --- verify ---

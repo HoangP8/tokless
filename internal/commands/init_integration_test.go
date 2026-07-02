@@ -208,19 +208,14 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("claude settings.json doesn't auto-approve codegraph MCP, got: %s", string(claudeSettings))
 	}
 
-	// 6. Antigravity: rtk/codegraph hooks + minimal context-mode PreToolUse hook.
+	// 6. Antigravity: rtk/codegraph hooks, but no context-mode PreToolUse hook.
 	hooksContent, _ := os.ReadFile(filepath.Join(tempdir, ".gemini", "config", "hooks.json"))
 	if !strings.Contains(string(hooksContent), "rtk-hook agy") {
 		t.Errorf("antigravity hooks.json does not invoke `rtk-hook agy`, got: %s", string(hooksContent))
 	}
-	for _, want := range []string{"context-mode hook antigravity-cli pretooluse", `"PreToolUse"`, "run_command|view_file|grep_search|web_fetch|read_url_content"} {
-		if !strings.Contains(string(hooksContent), want) {
-			t.Errorf("antigravity context-mode minimal hook missing %q, got: %s", want, string(hooksContent))
-		}
-	}
-	for _, bad := range []string{"context-mode-hook agy", "context-mode hook gemini", "beforetool"} {
+	for _, bad := range []string{"context-mode hook antigravity-cli pretooluse", "context-mode-hook agy", "context-mode hook gemini", "beforetool", "run_command|view_file|grep_search|web_fetch|read_url_content"} {
 		if strings.Contains(string(hooksContent), bad) {
-			t.Errorf("antigravity context-mode hook should not contain %q, got: %s", bad, string(hooksContent))
+			t.Errorf("antigravity hooks.json should not contain context-mode hook artifact %q, got: %s", bad, string(hooksContent))
 		}
 	}
 	if !strings.Contains(string(hooksContent), "tokless-codegraph-index") {

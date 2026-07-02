@@ -233,7 +233,7 @@ func TestWireCodexManual_CleansProjectLocalCodexHooks(t *testing.T) {
 	}
 }
 
-func TestWireAntigravity_McpAndGeminiMinimalContextModeHook(t *testing.T) {
+func TestWireAntigravity_McpAndGeminiNoContextModeHook(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
@@ -293,14 +293,9 @@ func TestWireAntigravity_McpAndGeminiMinimalContextModeHook(t *testing.T) {
 		t.Fatalf("read antigravity hooks: %v", err)
 	}
 	hooks := string(data)
-	for _, want := range []string{"context-mode hook antigravity-cli pretooluse", `"PreToolUse"`, "run_command|view_file|grep_search|web_fetch|read_url_content"} {
-		if !strings.Contains(hooks, want) {
-			t.Fatalf("antigravity context-mode hook missing %q:\n%s", want, hooks)
-		}
-	}
-	for _, bad := range []string{"PostToolUse", "Stop", "context-mode hook gemini", "beforetool"} {
+	for _, bad := range []string{"context-mode hook antigravity-cli pretooluse", "run_command|view_file|grep_search|web_fetch|read_url_content", "PostToolUse", "Stop", "context-mode hook gemini", "beforetool"} {
 		if strings.Contains(hooks, bad) {
-			t.Fatalf("antigravity context-mode hook has unwanted %q:\n%s", bad, hooks)
+			t.Fatalf("antigravity hooks should not contain context-mode hook artifact %q:\n%s", bad, hooks)
 		}
 	}
 	if _, err := os.Stat(filepath.Dir(pluginHooks)); err == nil {
@@ -319,7 +314,7 @@ func TestWireAntigravity_McpAndGeminiMinimalContextModeHook(t *testing.T) {
 	}
 }
 
-func TestCtxVerifyAntigravity_RequiresHook(t *testing.T) {
+func TestCtxVerifyAntigravity_RequiresNoHook(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
@@ -344,9 +339,9 @@ func TestCtxVerifyAntigravity_RequiresHook(t *testing.T) {
 		t.Fatal("ctxVerifyAntigravity should be true after wire")
 	}
 
-	agents.RemoveAntigravityContextModeHook()
+	agents.InstallAntigravityContextModeHook()
 	if ctxVerifyAntigravity() {
-		t.Fatal("ctxVerifyAntigravity should be false after hook removed")
+		t.Fatal("ctxVerifyAntigravity should be false when context-mode hook exists")
 	}
 }
 
