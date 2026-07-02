@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,9 +24,7 @@ func instructionPath(agent string) string {
 	return ""
 }
 
-// legacyBlockHeadings lists old `## Heading` sections that no longer belong
-// in the unified body. The rtk section was removed in the unified-body
-// migration; rtk is hook-only (PreToolUse), no body text needed.
+// legacyBlockHeadings lists old sections removed by unified-body migration.
 var legacyBlockHeadings = []string{"## Process Noise"}
 
 var legacyFences = [][2]string{
@@ -33,6 +32,18 @@ var legacyFences = [][2]string{
 	{"<!-- CODEGRAPH_START -->", "<!-- CODEGRAPH_END -->"},
 	{"<!-- CONTEXT-MODE_START -->", "<!-- CONTEXT-MODE_END -->"},
 	{"<!-- tokless:owners=", ""},
+}
+
+var instructionConflict = struct {
+	autoAppend bool
+	appendAll  bool
+	skipped    map[string]bool
+}{skipped: map[string]bool{}}
+
+func ConfigureInstructionConflicts(autoAppend bool) {
+	instructionConflict.autoAppend = autoAppend
+	instructionConflict.appendAll = false
+	instructionConflict.skipped = map[string]bool{}
 }
 
 func stripLegacy(raw string) string {
@@ -81,9 +92,7 @@ func stripLegacy(raw string) string {
 	return raw
 }
 
-// stripLegacyHeading removes a `## Heading` block (the heading line plus
-// body until the next `## ` heading or end of file) and trims surrounding
-// blank lines.
+// stripLegacyHeading removes a `## Heading` block and surrounding blank lines.
 func stripLegacyHeading(raw, heading string) string {
 	for {
 		i := strings.Index(raw, heading)
@@ -131,13 +140,7 @@ func stripLegacyHeading(raw, heading string) string {
 	}
 }
 
-// fileParts splits raw into the lines preceding any managed section
-// (head), the contiguous managed sections (each anchored by a known
-// `## Heading`), and the trailing lines (tail). Lines are kept verbatim.
-//
-// A managed block is the contiguous run of lines starting at an owner
-// heading and ending at the next owner heading (or EOF). All body lines
-// of the last owner belong to that block — not to tail.
+// fileParts splits raw into head, managed sections, and tail.
 func fileParts(raw string) (head []string, blocks []managedSection, tail []string) {
 	lines := strings.Split(raw, "\n")
 	ownerIdx := make([]int, 0)
@@ -188,15 +191,13 @@ func blocksFromLines(lines []string) []managedSection {
 	return out
 }
 
-// ownerOf returns the owner id for a `## Heading` line that matches a
-// known section heading, or "" otherwise.
+// ownerOf returns owner id for a known heading.
 func ownerOf(line string) string {
-	if !strings.HasPrefix(line, "## ") {
-		return ""
-	}
-	for o, m := range util.SectionsByOwner {
-		if m != "" && line == m {
-			return o
+	for _, o := range util.ToklessOwners {
+		for _, marker := range util.SectionMarkers(o) {
+			if line == marker {
+				return o
+			}
 		}
 	}
 	return ""
@@ -213,7 +214,7 @@ func WriteOwner(agent, owner string) bool {
 	return writeOwnerInPath(path, cur, owner)
 }
 
-// RemoveOwner removes owner's section. When no owners remain, removes file.
+// RemoveOwner removes owner's section; removes file when empty.
 func RemoveOwner(agent, owner string) {
 	path := instructionPath(agent)
 	if path == "" {
@@ -242,19 +243,78 @@ func HasOwner(agent, owner string) bool {
 func writeOwnerInPath(path, cur, owner string) bool {
 	cleaned := stripLegacy(cur)
 	head, blocks, tail := fileParts(cleaned)
+	head = stripIndexPreamble(head)
 	owners := ownersFromBlocks(blocks)
+	if len(owners) == 0 && strings.TrimSpace(cleaned) != "" {
+		switch instructionConflictChoice(path) {
+		case "skip":
+			return false
+		case "overwrite":
+			cleaned = ""
+			head, blocks, tail = fileParts(cleaned)
+			owners = ownersFromBlocks(blocks)
+		}
+	}
 	if containsOwner(owners, owner) {
-		return false
+		sortOwnersByRegistry(owners)
+		want := strings.TrimRight(util.ToklessBody(owners), "\n")
+		current := joinManagedBlocks(blocks)
+		if current == want {
+			return false
+		}
+		return util.WriteFile(path, joinFile(head, want, tail)) == nil
 	}
 	owners = append(owners, owner)
-	sort.Strings(owners)
+	sortOwnersByRegistry(owners)
 	body := strings.TrimRight(util.ToklessBody(owners), "\n")
 	return util.WriteFile(path, joinFile(head, body, tail)) == nil
+}
+
+func instructionConflictChoice(path string) string {
+	if instructionConflict.skipped[path] {
+		return "skip"
+	}
+	if instructionConflict.autoAppend || instructionConflict.appendAll || !util.IsInteractive() || os.Getenv("TOKLESS_TEST") == "1" {
+		return "append"
+	}
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "  "+util.C.Yellow(util.Sym.Warn)+" "+path+" already has content.")
+	switch util.SelectOne("Handle existing instructions", []util.SelectOption{
+		{Value: "overwrite", Label: "Overwrite", Hint: "recommended", Selected: true},
+		{Value: "append", Label: "Append"},
+	}) {
+	case "overwrite":
+		return "overwrite"
+	}
+	return "append"
+}
+
+// joinManagedBlocks reconstructs the rendered text of existing managed blocks.
+func joinManagedBlocks(blocks []managedSection) string {
+	var b strings.Builder
+	for i, blk := range blocks {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(strings.Join(blk.lines, "\n"))
+	}
+	return b.String()
+}
+
+func sortOwnersByRegistry(owners []string) {
+	order := make(map[string]int, len(util.ToklessOwners))
+	for i, o := range util.ToklessOwners {
+		order[o] = i
+	}
+	sort.Slice(owners, func(i, j int) bool {
+		return order[owners[i]] < order[owners[j]]
+	})
 }
 
 func removeOwnerInPath(path, cur, owner string) {
 	cleaned := stripLegacy(cur)
 	head, blocks, tail := fileParts(cleaned)
+	head = stripIndexPreamble(head)
 	owners := ownersFromBlocks(blocks)
 	if !containsOwner(owners, owner) {
 		return
@@ -265,9 +325,11 @@ func removeOwnerInPath(path, cur, owner string) {
 			kept = append(kept, o)
 		}
 	}
+	sortOwnersByRegistry(kept)
 	if len(kept) == 0 {
-		s := joinFile(head, "", tail)
-		if strings.TrimSpace(s) == "" || strings.TrimSpace(s) == "# Notes\n\nkeep me" {
+		trimmed := stripIndexPreamble(head)
+		s := joinFile(trimmed, "", tail)
+		if strings.TrimSpace(s) == "" {
 			_ = os.Remove(path)
 			return
 		}
@@ -276,6 +338,22 @@ func removeOwnerInPath(path, cur, owner string) {
 	}
 	body := strings.TrimRight(util.ToklessBody(kept), "\n")
 	_ = util.WriteFile(path, joinFile(head, body, tail))
+}
+
+// stripIndexPreamble drops overview when last owner is removed.
+func stripIndexPreamble(head []string) []string {
+	for i, line := range head {
+		trimmed := strings.TrimSpace(line)
+		if (trimmed == "# Agent Instructions" || trimmed == "# Agent Operating System" || trimmed == "## Index" || trimmed == "## Index →") && isToklessIndexPreamble(head[i:]) {
+			return head[:i]
+		}
+	}
+	return head
+}
+
+func isToklessIndexPreamble(lines []string) bool {
+	body := strings.Join(lines, "\n")
+	return strings.Contains(body, "- **Principles**") || strings.Contains(body, "- **Response Style") || strings.Contains(body, "- **Code Index")
 }
 
 func writeOwnerAtPath(path, owner string) {
@@ -313,6 +391,9 @@ func hasOwnerInRaw(raw, owner string) bool {
 func ownersFromBlocks(blocks []managedSection) []string {
 	var out []string
 	for _, b := range blocks {
+		if b.owner == "principles" {
+			continue
+		}
 		out = append(out, b.owner)
 	}
 	return out
