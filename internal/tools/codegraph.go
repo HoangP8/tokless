@@ -13,23 +13,10 @@ import (
 
 func codegraphEnsureInstalled(opts core.RunOpts) (bool, error) {
 	if isTest() {
-		dest := filepath.Join(util.Home(), ".local", "bin")
-		_ = os.MkdirAll(dest, 0o755)
-		cgPath := filepath.Join(dest, "codegraph")
-		_ = os.Remove(cgPath)
-		_ = os.WriteFile(cgPath, []byte("#!/bin/sh\necho ok"), 0o755)
-		sep := ":"
-		if util.IsWin {
-			sep = ";"
-		}
-		cur := os.Getenv("PATH")
-		if !strings.Contains(sep+cur+sep, sep+dest+sep) {
-			os.Setenv("PATH", dest+sep+cur)
-		}
 		return true, nil
 	}
 	opts.Reportf("checking", 0.1)
-	if util.Which("codegraph") != "" && !opts.Upgrade {
+	if util.ResolveCodegraphBin() != "" && !opts.Upgrade {
 		opts.Reportf("already installed", 1)
 		return true, nil
 	}
@@ -39,6 +26,7 @@ func codegraphEnsureInstalled(opts core.RunOpts) (bool, error) {
 	}
 	opts.Reportf("npm install -g", 0.4)
 	_, ok, _ := util.NpmGlobalInstall("@colbymchenry/codegraph", "latest")
+	ok = ok && util.ResolveCodegraphBin() != ""
 	if ok {
 		opts.Reportf("ready", 1)
 	}
@@ -56,7 +44,11 @@ func codegraphRealInstall(opts core.RunOpts, agent string) bool {
 		util.L.Sub("[dry-run] would run: codegraph install --yes")
 		return true
 	}
-	help := util.Run(util.ResolveCodegraphBin(), []string{"install", "--help"}, util.RunOptions{Capture: true})
+	bin := util.ResolveCodegraphBin()
+	if bin == "" {
+		return false
+	}
+	help := util.Run(bin, []string{"install", "--help"}, util.RunOptions{Capture: true})
 	hasYes := strings.Contains(help.Stdout, "--yes") || strings.Contains(help.Stderr, "--yes")
 	hasTarget := strings.Contains(help.Stdout, "--target") || strings.Contains(help.Stderr, "--target")
 	args := []string{"install"}
@@ -73,7 +65,7 @@ func codegraphRealInstall(opts core.RunOpts, agent string) bool {
 		}
 		args = append(args, "--target", target)
 	}
-	return util.Run(util.ResolveCodegraphBin(), args, util.RunOptions{Capture: true}).Code == 0
+	return util.Run(bin, args, util.RunOptions{Capture: true}).Code == 0
 }
 
 // codegraphConfigureMcp writes the MCP entry tokless-side.
@@ -147,7 +139,8 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
 		return true, nil
 	}
-	if util.Which("codegraph") == "" {
+	bin := util.ResolveCodegraphBin()
+	if bin == "" {
 		return false, nil
 	}
 	if opts.DryRun {
@@ -157,14 +150,14 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 	hasIndex := util.Exists(filepath.Join(dir, ".codegraph"))
 	var res util.ExecResult
 	if hasIndex {
-		res = util.Run(util.ResolveCodegraphBin(), []string{"sync"}, util.RunOptions{Cwd: dir, Capture: true})
+		res = util.Run(bin, []string{"sync"}, util.RunOptions{Cwd: dir, Capture: true})
 		if res.Code == 0 {
 			return true, nil
 		}
 	}
-	res = util.Run(util.ResolveCodegraphBin(), []string{"init", "-i"}, util.RunOptions{Cwd: dir, Capture: true})
+	res = util.Run(bin, []string{"init", "-i"}, util.RunOptions{Cwd: dir, Capture: true})
 	if res.Code != 0 {
-		res = util.Run(util.ResolveCodegraphBin(), []string{"init"}, util.RunOptions{Cwd: dir, Capture: true})
+		res = util.Run(bin, []string{"init"}, util.RunOptions{Cwd: dir, Capture: true})
 	}
 	return res.Code == 0, nil
 }
@@ -228,7 +221,7 @@ var codegraph = &core.ToolManifest{
 	Install:      codegraphEnsureInstalled,
 	IndexProject: codegraphIndexProject,
 	Indexed:      codegraphIndexed,
-	IndexReady:   func() bool { return isTest() || util.Which("codegraph") != "" },
+	IndexReady:   func() bool { return isTest() || util.ResolveCodegraphBin() != "" },
 	WireFor: map[string]core.AgentFn{
 		"claude":      codegraphWire("claude"),
 		"opencode":    codegraphWire("opencode"),
@@ -263,6 +256,7 @@ var codegraph = &core.ToolManifest{
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
 			agents.RemoveAntigravityMcp("codegraph")
+			agents.RemoveAntigravityCodegraphIndexHook()
 			unwireAutoIndex("antigravity")
 			agents.CleanupDeadIdeHooks()
 			agents.RemoveAntigravityCodegraphToolDefs()

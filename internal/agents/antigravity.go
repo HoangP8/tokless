@@ -679,7 +679,12 @@ func RemoveAntigravityEntry(entry string) {
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		var ok bool
+		spawn, ok = util.PickCodegraphSpawn("serve", "--mcp")
+		if !ok {
+			return false, ""
+		}
+		spawn = util.WrapAutoIndex("antigravity", spawn)
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}

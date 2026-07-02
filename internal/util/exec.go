@@ -237,7 +237,7 @@ func ResolveNodeBinary() string {
 		if IsWin {
 			p += ".exe"
 		}
-		if Exists(p) {
+		if Exists(p) && BinaryHealthy(p) {
 			PrependProcessPath(d)
 			return p
 		}
@@ -278,7 +278,7 @@ func codegraphBinCandidates() []string {
 // ResolveCodegraphBin finds codegraph, surviving PATH drift.
 func ResolveCodegraphBin() string {
 	if p := Which("codegraph"); p != "" {
-		if BinaryHealthy(p) {
+		if CodegraphBinaryHealthy(p) {
 			return p
 		}
 	}
@@ -290,7 +290,7 @@ func ResolveCodegraphBin() string {
 		if IsWin {
 			p += ".cmd"
 		}
-		if Exists(p) {
+		if Exists(p) && CodegraphBinaryHealthy(p) {
 			PrependProcessPath(d)
 			return p
 		}
@@ -303,7 +303,7 @@ func ResolveCodegraphBin() string {
 		if IsWin {
 			p += ".cmd"
 		}
-		if Exists(p) {
+		if Exists(p) && CodegraphBinaryHealthy(p) {
 			PrependProcessPath(dir)
 			return p
 		}

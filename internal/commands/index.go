@@ -163,11 +163,8 @@ func resolveHookProjectDirFromInput(input []byte) string {
 }
 
 func resolveCodegraphBin() string {
-	if p := util.Which("codegraph"); p != "" {
-		res := util.Run(util.ResolveCodegraphBin(), []string{"--version"}, util.RunOptions{Capture: true})
-		if res.Code == 0 && strings.Contains(res.Stdout, ".") {
-			return p
-		}
+	if p := util.ResolveCodegraphBin(); p != "" {
+		return p
 	}
 	if matches, _ := filepath.Glob(filepath.Join(util.Home(), ".nvm", "versions", "node", "*", "bin")); len(matches) > 0 {
 		sep := ":"
@@ -178,7 +175,7 @@ func resolveCodegraphBin() string {
 		prefix := strings.Join(matches, sep)
 		os.Setenv("PATH", prefix+sep+cur)
 	}
-	return util.Which("codegraph")
+	return util.ResolveCodegraphBin()
 }
 func RunClaudeCodegraphSyncHook() int {
 	dir, err := os.Getwd()

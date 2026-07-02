@@ -22,7 +22,12 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	raw = sweepStaleHookStateEntries(raw)
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("codex", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		var ok bool
+		spawn, ok = util.PickCodegraphSpawn("serve", "--mcp")
+		if !ok {
+			return false, p.Config
+		}
+		spawn = util.WrapAutoIndex("codex", spawn)
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}

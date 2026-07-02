@@ -22,10 +22,20 @@ func RunMcp(argv []string) int {
 	if strings.Contains(argv[0], string(filepath.Separator)) {
 		util.PrependProcessPath(filepath.Dir(argv[0]))
 	}
+	if isCodegraphCommand(argv[0]) && !util.CodegraphBinaryHealthy(argv[0]) {
+		if p := util.ResolveCodegraphBin(); p != "" {
+			argv[0] = p
+		}
+	}
 	RunIndex(InitOptions{Agent: agent}, true)
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		path = argv[0]
 	}
 	return runMcpProxy(agent, path, argv, os.Environ())
+}
+
+func isCodegraphCommand(p string) bool {
+	base := strings.ToLower(filepath.Base(p))
+	return base == "codegraph" || base == "codegraph.cmd" || base == "codegraph.exe" || base == "codegraph.bat"
 }
