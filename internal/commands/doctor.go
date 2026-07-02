@@ -77,6 +77,7 @@ func RunDoctor(offline bool) int {
 		util.L.Raw("")
 		util.L.Info("Run " + util.C.Cyan("tokless") + " to fix.")
 	}
+	printRepoFooter()
 	util.L.Raw("")
 	return 0
 }
@@ -100,14 +101,17 @@ func doctorSummary(r agentReport) {
 // listToolVersions prints one row per tool.
 func listToolVersions(tools []*core.ToolManifest, v map[string]util.VersionInfo) {
 	for _, tool := range tools {
+		if tool.InstructionOnly {
+			continue
+		}
 		info := v[tool.ID]
 		switch {
-		case tool.NotTrackable && info.Installed == nil:
-			util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" "+padEnd(tool.ID, 14)+"not installed"))
-		case tool.NotTrackable && *info.Installed == util.CavemanPresentSentinel:
+		case tool.NotTrackable && info.Installed != nil:
+			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+"v"+*info.Installed))
+		case tool.NotTrackable && info.Present:
 			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+"installed"))
 		case tool.NotTrackable:
-			util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+"v"+*info.Installed))
+			util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" "+padEnd(tool.ID, 14)+"not installed"))
 		case info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
 			util.L.Raw("  " + util.C.Yellow("↑") + " " + util.C.Gray(padEnd(tool.ID, 14)+padEnd("v"+*info.Installed, 10)+"→ ") + util.C.Green("v"+*info.Latest))
 		case info.Installed != nil:

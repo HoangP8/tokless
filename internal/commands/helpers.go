@@ -1,11 +1,15 @@
 package commands
 
 import (
+	"os"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
+
+const repoURL = "https://github.com/HoangP8/tokless"
+const issuesURL = repoURL + "/issues"
 
 func toolVersionNote(tool *core.ToolManifest) string {
 	if tool.NotTrackable {
@@ -16,6 +20,11 @@ func toolVersionNote(tool *core.ToolManifest) string {
 	}
 	if v := util.InstalledVersionFor(tool.ID); v != nil {
 		return "v" + *v
+	}
+	if tool.Channel == core.ChannelNpm {
+		if v := util.LatestVersionFor(tool.ID); v != nil {
+			return "v" + *v
+		}
 	}
 	return ""
 }
@@ -109,3 +118,15 @@ func padEnd(s string, n int) string {
 	}
 	return s + strings.Repeat(" ", n-len(s))
 }
+
+func printRepoFooter() {
+	if osEnvTest() {
+		return
+	}
+	util.L.Raw("")
+	util.L.Raw(util.C.Gray(util.Rule(52)))
+	util.L.Raw("  " + util.C.Gray("If tokless helps, please star it here: ") + util.C.Cyan(repoURL))
+	util.L.Raw("  " + util.C.Gray("If you hit any issue or have ideas, please raise it here: ") + util.C.Cyan(issuesURL))
+}
+
+func osEnvTest() bool { return os.Getenv("TOKLESS_TEST") == "1" }
