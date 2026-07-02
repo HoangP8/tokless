@@ -168,6 +168,25 @@ func TestRemoveCavemanOpencodeFiles(t *testing.T) {
 	}
 }
 
+func TestRemoveCavemanOpencodeAgentFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	ocDir := filepath.Join(dir, "opencode")
+	os.MkdirAll(filepath.Join(ocDir, "agents"), 0o755)
+	os.WriteFile(filepath.Join(ocDir, "agents", "cavecrew-builder.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "agents", "my-agent.md"), []byte("x"), 0o644)
+
+	removeCavemanOpencodeAgentFiles()
+
+	if _, err := os.Stat(filepath.Join(ocDir, "agents", "cavecrew-builder.md")); err == nil {
+		t.Fatal("cavecrew opencode agent file should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(ocDir, "agents", "my-agent.md")); err != nil {
+		t.Fatal("user opencode agent file should be kept")
+	}
+}
+
 func TestCavemanAgentsMdIdempotentPreserves(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("XDG_CONFIG_HOME", dir)
@@ -182,13 +201,13 @@ func TestCavemanAgentsMdIdempotentPreserves(t *testing.T) {
 	if !strings.Contains(string(b), "keep this") {
 		t.Fatal("user content lost")
 	}
-	if !strings.Contains(string(b), cavemanAgentsBegin) || !strings.Contains(string(b), "Respond terse") {
-		t.Fatal("caveman ruleset not written")
+	if !strings.Contains(string(b), "## Response Style (caveman)") || !strings.Contains(string(b), "Drop articles") {
+		t.Fatal("caveman section not written")
 	}
 	writeCavemanAgentsMd(ocDir)
 	b2, _ := os.ReadFile(md)
-	if strings.Count(string(b2), cavemanAgentsBegin) != 1 {
-		t.Fatalf("not idempotent: %d blocks", strings.Count(string(b2), cavemanAgentsBegin))
+	if strings.Count(string(b2), "## Response Style (caveman)") != 1 {
+		t.Fatalf("not idempotent: %d blocks", strings.Count(string(b2), "## Response Style (caveman)"))
 	}
 }
 
@@ -202,12 +221,15 @@ func TestCavemanRulesetAllAgents(t *testing.T) {
 		if !strings.Contains(string(b), "keep me") {
 			t.Fatalf("%s: user content lost", name)
 		}
+		if !strings.Contains(string(b), "## Response Style (caveman)") {
+			t.Fatalf("%s: caveman section not written", name)
+		}
 		if !cavemanRulesetActive(p) {
 			t.Fatalf("%s: ruleset not active after write", name)
 		}
 		writeCavemanRuleset(p) // idempotent
 		b2, _ := os.ReadFile(p)
-		if strings.Count(string(b2), cavemanAgentsBegin) != 1 {
+		if strings.Count(string(b2), "## Response Style (caveman)") != 1 {
 			t.Fatalf("%s: not idempotent", name)
 		}
 		removeCavemanRuleset(p)

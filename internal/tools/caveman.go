@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,94 +151,16 @@ func unregisterCavemanOpencode() {
 	removeCavemanRuleset(filepath.Join(op.Dir, "AGENTS.md"))
 }
 
-const (
-	cavemanAgentsBegin = "<!-- caveman-begin -->"
-	cavemanAgentsEnd   = "<!-- caveman-end -->"
-	cavemanRuleBody = "## Caveman\n\nCAVEMAN MODE ACTIVE — level: full\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\n\n### Persistence\n\nACTIVE EVERY RESPONSE. No revert after many turns. No filler drift. Still active if unsure. Off only: \"stop caveman\" / \"normal mode\".\n\nCurrent level: **full**. Switch: `/caveman lite|full|ultra`.\n\n### Rules\n\nDrop: articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/of course/happy to), hedging. Fragments OK. Short synonyms (big not extensive, fix not \"implement a solution for\"). Technical terms exact. Code blocks unchanged. Errors quoted exact.\n\nPattern: `[thing] [action] [reason]. [next step].`\n\nNot: \"Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by...\"\nYes: \"Bug in auth middleware. Token expiry check use `<` not `<=`. Fix:\"\n\n### Auto-Clarity\n\nDrop caveman for: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, user asks to clarify or repeats question. Resume caveman after clear part done.\n\n### Boundaries\n\nCode/commits/PRs: write normal. \"stop caveman\" or \"normal mode\": revert. Level persist until changed or session end."
-)
-
-// writeCavemanAgentsMd appends caveman's fenced ruleset to opencode's AGENTS.md.
+// writeCavemanAgentsMd appends the caveman section to the unified body.
 func writeCavemanAgentsMd(ocDir string) {
-	writeCavemanRuleset(filepath.Join(ocDir, "AGENTS.md"))
+	writeOwnerAtPath(filepath.Join(ocDir, "AGENTS.md"), "caveman")
 }
 
-func writeCavemanRuleset(p string) {
-	_ = util.EnsureDir(filepath.Dir(p))
-	fenced := cavemanAgentsBegin + "\n" + cavemanRuleBody + "\n" + cavemanAgentsEnd + "\n"
-	existing, ok := util.ReadFileSafe(p)
-	if !ok {
-		_ = util.WriteFile(p, fenced)
-		return
-	}
-	if bi := strings.Index(existing, cavemanAgentsBegin); bi >= 0 {
-		ei := strings.Index(existing[bi:], cavemanAgentsEnd)
-		if ei >= 0 {
-			innerStart := bi + len(cavemanAgentsBegin)
-			innerEnd := bi + ei
-			existingInner := strings.TrimSpace(existing[innerStart:innerEnd])
-			if existingInner == strings.TrimSpace(cavemanRuleBody) {
-				return
-			}
-			rest := existing[:bi] + existing[innerEnd+len(cavemanAgentsEnd):]
-			rest = strings.TrimRight(rest, "\n") + "\n\n"
-			_ = util.WriteFile(p, rest+fenced)
-			return
-		}
-	}
-	sep := "\n\n"
-	if strings.HasSuffix(existing, "\n\n") {
-		sep = ""
-	} else if strings.HasSuffix(existing, "\n") {
-		sep = "\n"
-	}
-	_ = util.WriteFile(p, existing+sep+fenced)
-}
+func writeCavemanRuleset(p string) { writeOwnerAtPath(p, "caveman") }
 
-func ensureBlankLineBetween(p string) {
-	raw, ok := util.ReadFileSafe(p)
-	if !ok {
-		return
-	}
-	endIdx := strings.Index(raw, cavemanAgentsEnd)
-	if endIdx < 0 {
-		return
-	}
-	afterStart := endIdx + len(cavemanAgentsEnd)
-	tail := raw[afterStart:]
-	trimmed := strings.TrimLeft(tail, "\n")
-	_ = util.WriteFile(p, raw[:afterStart]+"\n\n"+trimmed)
-}
+// removeCavemanRuleset removes the caveman section from the unified body.
+func removeCavemanRuleset(p string) { removeOwnerAtPath(p, "caveman") }
 
-// removeCavemanRuleset strips the fenced block from a global instructions file,
-// preserving everything else. Removes the file if it becomes empty.
-func removeCavemanRuleset(p string) {
-	existing, ok := util.ReadFileSafe(p)
-	if !ok {
-		return
-	}
-	bi := strings.Index(existing, cavemanAgentsBegin)
-	ei := strings.Index(existing, cavemanAgentsEnd)
-	if bi < 0 || ei < 0 || ei < bi {
-		return
-	}
-	ei += len(cavemanAgentsEnd)
-	for ei < len(existing) && existing[ei] == '\n' {
-		ei++
-	}
-	next := strings.TrimRight(existing[:bi], "\n")
-	tail := existing[ei:]
-	if next != "" && tail != "" {
-		next += "\n\n"
-	}
-	next += tail
-	if strings.TrimSpace(next) == "" {
-		_ = os.Remove(p)
-		return
-	}
-	_ = util.WriteFile(p, next)
-}
-
-// caveman global instructions file per agent (always loaded every session).
 func claudeCavemanMemory() string {
 	home := util.Home()
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
@@ -260,7 +181,7 @@ func codexCavemanMemory() string {
 
 func cavemanRulesetActive(p string) bool {
 	if raw, ok := util.ReadFileSafe(p); ok {
-		return strings.Contains(raw, cavemanAgentsBegin)
+		return strings.Contains(raw, util.SectionsByOwner["caveman"])
 	}
 	return false
 }
@@ -331,7 +252,7 @@ func antigravityCavemanInstalled() bool {
 
 func geminiCavemanMd() string { return filepath.Join(util.Home(), ".gemini", "GEMINI.md") }
 
-func writeCavemanGeminiMd() { writeCavemanRuleset(geminiCavemanMd()) }
+func writeCavemanGeminiMd()  { writeCavemanRuleset(geminiCavemanMd()) }
 func removeCavemanGeminiMd() { removeCavemanRuleset(geminiCavemanMd()) }
 
 var cavemanSkillNames = []string{
@@ -349,15 +270,20 @@ var cavemanOpencodeAgentFiles = []string{
 	"cavecrew-investigator.md", "cavecrew-builder.md", "cavecrew-reviewer.md",
 }
 
+func removeCavemanOpencodeAgentFiles() {
+	dir := util.OpenCodePathsResolved().Dir
+	for _, f := range cavemanOpencodeAgentFiles {
+		_ = os.Remove(filepath.Join(dir, "agents", f))
+	}
+}
+
 func removeCavemanOpencodeFiles() {
 	dir := util.OpenCodePathsResolved().Dir
 	_ = os.RemoveAll(filepath.Join(dir, "plugins", "caveman"))
 	for _, f := range cavemanOpencodeCommandFiles {
 		_ = os.Remove(filepath.Join(dir, "commands", f))
 	}
-	for _, f := range cavemanOpencodeAgentFiles {
-		_ = os.Remove(filepath.Join(dir, "agents", f))
-	}
+	removeCavemanOpencodeAgentFiles()
 	for _, n := range cavemanSkillNames {
 		_ = os.RemoveAll(filepath.Join(dir, "skills", n))
 	}
@@ -398,6 +324,7 @@ var caveman = &core.ToolManifest{
 			if !opts.DryRun && !isTest() {
 				stampCavemanVersion()
 			}
+			WriteOwner("claude", "caveman")
 			return ran, err
 		},
 		"opencode": func(opts core.RunOpts) (bool, error) {
@@ -414,29 +341,13 @@ var caveman = &core.ToolManifest{
 				}
 				return ""
 			}(), cavemanOpencodeInstallEnv()...)
+			WriteOwner("opencode", "caveman")
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
 			if opencodePluginFilesPresent() {
 				registerCavemanOpencode()
-
-				op := util.OpenCodePathsResolved()
-				ensureBlankLineBetween(filepath.Join(op.Dir, "AGENTS.md"))
-				pkgPath := filepath.Join(op.Dir, "plugins", "caveman", "package.json")
-				if raw, ok := util.ReadFileSafe(pkgPath); ok {
-					var pkg map[string]interface{}
-					if json.Unmarshal([]byte(raw), &pkg) == nil {
-						if latest := util.LatestVersionFor("caveman"); latest != nil {
-							pkg["version"] = *latest
-						}
-						if pkg["name"] == nil || pkg["name"] == "" {
-							pkg["name"] = "caveman-opencode-plugin"
-						}
-						if b, err := json.MarshalIndent(pkg, "", "  "); err == nil {
-							_ = util.WriteFile(pkgPath, string(b))
-						}
-					}
-				}
+				removeCavemanOpencodeAgentFiles()
 				stampCavemanVersion()
 			}
 			return opencodePluginInstalled(), err
@@ -444,24 +355,22 @@ var caveman = &core.ToolManifest{
 		"codex": func(opts core.RunOpts) (bool, error) {
 			args := cavemanSkillsAddArgs("codex")
 			ran, err := cavemanExec("npx", args, opts, "npx "+strings.Join(args, ""))
+			WriteOwner("codex", "caveman")
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
 			relocateCavemanSkills(codexSkillsDir())
-			writeCavemanRuleset(codexCavemanMemory())
-			ensureBlankLineBetween(codexCavemanMemory())
 			stampCavemanVersion()
 			return codexCavemanInstalled(), err
 		},
 		"antigravity": func(opts core.RunOpts) (bool, error) {
 			args := cavemanSkillsAddArgs("antigravity")
 			ran, err := cavemanExec("npx", args, opts, "npx "+strings.Join(args, " "))
+			WriteOwner("antigravity", "caveman")
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
 			relocateCavemanSkills(util.AntigravityPathsResolved().SkillsDir)
-			writeCavemanGeminiMd()
-			ensureBlankLineBetween(geminiCavemanMd())
 			stampCavemanVersion()
 			return antigravityCavemanInstalled(), err
 		},
@@ -492,8 +401,8 @@ var caveman = &core.ToolManifest{
 					}
 				}
 				_ = util.Run("claude", []string{"mcp", "remove", "caveman-shrink"}, util.RunOptions{Capture: true})
-				removeCavemanRuleset(claudeCavemanMemory())
 			}
+			RemoveOwner("claude", "caveman")
 			return true, nil
 		},
 		"opencode": func(opts core.RunOpts) (bool, error) {
@@ -503,23 +412,24 @@ var caveman = &core.ToolManifest{
 			}
 			unregisterCavemanOpencode()
 			removeCavemanOpencodeFiles()
+			RemoveOwner("opencode", "caveman")
 			return true, nil
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
 			ran, err := cavemanExec("npx", cavemanSkillsRemoveArgs("codex"), opts,
 				"npx -y skills remove <7 caveman skills> -a codex -y -g")
+			RemoveOwner("codex", "caveman")
 			if !opts.DryRun && !isTest() {
 				removeCavemanSkillCopies(codexSkillsDir())
-				removeCavemanRuleset(codexCavemanMemory())
 			}
 			return ran, err
 		},
 		"antigravity": func(opts core.RunOpts) (bool, error) {
 			ran, err := cavemanExec("npx", cavemanSkillsRemoveArgs("antigravity"), opts,
 				"npx -y skills remove <7 caveman skills> -a antigravity -y -g")
+			RemoveOwner("antigravity", "caveman")
 			if !opts.DryRun && !isTest() {
 				removeCavemanSkillCopies(util.AntigravityPathsResolved().SkillsDir)
-				removeCavemanGeminiMd()
 			}
 			return ran, err
 		},
