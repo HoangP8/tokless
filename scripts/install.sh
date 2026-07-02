@@ -54,7 +54,7 @@ esac
 # Run now, reconnecting the keyboard via /dev/tty so the picker works under a pipe.
 if [ -r /dev/tty ]; then
   printf '\n'
-  "${DEST}/tokless" </dev/tty || true
+  TOKLESS_INSTALLER_RUN=1 "${DEST}/tokless" </dev/tty || true
 else
   ok "Run: tokless"
 fi

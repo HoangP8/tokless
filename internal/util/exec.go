@@ -2,6 +2,7 @@ package util
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,11 +22,17 @@ type RunOptions struct {
 	Quiet   bool
 	Cwd     string
 	Env     []string
+	Ctx     context.Context
 }
 
 // Run executes a command; Capture pipes stdio, Quiet discards it, else inherit.
 func Run(cmd string, args []string, opts RunOptions) ExecResult {
-	c := exec.Command(cmd, args...)
+	var c *exec.Cmd
+	if opts.Ctx != nil {
+		c = exec.CommandContext(opts.Ctx, cmd, args...)
+	} else {
+		c = exec.Command(cmd, args...)
+	}
 	if opts.Cwd != "" {
 		c.Dir = opts.Cwd
 	}
