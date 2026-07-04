@@ -10,70 +10,25 @@
   [![license](https://img.shields.io/github/license/HoangP8/tokless)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
 
   <br />
-  <br />
 
-  | 📅 Next week plan (22/6 - 28/6) |
-  | :--- |
-  | <ul><li>Fix Codex & AGY hooks for better MCP (codegraph + context-mode) compliance rate</li><li>Add Pi support</li><li>Add Cursor support</li></ul> |
 </div>
 
 ## Introduction
 
-> *Saving tokens shouldn't be complicated. Many great plugins exist to help coding agents save context and perform better — but setting them up and keeping them updated is hard, especially for non-technical users.*
+> *Many great packages make coding agents more **effective and efficient** — but discovering, installing, updating, and unifying them is painful, especially for non-technical users. The best tools exist; the **wiring is the real cost**.*
 
-**tokless** is the lazy solution. One command, pick your agent, restart — IDE and CLI both wired. Cross-platform: macOS, Linux, Windows. No config, no manual edits, re-runnable.
+**tokless** *unifies them and gets out of the way.*
 
-## Supported Agents
+| | |
+| :--- | :--- |
+| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Best packages, unified</b> — picks the most effective, efficient tools and wires them without conflicts |
+| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">One command, done</b> — pick your agent, restart, go |
+| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">All platforms</b> — macOS, Linux, Windows |
+| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Zero config</b> — everything wired, no manual edits |
+| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Simple updates</b> — `tokless update` upgrades everything in one shot |
+| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Non-tech friendly</b> — under 30 seconds, anyone can do it |
 
-<div align="center">
-  <table>
-    <tr>
-      <td align="center" width="140">
-        <img src="assets/agents/claude.jpg" width="56" alt="Claude Code" /><br/>
-        <b>Claude Code</b><br/>
-        <sub>Anthropic</sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/opencode.png" width="56" alt="OpenCode" /><br/>
-        <b>OpenCode</b><br/>
-        <sub>anomalyco</sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/codex.jpg" width="56" alt="Codex" /><br/>
-        <b>Codex</b><br/>
-        <sub>OpenAI</sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/antigravity.png" width="56" alt="Antigravity" /><br/>
-        <b>Antigravity</b><br/>
-        <sub>Google</sub>
-      </td>
-    </tr>
-  </table>
-</div>
-
-Each agent wired per its own config spec. Pick one, some, or all:
-
-```bash
-tokless                              # interactive: pick agents
-tokless --agents claude,opencode     # wire just these
-tokless --agents claude,opencode,codex,antigravity  # all
-```
-
-## Tools
-
-<img src="assets/tools-flow.svg" width="100%" alt="4 tools, each kills a different token waste source" />
-
-| Tool | What it does | Example |
-| ---- | ------------ | ------- |
-| [RTK](https://github.com/rtk-ai/rtk) | Trims noisy bash/tool output | `ls -la` 45 lines (~800 tok) → `rtk ls` 12 lines (~150 tok) |
-| [Caveman](https://github.com/JuliusBrussee/caveman) | Makes the agent answer in terse prose | 69-tok explanation → 19-tok answer (`useMemo`) |
-| [CodeGraph](https://github.com/colbymchenry/codegraph) | Query a code graph, skip whole-file reads | 1 `codegraph explore` call = 0 file reads on 25,874-file repo |
-| [Context-Mode](https://github.com/mksglu/context-mode) | Run heavy work in a sandbox, return only what matters | 700KB log → 3KB summary, raw bytes never enter context |
-
-Each tool from official source. Each targets a different waste source — no overlap, no conflict.
-
-## Install
+### Installation
 
 <img src="assets/install.svg" width="100%" alt="install" />
 
@@ -87,21 +42,110 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
 ```
 
-## Commands
+### Supported Agents
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center" width="140">
+        <img src="assets/agents/claude.jpg" width="56" alt="Claude Code" /><br/>
+        <b>Claude Code</b><br/>
+        <sub><b style="color:#3fb950">✓ Done</b></sub>
+      </td>
+      <td align="center" width="140">
+        <img src="assets/agents/opencode.png" width="56" alt="OpenCode" /><br/>
+        <b>OpenCode</b><br/>
+        <sub><b style="color:#3fb950">✓ Done</b></sub>
+      </td>
+      <td align="center" width="140">
+        <img src="assets/agents/codex.jpg" width="56" alt="Codex" /><br/>
+        <b>Codex</b><br/>
+        <sub><b style="color:#3fb950">✓ Done</b></sub>
+      </td>
+      <td align="center" width="140">
+        <img src="assets/agents/antigravity.png" width="56" alt="Antigravity" /><br/>
+        <b>Antigravity</b><br/>
+        <sub><b style="color:#3fb950">✓ Done</b></sub>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" width="140">
+        <img src="assets/agents/pi.png" width="56" alt="Pi" /><br/>
+        <span style="color:#8b949e"><b>Pi</b></span><br/>
+        <sub><b style="color:#d29922">In progress</b></sub>
+      </td>
+      <td align="center" width="140">
+        <img src="assets/agents/cursor.jpg" width="56" alt="Cursor" /><br/>
+        <span style="color:#8b949e"><b>Cursor</b></span><br/>
+        <sub><b style="color:#d29922">In progress</b></sub>
+      </td>
+      <td align="center" width="140">
+        <img src="assets/agents/factory.png" width="56" alt="Factory Droid" /><br/>
+        <span style="color:#8b949e"><b>Factory Droid CLI</b></span><br/>
+        <sub><b style="color:#d29922">In progress</b></sub>
+      </td>
+      <td align="center" width="140">
+        <img src="assets/agents/copilot.jpg" width="56" alt="GitHub Copilot" /><br/>
+        <span style="color:#8b949e"><b>GitHub Copilot</b></span><br/>
+        <sub><b style="color:#d29922">In progress</b></sub>
+      </td>
+    </tr>
+  </table>
+</div>
+
+Pick one, some, or all:
+```bash
+tokless                              # interactive: pick agents
+tokless --agents claude,opencode     # wire just these
+tokless --agents claude,opencode,codex,antigravity  # all
+```
+
+### Tools
+
+tokless unifies the following packages — each for a separate purpose, no conflicts.
+
+| Tool | Stars | What it does |
+| :--- | :---: | :--- |
+| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | ![Stars](https://img.shields.io/github/stars/multica-ai/andrej-karpathy-skills?style=social) | Distilled meta-rules from Karpathy's LLM-coding post — think before coding, simplicity first, surgical changes, goal-driven. Drops overbuild and wrong-assumption failures. |
+| [caveman](https://github.com/JuliusBrussee/caveman) | ![Stars](https://img.shields.io/github/stars/JuliusBrussee/caveman?style=social) | Skill/plugin forcing terse caveman-speak across 30+ agents — 65% output token cut, technical content untouched. Example: 69-tok React re-render explanation → 19-tok answer. |
+| [ponytail](https://github.com/DietrichGebert/ponytail) | ![Stars](https://img.shields.io/github/stars/DietrichGebert/ponytail?style=social) | Skill embedding a lazy senior dev — minimum-code, stdlib-first, no speculative features across 16 agents. Example: date-picker task 404 lines → 23 lines; full-stack ticket LOC −54%. |
+| [rtk](https://github.com/rtk-ai/rtk) | ![Stars](https://img.shields.io/github/stars/rtk-ai/rtk?style=social) | CLI proxy filtering/compressing command output before it hits the LLM; 100+ commands, single Rust binary, <10ms overhead. Example: 30-min session 118k → 23.9k tokens (−80%); `cargo test` 25k → 2.5k. |
+| [codegraph](https://github.com/colbymchenry/codegraph) | ![Stars](https://img.shields.io/github/stars/colbymchenry/codegraph?style=social) | Pre-indexed SQLite code knowledge graph — auto-syncs on file change, returns verbatim source + call paths via 1 MCP tool across 8+ agents. 1 call = 0 file reads on 25,874-file repos; 100% local. |
+| [context-mode](https://github.com/mksglu/context-mode) | ![Stars](https://img.shields.io/github/stars/mksglu/context-mode?style=social) | MCP server for 17 clients — sandboxes tool output, persists session memory, enforces think-in-code. Example: 47×Read() = 700KB → 1×ctx_execute() = 3.6KB (~195×); 315KB log → 5.4KB. |
+
+## Configuration
+
+Each tool is wired into each agent through the agent's native config system — MCP servers, plugin registries, hooks, instruction files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`).
+
+| Tool | Claude | OpenCode | Codex | Antigravity |
+| :--- | :--- | :--- | :--- | :--- |
+| **rtk** | PreToolUse + Allow | Plugin | PreToolUse + PermissionRequest + Trust + Rules | PreToolUse + Allow |
+| **caveman** | Plugin + CLAUDE.md | Plugin + AGENTS.md | Skills + AGENTS.md | Skills + GEMINI.md |
+| **ponytail** | Plugin + CLAUDE.md | Plugin + AGENTS.md | Marketplace + AGENTS.md | Extension + GEMINI.md |
+| **codegraph** | MCP + Allow + CLAUDE.md | MCP + AGENTS.md | MCP + AGENTS.md | PostToolUse + PreInvocation + MCP + Allow + GEMINI.md |
+| **context-mode** | MCP + Allow + CLAUDE.md | Plugin + AGENTS.md | PreToolUse + MCP + AGENTS.md | MCP + Allow + GEMINI.md |
+
+## Usage
 
 ```
 tokless              Install + wire everything (default; safe to re-run)
-tokless update       Show version diff, upgrade the four tools
+tokless update       Show version diff and upgrade tools
 tokless doctor       Show what's wired; warn about broken bits
+tokless index        Build per-project codegraph indexes
+tokless disable      Disable one or more agents
 tokless uninstall    Remove everything tokless touched
 tokless self-update  Update the tokless CLI itself
+tokless --version    Print tokless version
+tokless --help       Show all commands and flags
 ```
 
 Flags:
 ```
 --agents <list>   Subset: claude,opencode,codex,antigravity
+--tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode
 --dry-run         Preview, no writes
 --verbose         Every step
+--yes             Skip confirmations
 ```
 
 Restart agents after install so they pick up new config.

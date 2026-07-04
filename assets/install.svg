@@ -1,40 +1,112 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="780" height="344" viewBox="0 0 780 344" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14.5">
-  <rect x="0" y="0" width="780" height="344" rx="10" fill="#0d1117"/>
-  <rect x="0" y="0" width="780" height="34" rx="10" fill="#161b22"/>
-  <rect x="0" y="22" width="780" height="12" fill="#161b22"/>
-  <circle cx="20" cy="17" r="6" fill="#ff5f56"/>
-  <circle cx="40" cy="17" r="6" fill="#ffbd2e"/>
-  <circle cx="60" cy="17" r="6" fill="#27c93f"/>
-  <text x="390" y="22" fill="#8b949e" text-anchor="middle" font-size="12.5">tokless — install</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="420" viewBox="0 0 820 420" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-kerning="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#010409"/>
+    </linearGradient>
+    <linearGradient id="titlebar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2128"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
 
-  <g xml:space="preserve">
-    <text x="22" y="66"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash</tspan></text>
+  <g filter="url(#softShadow)">
+    <rect x="10" y="10" width="800" height="400" rx="10" fill="url(#bg)" stroke="#30363d" stroke-width="1"/>
+    <rect x="10" y="10" width="800" height="34" rx="10" fill="url(#titlebar)"/>
+    <rect x="10" y="32" width="800" height="12" fill="url(#titlebar)"/>
+    <circle cx="30" cy="27" r="6" fill="#ff5f56"/>
+    <circle cx="50" cy="27" r="6" fill="#ffbd2e"/>
+    <circle cx="70" cy="27" r="6" fill="#27c93f"/>
+    <text x="410" y="32" fill="#8b949e" text-anchor="middle" font-size="12.5">tokless — install</text>
+  </g>
 
-    <text x="22" y="112"><tspan fill="#58a6ff" font-weight="bold">? </tspan><tspan fill="#f0f6fc" font-weight="bold">Select agents to install tokless</tspan></text>
-    <g font-size="11" font-weight="bold">
-      <rect x="30" y="121" width="34" height="18" rx="4" fill="#f0883e"/>
-      <text x="47" y="134" fill="#0d1117" text-anchor="middle">↑/↓</text>
-      <rect x="112" y="121" width="50" height="18" rx="4" fill="#f0883e"/>
-      <text x="137" y="134" fill="#0d1117" text-anchor="middle">space</text>
-      <rect x="222" y="121" width="26" height="18" rx="4" fill="#f0883e"/>
-      <text x="235" y="134" fill="#0d1117" text-anchor="middle">a</text>
-      <rect x="290" y="121" width="56" height="18" rx="4" fill="#f0883e"/>
-      <text x="318" y="134" fill="#0d1117" text-anchor="middle">enter</text>
-    </g>
-    <g fill="#6e7681" font-size="13">
-      <text x="70" y="134">move</text>
-      <text x="170" y="134">select</text>
-      <text x="256" y="134">all</text>
-      <text x="354" y="134">confirm</text>
-    </g>
+  <g font-size="14" xml:space="preserve">
+    <text x="32" y="74"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash</tspan></text>
+    <text x="32" y="98"><tspan fill="#3fb950">↓ </tspan><tspan fill="#8b949e">Downloading </tspan><tspan fill="#c9d1d9">tokless</tspan><tspan fill="#8b949e">…</tspan></text>
+    <text x="32" y="118"><tspan fill="#3fb950">✔ </tspan><tspan fill="#c9d1d9">installed </tspan><tspan fill="#c9d1d9" font-weight="bold">tokless v1.2.3</tspan><tspan fill="#8b949e"> → </tspan><tspan fill="#c9d1d9">~/.local/bin/tokless</tspan></text>
+  </g>
 
-    <text y="164"><tspan x="30" fill="#58a6ff">❯</tspan><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">Claude Code</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
-    <text y="188"><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">OpenCode</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
-    <text y="212"><tspan x="52" fill="#6e7681">◯</tspan><tspan x="78" fill="#c9d1d9">Codex</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
-    <text y="236"><tspan x="52" fill="#3fb950">◉</tspan><tspan x="78" fill="#f0f6fc" font-weight="bold">Antigravity</tspan><tspan x="210" fill="#3fb950">[READY]</tspan></text>
+  <line x1="32" y1="140" x2="788" y2="140" stroke="#21262d" stroke-width="1"/>
 
-    <text x="22" y="282"><tspan fill="#3fb950">✔ </tspan><tspan fill="#c9d1d9">Wired RTK · Caveman · CodeGraph · Context-Mode into 3 agents</tspan></text>
-    <text x="22" y="306"><tspan fill="#8b949e">  Restart your agents to pick up the new config.</tspan></text>
-    <text x="22" y="330"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">▋</tspan></text>
+  <!-- Interactive picker — matches prompt.go MultiSelect render() lines 284–335 -->
+  <!-- No font-weight:bold — SVG bold glyphs are wider, breaking monospace alignment -->
+  <!-- Terminal bold = increased brightness/color, not glyph width change -->
+
+  <g font-size="13" xml:space="preserve">
+    <text x="32" y="168">
+      <tspan fill="#a371f7">●</tspan>
+      <tspan fill="#a371f7"> Select agents to install tokless</tspan>
+    </text>
+
+    <!-- Claude Code (pad=1, selected+active): pad+gap = 1+2 = 3 spaces before tag arrow -->
+    <text x="32" y="196">
+      <tspan fill="#6e7681">│   </tspan>
+      <tspan fill="#56b6c2">❯ </tspan>
+      <tspan fill="#3fb950">◉  </tspan>
+      <tspan fill="#56b6c2">Claude Code</tspan>
+      <tspan fill="#c9d1d9">   </tspan>
+      <tspan fill="#3fb950">✓ </tspan>
+      <tspan fill="#3fb950">[READY]</tspan>
+      <tspan fill="#c9d1d9">  </tspan>
+    </text>
+
+    <!-- OpenCode (pad=3, unselected): pad+gap+tagPad = 3+2+2 = 7 before bracket -->
+    <text x="32" y="218">
+      <tspan fill="#6e7681">│     </tspan>
+      <tspan fill="#8b949e">◯  </tspan>
+      <tspan fill="#c9d1d9">OpenCode</tspan>
+      <tspan fill="#c9d1d9">       </tspan>
+      <tspan fill="#3fb950">[READY]</tspan>
+      <tspan fill="#c9d1d9">  </tspan>
+    </text>
+
+    <!-- Codex (pad=6): 6+2+2 = 10 before bracket -->
+    <text x="32" y="240">
+      <tspan fill="#6e7681">│     </tspan>
+      <tspan fill="#8b949e">◯  </tspan>
+      <tspan fill="#c9d1d9">Codex</tspan>
+      <tspan fill="#c9d1d9">          </tspan>
+      <tspan fill="#3fb950">[READY]</tspan>
+      <tspan fill="#c9d1d9">  </tspan>
+    </text>
+
+    <!-- Antigravity (pad=0): 0+2+2 = 4 before bracket -->
+    <text x="32" y="262">
+      <tspan fill="#6e7681">│     </tspan>
+      <tspan fill="#8b949e">◯  </tspan>
+      <tspan fill="#c9d1d9">Antigravity</tspan>
+      <tspan fill="#c9d1d9">    </tspan>
+      <tspan fill="#3fb950">[READY]</tspan>
+      <tspan fill="#c9d1d9">  </tspan>
+    </text>
+
+    <line x1="32" y1="282" x2="788" y2="282" stroke="#21262d" stroke-width="1"/>
+
+    <!-- Key hint — matches prompt.go:278–282 -->
+    <text x="32" y="306" font-size="12" xml:space="preserve">
+      <tspan fill="#d75f00">↑/↓</tspan><tspan fill="#6e7681"> move · </tspan>
+      <tspan fill="#d75f00">&lt;space&gt;</tspan><tspan fill="#6e7681"> select · </tspan>
+      <tspan fill="#d75f00">&lt;a&gt;</tspan><tspan fill="#6e7681"> all · </tspan>
+      <tspan fill="#d75f00">&lt;enter&gt;</tspan><tspan fill="#6e7681"> confirm</tspan>
+    </text>
+  </g>
+
+  <line x1="32" y1="330" x2="788" y2="330" stroke="#21262d" stroke-width="1"/>
+
+  <g font-size="13" xml:space="preserve">
+    <text x="32" y="356">
+      <tspan fill="#a371f7">●</tspan>
+      <tspan fill="#a371f7"> Wiring 5 tools into 4 agents</tspan>
+    </text>
+    <text x="32" y="378"><tspan fill="#8b949e">  rtk · caveman · ponytail · codegraph · context-mode</tspan></text>
+    <text x="32" y="400">
+      <tspan fill="#3fb950">✔ </tspan>
+      <tspan fill="#c9d1d9">done in </tspan>
+      <tspan fill="#c9d1d9" font-weight="bold">12s</tspan>
+      <tspan fill="#8b949e"> — restart your agent and enjoy</tspan>
+    </text>
   </g>
 </svg>
