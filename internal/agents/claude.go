@@ -24,12 +24,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		var ok bool
-		spawn, ok = util.PickCodegraphSpawn("serve", "--mcp")
-		if !ok {
-			return false, p.GlobalJSON
-		}
-		spawn = util.WrapAutoIndex("claude", spawn)
+		spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.PickMcpSpawn("context-mode")
 	}

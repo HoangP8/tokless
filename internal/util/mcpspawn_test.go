@@ -153,8 +153,8 @@ func TestPickMcpSpawnRejectsBrokenCodegraph(t *testing.T) {
 	t.Setenv("PATH", tempDir)
 
 	spawn := PickMcpSpawn("codegraph", "serve", "--mcp")
-	if spawn.Command != "" {
-		t.Fatalf("Expected broken codegraph to be rejected, got %q", spawn.Command)
+	if spawn.Command != "npx" {
+		t.Fatalf("Expected npx fallback when codegraph binary is broken, got %q", spawn.Command)
 	}
 }
 

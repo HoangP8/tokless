@@ -35,7 +35,6 @@ func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 		if spawn, ok := PickCodegraphSpawn(extraArgs...); ok {
 			return spawn
 		}
-		return McpSpawn{}
 	} else if p := Which(bin); p != "" {
 		return wrapCmdShim(McpSpawn{Command: spawnCommand(bin, p), Args: extraArgs})
 	}

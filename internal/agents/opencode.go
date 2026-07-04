@@ -24,12 +24,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		var ok bool
-		spawn, ok = util.PickCodegraphSpawn("serve", "--mcp")
-		if !ok {
-			return false, p.Config
-		}
-		spawn = util.WrapAutoIndex("opencode", spawn)
+		spawn = util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.PickMcpSpawn("context-mode")
 	}
