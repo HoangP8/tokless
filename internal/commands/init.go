@@ -181,11 +181,12 @@ func RunInit(opts InitOptions) int {
 		wireBar.Begin(agent.Label)
 		var failed []string
 		wireOut, _ := util.CaptureLogs(func() error {
-			for _, tool := range tools {
+			for ti, tool := range tools {
 				fn, ok := tool.WireFor[agentID]
 				if !ok {
 					continue
 				}
+				wireBar.Step("installing "+tool.Label, float64(ti+1)/float64(len(tools)))
 				if tool.NeedsGit && !gitOK {
 					util.L.Err(tool.Label + " needs git — https://git-scm.com/downloads")
 					failed = append(failed, tool.Label)

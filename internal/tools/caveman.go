@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -17,7 +19,9 @@ func cavemanExec(bin string, args []string, opts core.RunOpts, dryHint string, e
 	if isTest() {
 		return true, nil
 	}
-	r := util.Run(bin, args, util.RunOptions{Capture: true, Env: env})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	r := util.Run(bin, args, util.RunOptions{Capture: true, Env: env, Ctx: ctx})
 	if r.Code != 0 {
 		util.L.Err("caveman command failed: " + clip(r.Stderr))
 		return false, nil
@@ -31,6 +35,32 @@ func cavemanOpencodeInstallEnv() []string {
 		return nil
 	}
 	return []string{"XDG_CONFIG_HOME=" + filepath.Dir(dir)}
+}
+
+// resolveSkillsBin returns ("skills", args[1:]) if skills binary is available,
+// otherwise ("npx", original npx args).
+func resolveSkillsBin(npxArgs []string) (string, []string) {
+	if util.Which("skills") != "" {
+		return "skills", npxArgs[2:] // strip "-y skills" prefix
+	}
+	return "npx", npxArgs
+}
+
+// resolveCavemanBin returns ("caveman", cavemanArgs) if global caveman binary
+// is available, else ("npx", npxArgs).
+func resolveCavemanBin(agent string, upgrade bool) (string, []string) {
+	if util.Which("caveman") != "" {
+		args := []string{"--only", agent, "--no-mcp-shrink"}
+		if upgrade {
+			args = append(args, "--force")
+		}
+		return "caveman", args
+	}
+	args := []string{"-y", "github:JuliusBrussee/caveman", "--", "--only", agent, "--no-mcp-shrink"}
+	if upgrade {
+		args = append(args, "--force")
+	}
+	return "npx", args
 }
 
 func ensureOpencodeCommandsDir() {
@@ -305,7 +335,18 @@ var caveman = &core.ToolManifest{
 	Channel:      core.ChannelGitHub,
 	NotTrackable: true,
 	Install: func(opts core.RunOpts) (bool, error) {
-		opts.Reportf("installed per agent", 1)
+		if !opts.DryRun && !isTest() && !opts.Upgrade && util.Which("caveman") != "" {
+			opts.Reportf("already installed", 1)
+			return true, nil
+		}
+		opts.Reportf("installing from GitHub", 0.3)
+		if !opts.DryRun && !isTest() && util.Which("npm") != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			_ = util.Run("npm", []string{"install", "-g", "github:JuliusBrussee/caveman"},
+				util.RunOptions{Capture: true, Ctx: ctx})
+			cancel()
+		}
+		opts.Reportf("ready", 1)
 		return true, nil
 	},
 	WireFor: map[string]core.AgentFn{
@@ -328,19 +369,16 @@ var caveman = &core.ToolManifest{
 			return ran, err
 		},
 		"opencode": func(opts core.RunOpts) (bool, error) {
+			if !opts.Upgrade && opencodePluginInstalled() && opencodePluginFilesPresent() {
+				WriteOwner("opencode", "caveman")
+				return true, nil
+			}
 			if !opts.DryRun && !isTest() {
 				ensureOpencodeCommandsDir()
 			}
-			args := []string{"-y", "github:JuliusBrussee/caveman", "--", "--only", "opencode", "--no-mcp-shrink"}
-			if opts.Upgrade {
-				args = append(args, "--force")
-			}
-			ran, err := cavemanExec("npx", args, opts, "npx -y github:JuliusBrussee/caveman -- --only opencode --no-mcp-shrink"+func() string {
-				if opts.Upgrade {
-					return " --force"
-				}
-				return ""
-			}(), cavemanOpencodeInstallEnv()...)
+			bin, args := resolveCavemanBin("opencode", opts.Upgrade)
+			ran, err := cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "),
+				cavemanOpencodeInstallEnv()...)
 			WriteOwner("opencode", "caveman")
 			if opts.DryRun || isTest() {
 				return ran, err
@@ -353,8 +391,12 @@ var caveman = &core.ToolManifest{
 			return opencodePluginInstalled(), err
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
-			args := cavemanSkillsAddArgs("codex")
-			ran, err := cavemanExec("npx", args, opts, "npx "+strings.Join(args, ""))
+			if !opts.Upgrade && codexCavemanInstalled() {
+				WriteOwner("codex", "caveman")
+				return true, nil
+			}
+			bin, args := resolveSkillsBin(cavemanSkillsAddArgs("codex"))
+			ran, err := cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "))
 			WriteOwner("codex", "caveman")
 			if opts.DryRun || isTest() {
 				return ran, err
@@ -364,8 +406,12 @@ var caveman = &core.ToolManifest{
 			return codexCavemanInstalled(), err
 		},
 		"antigravity": func(opts core.RunOpts) (bool, error) {
-			args := cavemanSkillsAddArgs("antigravity")
-			ran, err := cavemanExec("npx", args, opts, "npx "+strings.Join(args, " "))
+			if !opts.Upgrade && antigravityCavemanInstalled() {
+				WriteOwner("antigravity", "caveman")
+				return true, nil
+			}
+			bin, args := resolveSkillsBin(cavemanSkillsAddArgs("antigravity"))
+			ran, err := cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "))
 			WriteOwner("antigravity", "caveman")
 			if opts.DryRun || isTest() {
 				return ran, err

@@ -31,6 +31,7 @@ type Progress struct {
 	out     *os.File
 	treeStyle bool
 	rows      int
+	lastNonTTY string
 }
 
 func NewProgress(title string) *Progress {
@@ -89,6 +90,7 @@ func (p *Progress) Begin(label string) {
 	p.current = label
 	p.phase = ""
 	p.frac = 0
+	p.lastNonTTY = ""
 	p.start = time.Now()
 	p.active = true
 	if p.tty {
@@ -117,7 +119,19 @@ func (p *Progress) Step(phase string, frac float64) {
 	p.frac = frac
 	if p.tty {
 		p.repaint()
+		p.mu.Unlock()
+		return
 	}
+	if phase == "" || phase == p.lastNonTTY {
+		p.mu.Unlock()
+		return
+	}
+	p.lastNonTTY = phase
+	label := p.current
+	if label == "" {
+		label = p.title
+	}
+	fmt.Fprintf(p.out, "  %s %s\n", C.Dim(pick("·", ".")), label+" — "+phase)
 	p.mu.Unlock()
 }
 

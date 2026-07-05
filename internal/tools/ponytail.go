@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -20,7 +22,9 @@ func ponytailExec(bin string, args []string, opts core.RunOpts, dryHint string, 
 	if isTest() {
 		return true, nil
 	}
-	r := util.Run(bin, args, util.RunOptions{Capture: true, Env: env})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	r := util.Run(bin, args, util.RunOptions{Capture: true, Env: env, Ctx: ctx})
 	if r.Code != 0 {
 		util.L.Err("ponytail command failed: " + clip(r.Stderr))
 		return false, nil
@@ -207,6 +211,10 @@ func claudePluginListHasPonytail() bool {
 
 // ponytailWireClaude installs the Claude plugin. AGENTS.md block is the floor.
 func ponytailWireClaude(opts core.RunOpts) (bool, error) {
+	if !opts.Upgrade && claudePonytailInstalled() {
+		WriteOwner("claude", "ponytail")
+		return true, nil
+	}
 	if !opts.DryRun && !isTest() && util.Which("claude") == "" {
 		util.L.Err("ponytail needs the claude CLI (`claude plugin …`); Claude Desktop alone is not enough — install the CLI and re-run")
 		return false, nil
@@ -255,8 +263,14 @@ func ponytailWireOpencode(opts core.RunOpts) (bool, error) {
 		WriteOwner("opencode", "ponytail")
 		return ponytailOpencodeInstalled(), nil
 	}
+	if !opts.Upgrade && ponytailOpencodeInstalled() && ponytailOpencodeFilesPresent() {
+		WriteOwner("opencode", "ponytail")
+		return true, nil
+	}
 	if util.Which("npm") != "" {
-		_ = util.Run("npm", []string{"install", "-g", ponytailOpencodePkg}, util.RunOptions{Capture: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		_ = util.Run("npm", []string{"install", "-g", ponytailOpencodePkg}, util.RunOptions{Capture: true, Ctx: ctx})
 	}
 	registerPonytailOpencode()
 	stampPonytailVersion()
@@ -295,6 +309,10 @@ func removePonytailCodexSkillCopies() {
 // ponytailWireCodex adds the marketplace when possible and writes the baseline.
 // Final plugin install/trust is interactive in Codex (/plugins + /hooks).
 func ponytailWireCodex(opts core.RunOpts) (bool, error) {
+	if !opts.Upgrade && codexPonytailInstalled() {
+		WriteOwner("codex", "ponytail")
+		return true, nil
+	}
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would run: codex plugin marketplace add " + ponytailRepo + "; then write AGENTS.md baseline; finish in /plugins + /hooks")
 		WriteOwner("codex", "ponytail")
@@ -321,6 +339,10 @@ func ponytailUnwireCodex(opts core.RunOpts) (bool, error) {
 
 // ponytailWireAntigravity installs the Antigravity extension.
 func ponytailWireAntigravity(opts core.RunOpts) (bool, error) {
+	if !opts.Upgrade && antigravityPonytailInstalled() {
+		WriteOwner("antigravity", "ponytail")
+		return true, nil
+	}
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would run: agy plugin install https://github.com/" + ponytailRepo)
 		WriteOwner("antigravity", "ponytail")
