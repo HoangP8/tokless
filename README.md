@@ -102,14 +102,14 @@ tokless --agents claude,opencode,codex,antigravity  # all
 
 ### Tools
 
-| Tool | What it does |
-| :--- | :--- |
-| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) ![Stars](https://img.shields.io/github/stars/multica-ai/andrej-karpathy-skills?style=flat) | Distilled meta-rules from Karpathy's LLM-coding post — think before coding, simplicity first, surgical changes, goal-driven. Drops overbuild and wrong-assumption failures. |
-| [caveman](https://github.com/JuliusBrussee/caveman) ![Stars](https://img.shields.io/github/stars/JuliusBrussee/caveman?style=flat) | Skill/plugin forcing terse caveman-speak across 30+ agents — 65% output token cut, technical content untouched. Example: 69-tok React re-render explanation → 19-tok answer. |
-| [ponytail](https://github.com/DietrichGebert/ponytail) ![Stars](https://img.shields.io/github/stars/DietrichGebert/ponytail?style=flat) | Skill embedding a lazy senior dev — minimum-code, stdlib-first, no speculative features across 16 agents. Example: date-picker task 404 lines → 23 lines; full-stack ticket LOC −54%. |
-| [rtk](https://github.com/rtk-ai/rtk) ![Stars](https://img.shields.io/github/stars/rtk-ai/rtk?style=flat) | CLI proxy filtering/compressing command output before it hits the LLM; 100+ commands, single Rust binary, <10ms overhead. Example: 30-min session 118k → 23.9k tokens (−80%); `cargo test` 25k → 2.5k. |
-| [codegraph](https://github.com/colbymchenry/codegraph) ![Stars](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat) | Pre-indexed SQLite code knowledge graph — auto-syncs on file change, returns verbatim source + call paths via 1 MCP tool across 8+ agents. 1 call = 0 file reads on 25,874-file repos; 100% local. |
-| [context-mode](https://github.com/mksglu/context-mode) ![Stars](https://img.shields.io/github/stars/mksglu/context-mode?style=flat) | MCP server for 17 clients — sandboxes tool output, persists session memory, enforces think-in-code. Example: 47×Read() = 700KB → 1×ctx_execute() = 3.6KB (~195×); 315KB log → 5.4KB. |
+| Tool | ⭐ | What it does |
+| :--- | ---: | :--- |
+| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | 1.4k | Distilled meta-rules from Karpathy's LLM-coding post — think before coding, simplicity first, surgical changes, goal-driven. Drops overbuild and wrong-assumption failures. |
+| [caveman](https://github.com/JuliusBrussee/caveman) | 2.1k | Skill/plugin forcing terse caveman-speak across 30+ agents — 65% output token cut, technical content untouched. Example: 69-tok React re-render explanation → 19-tok answer. |
+| [ponytail](https://github.com/DietrichGebert/ponytail) | 1.2k | Skill embedding a lazy senior dev — minimum-code, stdlib-first, no speculative features across 16 agents. Example: date-picker task 404 lines → 23 lines; full-stack ticket LOC −54%. |
+| [rtk](https://github.com/rtk-ai/rtk) | 3.8k | CLI proxy filtering/compressing command output before it hits the LLM; 100+ commands, single Rust binary, <10ms overhead. Example: 30-min session 118k → 23.9k tokens (−80%); `cargo test` 25k → 2.5k. |
+| [codegraph](https://github.com/colbymchenry/codegraph) | 2.5k | Pre-indexed SQLite code knowledge graph — auto-syncs on file change, returns verbatim source + call paths via 1 MCP tool across 8+ agents. 1 call = 0 file reads on 25,874-file repos; 100% local. |
+| [context-mode](https://github.com/mksglu/context-mode) | 3.1k | MCP server for 17 clients — sandboxes tool output, persists session memory, enforces think-in-code. Example: 47×Read() = 700KB → 1×ctx_execute() = 3.6KB (~195×); 315KB log → 5.4KB. |
 
 ## Configuration
 
