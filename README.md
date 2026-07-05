@@ -17,16 +17,16 @@
 
 > *Many great packages make coding agents more **effective and efficient** — but discovering, installing, updating, and unifying them is painful, especially for non-technical users. The best tools exist; the **wiring is the real cost**.*
 
-**tokless** *unifies them and gets out of the way.*
+**tokless** — the lazy one-command solution.
 
 | | |
 | :--- | :--- |
-| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Best packages, unified</b> — picks the most effective, efficient tools and wires them without conflicts |
-| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">One command, done</b> — pick your agent, restart, go |
-| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">All platforms</b> — macOS, Linux, Windows |
-| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Zero config</b> — everything wired, no manual edits |
-| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Simple updates</b> — `tokless update` upgrades everything in one shot |
-| <span style="color:#3fb950;font-size:1.2em">✓</span> | <b style="color:#3fb950">Non-tech friendly</b> — under 30 seconds, anyone can do it |
+| ✔️ | **Best packages, unified** — picks the most effective, efficient tools and wires them without conflicts |
+| ✔️ | **One command, done** — pick your agent, restart, go |
+| ✔️ | **All platforms** — macOS, Linux, Windows |
+| ✔️ | **Zero config** — everything wired, no manual edits |
+| ✔️ | **Simple updates** — `tokless update` upgrades everything in one shot |
+| ✔️ | **Non-tech friendly** — under 30 seconds, anyone can do it |
 
 ### Installation
 
@@ -102,16 +102,14 @@ tokless --agents claude,opencode,codex,antigravity  # all
 
 ### Tools
 
-tokless unifies the following packages — each for a separate purpose, no conflicts.
-
-| Tool | Stars | What it does |
-| :--- | :---: | :--- |
-| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | ![Stars](https://img.shields.io/github/stars/multica-ai/andrej-karpathy-skills?style=social) | Distilled meta-rules from Karpathy's LLM-coding post — think before coding, simplicity first, surgical changes, goal-driven. Drops overbuild and wrong-assumption failures. |
-| [caveman](https://github.com/JuliusBrussee/caveman) | ![Stars](https://img.shields.io/github/stars/JuliusBrussee/caveman?style=social) | Skill/plugin forcing terse caveman-speak across 30+ agents — 65% output token cut, technical content untouched. Example: 69-tok React re-render explanation → 19-tok answer. |
-| [ponytail](https://github.com/DietrichGebert/ponytail) | ![Stars](https://img.shields.io/github/stars/DietrichGebert/ponytail?style=social) | Skill embedding a lazy senior dev — minimum-code, stdlib-first, no speculative features across 16 agents. Example: date-picker task 404 lines → 23 lines; full-stack ticket LOC −54%. |
-| [rtk](https://github.com/rtk-ai/rtk) | ![Stars](https://img.shields.io/github/stars/rtk-ai/rtk?style=social) | CLI proxy filtering/compressing command output before it hits the LLM; 100+ commands, single Rust binary, <10ms overhead. Example: 30-min session 118k → 23.9k tokens (−80%); `cargo test` 25k → 2.5k. |
-| [codegraph](https://github.com/colbymchenry/codegraph) | ![Stars](https://img.shields.io/github/stars/colbymchenry/codegraph?style=social) | Pre-indexed SQLite code knowledge graph — auto-syncs on file change, returns verbatim source + call paths via 1 MCP tool across 8+ agents. 1 call = 0 file reads on 25,874-file repos; 100% local. |
-| [context-mode](https://github.com/mksglu/context-mode) | ![Stars](https://img.shields.io/github/stars/mksglu/context-mode?style=social) | MCP server for 17 clients — sandboxes tool output, persists session memory, enforces think-in-code. Example: 47×Read() = 700KB → 1×ctx_execute() = 3.6KB (~195×); 315KB log → 5.4KB. |
+| Tool | What it does |
+| :--- | :--- |
+| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) ![Stars](https://img.shields.io/github/stars/multica-ai/andrej-karpathy-skills?style=flat) | Distilled meta-rules from Karpathy's LLM-coding post — think before coding, simplicity first, surgical changes, goal-driven. Drops overbuild and wrong-assumption failures. |
+| [caveman](https://github.com/JuliusBrussee/caveman) ![Stars](https://img.shields.io/github/stars/JuliusBrussee/caveman?style=flat) | Skill/plugin forcing terse caveman-speak across 30+ agents — 65% output token cut, technical content untouched. Example: 69-tok React re-render explanation → 19-tok answer. |
+| [ponytail](https://github.com/DietrichGebert/ponytail) ![Stars](https://img.shields.io/github/stars/DietrichGebert/ponytail?style=flat) | Skill embedding a lazy senior dev — minimum-code, stdlib-first, no speculative features across 16 agents. Example: date-picker task 404 lines → 23 lines; full-stack ticket LOC −54%. |
+| [rtk](https://github.com/rtk-ai/rtk) ![Stars](https://img.shields.io/github/stars/rtk-ai/rtk?style=flat) | CLI proxy filtering/compressing command output before it hits the LLM; 100+ commands, single Rust binary, <10ms overhead. Example: 30-min session 118k → 23.9k tokens (−80%); `cargo test` 25k → 2.5k. |
+| [codegraph](https://github.com/colbymchenry/codegraph) ![Stars](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat) | Pre-indexed SQLite code knowledge graph — auto-syncs on file change, returns verbatim source + call paths via 1 MCP tool across 8+ agents. 1 call = 0 file reads on 25,874-file repos; 100% local. |
+| [context-mode](https://github.com/mksglu/context-mode) ![Stars](https://img.shields.io/github/stars/mksglu/context-mode?style=flat) | MCP server for 17 clients — sandboxes tool output, persists session memory, enforces think-in-code. Example: 47×Read() = 700KB → 1×ctx_execute() = 3.6KB (~195×); 315KB log → 5.4KB. |
 
 ## Configuration
 
