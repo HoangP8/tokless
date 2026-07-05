@@ -19,14 +19,14 @@
 
 **tokless** — the lazy one-command solution.
 
-| | |
-| :--- | :--- |
-| ✔️ | **Best packages, unified** — picks the most effective, efficient [tools](#tools) and wires them without conflicts |
-| ✔️ | **One command, done** — pick your agent, restart, go |
-| ✔️ | **All platforms** — macOS, Linux, Windows |
-| ✔️ | **Zero config** — everything wired, no manual edits |
-| ✔️ | **Simple updates** — `tokless update` upgrades everything in one shot |
-| ✔️ | **Non-tech friendly** — under 30 seconds, anyone can do it |
+<table>
+<tr><td>✔️</td><td><b>Best packages, unified</b> — picks the most effective, efficient <a href="#tools">tools</a> and wires them without conflicts</td></tr>
+<tr><td>✔️</td><td><b>One command, done</b> — pick your agent, restart, go</td></tr>
+<tr><td>✔️</td><td><b>All platforms</b> — macOS, Linux, Windows</td></tr>
+<tr><td>✔️</td><td><b>Zero config</b> — everything wired, no manual edits</td></tr>
+<tr><td>✔️</td><td><b>Simple updates</b> — <code>tokless update</code> upgrades everything in one shot</td></tr>
+<tr><td>✔️</td><td><b>Non-tech friendly</b> — under 30 seconds, anyone can do it</td></tr>
+</table>
 
 ### Installation
 
