@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -181,6 +182,33 @@ func TestRemoveCavemanOpencodeAgentFiles(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(ocDir, "agents", "cavecrew-builder.md")); err == nil {
 		t.Fatal("cavecrew opencode agent file should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(ocDir, "agents", "my-agent.md")); err != nil {
+		t.Fatal("user opencode agent file should be kept")
+	}
+}
+
+func TestWireCavemanOpencodePrunesLegacyAgentsWhenAlreadyInstalled(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	defer os.Unsetenv("XDG_CONFIG_HOME")
+	ocDir := filepath.Join(dir, "opencode")
+	os.MkdirAll(filepath.Join(ocDir, "plugins", "caveman"), 0o755)
+	os.MkdirAll(filepath.Join(ocDir, "agents"), 0o755)
+	os.WriteFile(filepath.Join(ocDir, "plugins", "caveman", "plugin.js"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "opencode.json"), []byte(`{"plugin":["./plugins/caveman/plugin.js"]}`), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "agents", "cavecrew-builder.md"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(ocDir, "agents", "my-agent.md"), []byte("x"), 0o644)
+
+	ok, err := caveman.WireFor["opencode"](core.RunOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("wire should succeed when caveman already installed")
+	}
+	if _, err := os.Stat(filepath.Join(ocDir, "agents", "cavecrew-builder.md")); err == nil {
+		t.Fatal("stale cavecrew agent file should be pruned")
 	}
 	if _, err := os.Stat(filepath.Join(ocDir, "agents", "my-agent.md")); err != nil {
 		t.Fatal("user opencode agent file should be kept")

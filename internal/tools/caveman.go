@@ -384,6 +384,9 @@ var caveman = &core.ToolManifest{
 		},
 		"opencode": func(opts core.RunOpts) (bool, error) {
 			if !opts.Upgrade && opencodePluginInstalled() && opencodePluginFilesPresent() {
+				if !opts.DryRun {
+					removeCavemanOpencodeAgentFiles()
+				}
 				WriteOwner("opencode", "caveman")
 				return true, nil
 			}
