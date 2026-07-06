@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -12,19 +13,18 @@ import (
 )
 
 const defaultRegistryURL = "https://registry.npmjs.org/"
+var npmInstallTimeout = 15 * time.Minute
+var npmConfigTimeout = 30 * time.Second
 
 // npmRegistryBase returns the user's configured npm registry.
 func npmRegistryBase() string {
-	npmBin := ResolveNpmBinary()
-	if npmBin != "" {
-		r := Run(npmBin, []string{"config", "get", "registry"}, RunOptions{Capture: true})
-		v := strings.TrimSpace(r.Stdout)
-		if r.Code == 0 && strings.HasPrefix(v, "http") {
-			if !strings.HasSuffix(v, "/") {
-				v += "/"
-			}
-			return v
+	r := runNpmConfig([]string{"config", "get", "registry"})
+	v := strings.TrimSpace(r.Stdout)
+	if r.Code == 0 && strings.HasPrefix(v, "http") {
+		if !strings.HasSuffix(v, "/") {
+			v += "/"
 		}
+		return v
 	}
 	return defaultRegistryURL
 }
@@ -76,18 +76,35 @@ func resolveFromRegistry(pkg, spec string) (string, string, bool) {
 
 var npmResolve = resolveFromRegistry
 var npmRun = func(args []string) ExecResult {
-	npmBin := ResolveNpmBinary()
-	if npmBin == "" {
-		return ExecResult{Code: 127, Stderr: "npm not found"}
-	}
-	return Run(npmBin, args, RunOptions{Capture: true})
+	return runNpm(args, nil)
 }
 var npmRunEnv = func(args, env []string) ExecResult {
-	npmBin := ResolveNpmBinary()
+	return runNpm(args, env)
+}
+
+var runNpmConfig = func(args []string) ExecResult {
+	return runNpmWithTimeout(args, nil, npmConfigTimeout)
+}
+
+var runNpm = func(args, env []string) ExecResult {
+	return runNpmWithTimeout(args, env, npmInstallTimeout)
+}
+
+func runNpmWithTimeout(args, env []string, timeout time.Duration) ExecResult {
+	npmBin := resolveNpmBinary()
 	if npmBin == "" {
 		return ExecResult{Code: 127, Stderr: "npm not found"}
 	}
-	return Run(npmBin, args, RunOptions{Capture: true, Env: env})
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return runNpmExec(npmBin, args, env, ctx)
+}
+
+var resolveNpmBinary = ResolveNpmBinary
+
+// runNpmExec is the lower-level seam that actually calls Run.
+var runNpmExec = func(npmBin string, args, env []string, ctx context.Context) ExecResult {
+	return Run(npmBin, args, RunOptions{Capture: true, Env: env, Ctx: ctx})
 }
 var npmReadInstalled = func(pkg string) *string {
 	return npmInstalledVersion(pkg)
@@ -152,7 +169,7 @@ func NpmGlobalInstall(pkg, spec string) (string, bool, error) {
 		}
 		actual := npmReadInstalled(pkg)
 		if v, good := installSucceeded(target, actual); good {
-			ensureNpmGlobalBinOnPath()
+			EnsureNpmGlobalBinOnPath()
 			return v, true, nil
 		}
 		L.Debug("npm attempt " + strconv.Itoa(i+1) + " exit 0 but package not installed")
@@ -236,18 +253,14 @@ func npmUserPrefixInstall(pkg, token, cacheDir string) (string, bool) {
 }
 
 var npmPrefix = func() string {
-	npmBin := ResolveNpmBinary()
-	if npmBin == "" {
-		return ""
-	}
-	r := Run(npmBin, []string{"config", "get", "prefix"}, RunOptions{Capture: true})
+	r := runNpmConfig([]string{"config", "get", "prefix"})
 	if r.Code != 0 {
 		return ""
 	}
 	return strings.TrimSpace(r.Stdout)
 }
 
-func ensureNpmGlobalBinOnPath() {
+func EnsureNpmGlobalBinOnPath() {
 	prefix := npmPrefix()
 	if prefix == "" {
 		return

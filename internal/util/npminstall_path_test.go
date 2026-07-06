@@ -23,7 +23,7 @@ func TestEnsureNpmGlobalBinOnPath(t *testing.T) {
 	defer func() { npmPrefix = orig }()
 	t.Setenv("PATH", "/usr/bin")
 
-	ensureNpmGlobalBinOnPath()
+	EnsureNpmGlobalBinOnPath()
 
 	want := npmGlobalBinDir(dir, IsWin)
 	if !strings.HasPrefix(os.Getenv("PATH"), want) {
@@ -33,7 +33,7 @@ func TestEnsureNpmGlobalBinOnPath(t *testing.T) {
 	// empty prefix → no-op
 	npmPrefix = func() string { return "" }
 	before := os.Getenv("PATH")
-	ensureNpmGlobalBinOnPath()
+	EnsureNpmGlobalBinOnPath()
 	if os.Getenv("PATH") != before {
 		t.Fatalf("empty prefix must not touch PATH")
 	}
