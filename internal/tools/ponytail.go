@@ -151,7 +151,9 @@ func ponytailOpencodeFilesPresent() bool {
 	if util.Which("npm") == "" {
 		return false
 	}
-	root := util.Run(util.ResolveNpmBinary(), []string{"root", "-g"}, util.RunOptions{Capture: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	root := util.Run(util.ResolveNpmBinary(), []string{"root", "-g"}, util.RunOptions{Capture: true, Ctx: ctx})
 	if root.Code != 0 {
 		return false
 	}
@@ -205,7 +207,9 @@ func antigravityPonytailInstalled() bool {
 }
 
 func claudePluginListHasPonytail() bool {
-	r := util.Run("claude", []string{"plugin", "list"}, util.RunOptions{Capture: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r := util.Run("claude", []string{"plugin", "list"}, util.RunOptions{Capture: true, Ctx: ctx})
 	return r.Code == 0 && strings.Contains(strings.ToLower(r.Stdout), "ponytail")
 }
 
@@ -240,10 +244,13 @@ func ponytailUnwireClaude(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	if claudePluginListHasPonytail() {
-		if r := util.Run("claude", []string{"plugin", "uninstall", "ponytail@ponytail"}, util.RunOptions{Capture: true}); r.Code != 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if r := util.Run("claude", []string{"plugin", "uninstall", "ponytail@ponytail"}, util.RunOptions{Capture: true, Ctx: ctx}); r.Code != 0 {
 			util.L.Err("claude plugin uninstall failed: " + clip(r.Stderr))
+			cancel()
 			return false, nil
 		}
+		cancel()
 	}
 	RemoveOwner("claude", "ponytail")
 	return true, nil
@@ -270,7 +277,15 @@ func ponytailWireOpencode(opts core.RunOpts) (bool, error) {
 	if util.Which("npm") != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		_ = util.Run("npm", []string{"install", "-g", ponytailOpencodePkg}, util.RunOptions{Capture: true, Ctx: ctx})
+		r := util.Run("npm", []string{"install", "-g", ponytailOpencodePkg}, util.RunOptions{Capture: true, Ctx: ctx})
+		if r.Code != 0 {
+			util.L.Err("ponytail npm install failed: " + clip(r.Stderr))
+			return false, nil
+		}
+		util.EnsureNpmGlobalBinOnPath()
+	} else {
+		util.L.Err("ponytail needs npm for OpenCode plugin install")
+		return false, nil
 	}
 	registerPonytailOpencode()
 	stampPonytailVersion()
@@ -319,7 +334,9 @@ func ponytailWireCodex(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	if !isTest() && util.Which("codex") != "" {
-		_ = util.Run("codex", []string{"plugin", "marketplace", "add", ponytailRepo}, util.RunOptions{Capture: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		_ = util.Run("codex", []string{"plugin", "marketplace", "add", ponytailRepo}, util.RunOptions{Capture: true, Ctx: ctx})
+		cancel()
 		stampPonytailVersion()
 	}
 	WriteOwner("codex", "ponytail")
@@ -354,16 +371,20 @@ func ponytailWireAntigravity(opts core.RunOpts) (bool, error) {
 	}
 	ran := true
 	if util.Which("agy") != "" {
-		if r := util.Run("agy", []string{"plugin", "install", "https://github.com/" + ponytailRepo}, util.RunOptions{Capture: true}); r.Code != 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if r := util.Run("agy", []string{"plugin", "install", "https://github.com/" + ponytailRepo}, util.RunOptions{Capture: true, Ctx: ctx}); r.Code != 0 {
 			ran = false
 		}
+		cancel()
 	} else {
 		ran = false
 	}
 	if !ran && util.Which("gemini") != "" {
-		if r := util.Run("gemini", []string{"extensions", "install", "https://github.com/" + ponytailRepo}, util.RunOptions{Capture: true}); r.Code == 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if r := util.Run("gemini", []string{"extensions", "install", "https://github.com/" + ponytailRepo}, util.RunOptions{Capture: true, Ctx: ctx}); r.Code == 0 {
 			ran = true
 		}
+		cancel()
 	}
 	stampPonytailVersion()
 	WriteOwner("antigravity", "ponytail")
@@ -380,10 +401,14 @@ func ponytailUnwireAntigravity(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	if util.Which("agy") != "" {
-		_ = util.Run("agy", []string{"plugin", "uninstall", "https://github.com/" + ponytailRepo}, util.RunOptions{Capture: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		_ = util.Run("agy", []string{"plugin", "uninstall", "https://github.com/" + ponytailRepo}, util.RunOptions{Capture: true, Ctx: ctx})
+		cancel()
 	}
 	if util.Which("gemini") != "" {
-		_ = util.Run("gemini", []string{"extensions", "uninstall", "ponytail"}, util.RunOptions{Capture: true})
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		_ = util.Run("gemini", []string{"extensions", "uninstall", "ponytail"}, util.RunOptions{Capture: true, Ctx: ctx})
+		cancel()
 	}
 	_ = os.RemoveAll(filepath.Join(util.Home(), ".gemini", "config", "skills", "ponytail"))
 	_ = os.RemoveAll(filepath.Join(util.Home(), ".gemini", "antigravity", "skills", "ponytail"))
