@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
@@ -48,7 +50,9 @@ func codegraphRealInstall(opts core.RunOpts, agent string) bool {
 	if bin == "" {
 		return false
 	}
-	help := util.Run(bin, []string{"install", "--help"}, util.RunOptions{Capture: true})
+	helpCtx, helpCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	help := util.Run(bin, []string{"install", "--help"}, util.RunOptions{Capture: true, Ctx: helpCtx})
+	helpCancel()
 	hasYes := strings.Contains(help.Stdout, "--yes") || strings.Contains(help.Stderr, "--yes")
 	hasTarget := strings.Contains(help.Stdout, "--target") || strings.Contains(help.Stderr, "--target")
 	args := []string{"install"}
@@ -65,7 +69,9 @@ func codegraphRealInstall(opts core.RunOpts, agent string) bool {
 		}
 		args = append(args, "--target", target)
 	}
-	return util.Run(bin, args, util.RunOptions{Capture: true}).Code == 0
+	instCtx, instCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer instCancel()
+	return util.Run(bin, args, util.RunOptions{Capture: true, Ctx: instCtx}).Code == 0
 }
 
 // codegraphConfigureMcp writes the MCP entry tokless-side.

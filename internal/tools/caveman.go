@@ -40,6 +40,7 @@ func cavemanOpencodeInstallEnv() []string {
 // resolveSkillsBin returns ("skills", args[1:]) if skills binary is available,
 // otherwise ("npx", original npx args).
 func resolveSkillsBin(npxArgs []string) (string, []string) {
+	util.EnsureNpmGlobalBinOnPath()
 	if util.Which("skills") != "" {
 		return "skills", npxArgs[2:] // strip "-y skills" prefix
 	}
@@ -49,6 +50,7 @@ func resolveSkillsBin(npxArgs []string) (string, []string) {
 // resolveCavemanBin returns ("caveman", cavemanArgs) if global caveman binary
 // is available, else ("npx", npxArgs).
 func resolveCavemanBin(agent string, upgrade bool) (string, []string) {
+	util.EnsureNpmGlobalBinOnPath()
 	if util.Which("caveman") != "" {
 		args := []string{"--only", agent, "--no-mcp-shrink"}
 		if upgrade {
@@ -321,7 +323,9 @@ func removeCavemanOpencodeFiles() {
 }
 
 func claudePluginListHasCaveman() bool {
-	r := util.Run("claude", []string{"plugin", "list"}, util.RunOptions{Capture: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r := util.Run("claude", []string{"plugin", "list"}, util.RunOptions{Capture: true, Ctx: ctx})
 	return r.Code == 0 && strings.Contains(strings.ToLower(r.Stdout), "caveman")
 }
 
@@ -331,6 +335,7 @@ var caveman = &core.ToolManifest{
 	Description:  "Skill that compresses agent prompts using primitive English.",
 	Homepage:     "https://github.com/JuliusBrussee/caveman",
 	InstallHint:  "Installed per-agent by Caveman's own CLI.",
+	NeedsNode:    true,
 	NeedsGit:     true,
 	Channel:      core.ChannelGitHub,
 	NotTrackable: true,
@@ -340,11 +345,20 @@ var caveman = &core.ToolManifest{
 			return true, nil
 		}
 		opts.Reportf("installing from GitHub", 0.3)
-		if !opts.DryRun && !isTest() && util.Which("npm") != "" {
+		if !opts.DryRun && !isTest() {
+			if util.Which("npm") == "" {
+				util.L.Err("caveman needs npm for global install")
+				return false, nil
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			_ = util.Run("npm", []string{"install", "-g", "github:JuliusBrussee/caveman"},
+			r := util.Run("npm", []string{"install", "-g", "github:JuliusBrussee/caveman"},
 				util.RunOptions{Capture: true, Ctx: ctx})
 			cancel()
+			util.EnsureNpmGlobalBinOnPath()
+			if r.Code != 0 && util.Which("caveman") == "" {
+				util.L.Err("caveman npm install failed: " + clip(r.Stderr))
+				return false, nil
+			}
 		}
 		opts.Reportf("ready", 1)
 		return true, nil
@@ -441,12 +455,17 @@ var caveman = &core.ToolManifest{
 			}
 			if !isTest() {
 				if claudePluginListHasCaveman() {
-					if r := util.Run("claude", []string{"plugin", "uninstall", "caveman@caveman"}, util.RunOptions{Capture: true}); r.Code != 0 {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					if r := util.Run("claude", []string{"plugin", "uninstall", "caveman@caveman"}, util.RunOptions{Capture: true, Ctx: ctx}); r.Code != 0 {
 						util.L.Err("claude plugin uninstall failed: " + clip(r.Stderr))
+						cancel()
 						return false, nil
 					}
+					cancel()
 				}
-				_ = util.Run("claude", []string{"mcp", "remove", "caveman-shrink"}, util.RunOptions{Capture: true})
+				ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+				_ = util.Run("claude", []string{"mcp", "remove", "caveman-shrink"}, util.RunOptions{Capture: true, Ctx: ctx2})
+				cancel2()
 			}
 			RemoveOwner("claude", "caveman")
 			return true, nil
@@ -462,8 +481,8 @@ var caveman = &core.ToolManifest{
 			return true, nil
 		},
 		"codex": func(opts core.RunOpts) (bool, error) {
-			ran, err := cavemanExec("npx", cavemanSkillsRemoveArgs("codex"), opts,
-				"npx -y skills remove <7 caveman skills> -a codex -y -g")
+			bin, args := resolveSkillsBin(cavemanSkillsRemoveArgs("codex"))
+			ran, err := cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "))
 			RemoveOwner("codex", "caveman")
 			if !opts.DryRun && !isTest() {
 				removeCavemanSkillCopies(codexSkillsDir())
@@ -471,8 +490,8 @@ var caveman = &core.ToolManifest{
 			return ran, err
 		},
 		"antigravity": func(opts core.RunOpts) (bool, error) {
-			ran, err := cavemanExec("npx", cavemanSkillsRemoveArgs("antigravity"), opts,
-				"npx -y skills remove <7 caveman skills> -a antigravity -y -g")
+			bin, args := resolveSkillsBin(cavemanSkillsRemoveArgs("antigravity"))
+			ran, err := cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "))
 			RemoveOwner("antigravity", "caveman")
 			if !opts.DryRun && !isTest() {
 				removeCavemanSkillCopies(util.AntigravityPathsResolved().SkillsDir)

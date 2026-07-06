@@ -275,7 +275,7 @@ func instructionConflictChoice(path string) string {
 	if instructionConflict.skipped[path] {
 		return "skip"
 	}
-	if instructionConflict.autoAppend || instructionConflict.appendAll || !util.IsInteractive() || os.Getenv("TOKLESS_TEST") == "1" {
+	if instructionConflict.autoAppend || instructionConflict.appendAll || !util.IsInteractive() || !util.StdoutIsTTY() || os.Getenv("TOKLESS_TEST") == "1" {
 		return "append"
 	}
 	fmt.Fprintln(os.Stdout)
