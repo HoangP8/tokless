@@ -35,9 +35,20 @@ $key.Close()
 $v = & $dest --version 2>$null
 Write-Host "✔ tokless $v ready → $dest" -ForegroundColor Green
 
+$hadInstallerRun = Test-Path Env:TOKLESS_INSTALLER_RUN
+$prevInstallerRun = $env:TOKLESS_INSTALLER_RUN
 if ([Environment]::UserInteractive -and -not $env:CI) {
     Write-Host ""
-    & $dest
+    try {
+        $env:TOKLESS_INSTALLER_RUN = "1"
+        & $dest
+    } finally {
+        if ($hadInstallerRun) {
+            $env:TOKLESS_INSTALLER_RUN = $prevInstallerRun
+        } else {
+            Remove-Item Env:TOKLESS_INSTALLER_RUN -ErrorAction SilentlyContinue
+        }
+    }
 } else {
     Write-Host "Run: tokless" -ForegroundColor Cyan
 }
