@@ -267,6 +267,8 @@ func InstallAntigravityRtkHook() {
 	_ = os.Remove(antigravityRewriteScript())
 	_ = os.Remove(antigravityLegacyRewriteScript())
 	cleanAntigravityDeadGuiSettings()
+	RemoveAntigravityCodegraphToolDefs()
+	cleanAntigravityDeadHookGroups()
 	AllowAntigravityEntry("command(rtk )")
 
 	hooksFile := antigravityHooksFile()
@@ -726,6 +728,36 @@ func antigravityDesktopPaths() []string {
 	default:
 		return []string{"/opt/antigravity", "/opt/antigravity-ide",
 			"/usr/local/bin/antigravity", "/usr/local/bin/antigravity-ide"}
+	}
+}
+
+func cleanAntigravityDeadHookGroups() {
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	changed := false
+	for _, name := range append([]string(nil), cfg.Keys()...) {
+		g, ok := cfg.Get(name)
+		if !ok {
+			continue
+		}
+		gm, ok := g.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		if _, has := gm.Get("hook_event_name"); has {
+			cfg.Delete(name)
+			changed = true
+		}
+	}
+	if changed {
+		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 	}
 }
 
