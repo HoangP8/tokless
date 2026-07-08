@@ -249,10 +249,9 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("project-local antigravity GEMINI.md routing file should NOT be written")
 	}
 
-	// 7. Antigravity codegraph MCP launch is wrapped through `tokless run-mcp`
-	// so opening a project in the IDE auto-indexes (IDE has no startup hook).
-	if !strings.Contains(agyMcpStr, "run-mcp") {
-		t.Errorf("antigravity mcp_config.json codegraph entry not wrapped with run-mcp, got: %s", agyMcpStr)
+	// 7. Antigravity codegraph MCP launches directly (not via tokless run-mcp proxy).
+	if strings.Contains(agyMcpStr, "run-mcp") {
+		t.Errorf("antigravity mcp_config.json codegraph entry should NOT be wrapped with run-mcp, got: %s", agyMcpStr)
 	}
 
 	// 8. Antigravity uses one canonical MCP config, not per-surface duplicates.

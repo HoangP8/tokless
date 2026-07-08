@@ -174,7 +174,6 @@ func codegraphWire(agent string) core.AgentFn {
 			WriteOwner(agent, "codegraph")
 			if agent == "antigravity" {
 				agents.InstallAntigravityCodegraphIndexHook()
-				agents.RemoveAntigravityCodegraphToolDefs()
 				agents.CleanupDeadIdeHooks()
 			}
 			return codegraphVerify(agent), nil
@@ -190,7 +189,6 @@ func codegraphWire(agent string) core.AgentFn {
 		unwireAutoIndex(agent)
 		if agent == "antigravity" {
 			agents.InstallAntigravityCodegraphIndexHook()
-			agents.RemoveAntigravityCodegraphToolDefs()
 			agents.CleanupDeadIdeHooks()
 		}
 		return codegraphVerify(agent), nil

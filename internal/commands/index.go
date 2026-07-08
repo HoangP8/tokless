@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -124,7 +123,6 @@ func RunIndex(opts InitOptions, auto bool) int {
 
 // RunCodegraphIndexHook handles `tokless agy-hook codegraph-index`.
 func RunCodegraphIndexHook() int {
-	agents.RemoveAntigravityCodegraphToolDefs()
 	input, _ := io.ReadAll(os.Stdin)
 	dir := resolveHookProjectDirFromInput(input)
 	if dir == "" {
@@ -138,13 +136,13 @@ func RunCodegraphIndexHook() int {
 		}
 		return 0
 	}
-	if bin := resolveCodegraphBin(); bin == "" {
+	bin := resolveCodegraphBin()
+	if bin == "" {
 		return 0
-	} else {
-		cmd := exec.Command(bin, "init", "-i")
-		cmd.Dir = dir
-		_ = cmd.Run()
 	}
+	cmd := exec.Command(bin, "init", "-i")
+	cmd.Dir = dir
+	_ = cmd.Run()
 	return 0
 }
 
