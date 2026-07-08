@@ -396,14 +396,9 @@ func filterContextModeHookEntries(arr []interface{}) []interface{} {
 				continue
 			}
 			if c, ok := hm.Get("command"); ok {
-				if s, ok := c.(string); ok {
-					if s == antigravityContextModeHookCommand {
-						continue
-					}
-					if strings.Contains(s, "context-mode") {
-						drop = true
-						break
-					}
+				if s, ok := c.(string); ok && strings.Contains(s, "context-mode") {
+					drop = true
+					break
 				}
 			}
 		}
@@ -656,7 +651,8 @@ func RemoveAntigravityEntry(entry string) {
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
+		RemoveAntigravityCodegraphToolDefs()
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}
@@ -682,9 +678,6 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	}
 	removeAntigravityMcpFromFiles(toolID, antigravityLegacyMcpFiles())
 	AllowAntigravityEntry("mcp(" + toolID + "/*)")
-	if toolID == "codegraph" {
-		RemoveAntigravityCodegraphToolDefs()
-	}
 	return changed, file
 }
 

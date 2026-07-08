@@ -345,7 +345,7 @@ func TestCtxVerifyAntigravity_RequiresNoHook(t *testing.T) {
 	}
 }
 
-func TestCleanupLegacyAntigravityContextMode_PreservesMinimalHook(t *testing.T) {
+func TestCleanupLegacyAntigravityContextMode_DropsAllContextModeHooks(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
@@ -371,16 +371,13 @@ func TestCleanupLegacyAntigravityContextMode_PreservesMinimalHook(t *testing.T) 
 	agents.CleanupLegacyAntigravityContextMode()
 
 	data, err := os.ReadFile(hooksPath)
-	if err != nil {
-		t.Fatalf("read hooks: %v", err)
+	s := ""
+	if err == nil {
+		s = string(data)
 	}
-	s := string(data)
-	if !strings.Contains(s, "context-mode hook antigravity-cli pretooluse") {
-		t.Fatalf("minimal hook removed:\n%s", s)
-	}
-	for _, bad := range []string{"tokless context-mode-hook", "context-mode hook agy sessionstart", "SessionStart"} {
+	for _, bad := range []string{"context-mode hook", "tokless context-mode-hook", "context-mode hook agy sessionstart", "SessionStart"} {
 		if strings.Contains(s, bad) {
-			t.Fatalf("legacy hook remains %q:\n%s", bad, s)
+			t.Fatalf("context-mode hook remains %q:\n%s", bad, s)
 		}
 	}
 }
