@@ -180,6 +180,32 @@ func containsRtkPrefix(s string) bool {
 	return false
 }
 
+func TestStripRtkAbsPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"relative unchanged", "rtk git status", "rtk git status"},
+		{"unix abs", "/usr/local/bin/rtk git status", "rtk git status"},
+		{"unix home abs", "/home/user/.local/bin/rtk git diff", "rtk git diff"},
+		{"windows drive", `C:\Users\me\bin\rtk.exe git status`, "rtk git status"},
+		{"windows backslash abs", `\Users\me\bin\rtk git status`, "rtk git status"},
+		{"unc path", `\\server\share\rtk.exe git diff`, "rtk git diff"},
+		{"no space abs no strip", "/usr/local/bin/rtk", "/usr/local/bin/rtk"},
+		{"trailing space preserved", "/x/rtk git status ", "rtk git status "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stripRtkAbsPath(tc.input)
+			if got != tc.want {
+				t.Errorf("stripRtkAbsPath(%q) = %q; want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
 // utilHaveRtk returns true if the rtk binary is available on this system.
 func utilHaveRtk() bool {
 	return util.ResolveRtkBin() != ""

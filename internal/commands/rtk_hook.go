@@ -126,18 +126,33 @@ func rtkRewrite(cmdLine string) (string, bool) {
 	if !strings.Contains(newCmd, "rtk ") {
 		return "", false
 	}
-	if strings.HasPrefix(newCmd, "/") || strings.HasPrefix(newCmd, "\\") {
-		rest := newCmd
-		if idx := strings.IndexByte(rest, ' '); idx >= 0 {
-			bin := rest[:idx]
-			tail := rest[idx:]
-			if li := strings.LastIndexByte(bin, '/'); li >= 0 {
-				bin = bin[li+1:]
-			}
-			newCmd = bin + tail
-		}
-	}
+	newCmd = stripRtkAbsPath(newCmd)
 	return newCmd, true
+}
+
+// stripRtkAbsPath converts an absolute rtk path prefix (Unix /usr/local/bin/rtk,
+// Windows C:\Users\me\bin\rtk.exe, UNC \\server\share\rtk.exe) into the bare
+// basename "rtk".
+func stripRtkAbsPath(cmdLine string) string {
+	if cmdLine == "" {
+		return cmdLine
+	}
+	first := cmdLine[0]
+	isAbs := first == '/' || first == '\\' || (len(cmdLine) >= 2 && cmdLine[1] == ':' && (cmdLine[0] >= 'A' && cmdLine[0] <= 'z'))
+	if !isAbs {
+		return cmdLine
+	}
+	idx := strings.IndexByte(cmdLine, ' ')
+	if idx < 0 {
+		return cmdLine
+	}
+	bin := cmdLine[:idx]
+	tail := cmdLine[idx:]
+	if li := strings.LastIndexAny(bin, "/\\"); li >= 0 {
+		bin = bin[li+1:]
+	}
+	bin = strings.TrimSuffix(bin, ".exe")
+	return bin + tail
 }
 
 // RunRtkHook handles the transparent command rewriting for Antigravity's PreToolUse hook.
