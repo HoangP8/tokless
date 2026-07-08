@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+// Path-keyed TOML table sites.
+var tomlPathKeyedSites = []struct{ prefix, path string }{
+	{"hooks.state", `C:\Users\user\.codex\hooks.json:pre_tool_use:0:0`},
+}
+
+func TestTomlPathKeyedBlocksSingleQuoted(t *testing.T) {
+	for _, c := range tomlPathKeyedSites {
+		hdr := TomlDottedTableHeader(c.prefix, c.path)
+		if strings.Contains(hdr, `"`) {
+			t.Fatalf("dotted header must be single-quoted, got %q", hdr)
+		}
+		block := NewTomlBlock(hdr)
+		block.Set("trusted_hash", "deadbeef")
+		out := UpsertBlock("", block, false)
+		if strings.Contains(out, c.prefix+`."`) {
+			t.Fatalf("double-quoted path key in TOML for %q:\n%s", c.prefix, out)
+		}
+	}
+}
+
 func TestUpsertBlockInsert(t *testing.T) {
 	block := NewTomlBlock("mcp_servers.codegraph")
 	block.Set("command", "codegraph")

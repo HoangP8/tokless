@@ -17,6 +17,16 @@ type TomlBlock struct {
 	Fields map[string]TomlValue
 }
 
+// TomlSingleQuoted returns a TOML literal string (single quotes).
+func TomlSingleQuoted(s string) string {
+	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
+}
+
+// TomlDottedTableHeader is the inner name for [prefix.'pathKey'] (no brackets).
+func TomlDottedTableHeader(prefix, pathKey string) string {
+	return prefix + "." + TomlSingleQuoted(pathKey)
+}
+
 // NewTomlBlock builds a block with ordered keys.
 func NewTomlBlock(header string) *TomlBlock {
 	return &TomlBlock{Header: header, Fields: map[string]TomlValue{}}

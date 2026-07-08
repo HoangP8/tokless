@@ -13,7 +13,11 @@ const markEnd = "# <<< tokless path <<<"
 func ExpectedBinDirs() []string {
 	h := resolveHome()
 	if IsWin {
-		return []string{filepath.Join(h, ".local", "bin"), filepath.Join(h, ".bun", "bin")}
+		dirs := []string{filepath.Join(h, ".local", "bin"), filepath.Join(h, ".bun", "bin")}
+		if la := os.Getenv("LOCALAPPDATA"); la != "" {
+			dirs = append(dirs, filepath.Join(la, "Programs", "tokless"))
+		}
+		return dirs
 	}
 	return []string{
 		filepath.Join(h, ".local", "bin"),

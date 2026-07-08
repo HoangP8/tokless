@@ -42,3 +42,25 @@ func TestRuntimeBinDirs(t *testing.T) {
 		}
 	})
 }
+
+func TestExpectedBinDirsWindowsIncludesInstallDir(t *testing.T) {
+	oldIsWin := IsWin
+	defer func() { IsWin = oldIsWin }()
+	IsWin = true
+	tempDir := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(tempDir, "LocalAppData"))
+	t.Setenv("USERPROFILE", filepath.Join(tempDir, "user"))
+
+	dirs := ExpectedBinDirs()
+	want := filepath.Join(tempDir, "LocalAppData", "Programs", "tokless")
+	found := false
+	for _, d := range dirs {
+		if d == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ExpectedBinDirs() = %v, want %q included", dirs, want)
+	}
+}

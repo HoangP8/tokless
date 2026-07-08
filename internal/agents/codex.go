@@ -46,11 +46,15 @@ func CodexHasMcp(toolID string) bool {
 	return util.HasBlock(raw, "mcp_servers."+toolID)
 }
 
-// sweepStaleHookStateEntries removes [hooks.state."..."] entries from config.toml
-// whose hooksFile path is NOT the current codexHooksFile().
+func codexHookStateHeader(key string) string {
+	return util.TomlDottedTableHeader("hooks.state", key)
+}
+
+// sweepStaleHookStateEntries drops [hooks.state.*] blocks that are stale or use the
+// legacy double-quoted header form for the current hooks.json path.
 func sweepStaleHookStateEntries(raw string) string {
 	current := codexHooksFile()
-	re := regexp.MustCompile(`^\[hooks\.state\."([^"]+)"\]\s*$`)
+	re := regexp.MustCompile(`^\[hooks\.state\.(?:'([^']*)'|"([^"]*)")\]\s*$`)
 	lines := strings.SplitAfter(raw, "\n")
 	var out strings.Builder
 	for i := 0; i < len(lines); {
@@ -65,7 +69,12 @@ func sweepStaleHookStateEntries(raw string) string {
 		for j < len(lines) && !strings.HasPrefix(strings.TrimLeft(lines[j], " \t"), "[") {
 			j++
 		}
-		if strings.HasPrefix(m[1], current+":") {
+		key := m[1]
+		if key == "" {
+			key = m[2]
+		}
+		legacyDouble := m[2] != ""
+		if strings.HasPrefix(key, current+":") && !legacyDouble {
 			for ; i < j; i++ {
 				out.WriteString(lines[i])
 			}
@@ -265,6 +274,7 @@ func codexCtxGroup(command string) *util.OrderedMap {
 	hook := util.NewOrderedMap()
 	hook.Set("type", "command")
 	hook.Set("command", command)
+	hook.Set("timeout", codexCtxHookTimeout)
 
 	group := util.NewOrderedMap()
 	group.Set("matcher", codexCtxHookMatcher)
@@ -314,7 +324,12 @@ func InstallCodexContextModeHook() {
 	}
 
 	craw, _ := util.ReadFileSafe(p.Config)
-	cnext := applyCodexApprovalPolicy(craw)
+	craw = sweepStaleHookStateEntries(craw)
+	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(idx) + ":0"
+	block := util.NewTomlBlock(codexHookStateHeader(key))
+	block.Set("trusted_hash", codexCtxHookTrustHash(command))
+	cnext := util.UpsertBlock(craw, block, false)
+	cnext = applyCodexApprovalPolicy(cnext)
 	features := util.NewTomlBlock("features")
 	features.Set("hooks", true)
 	cnext = util.UpsertBlock(cnext, features, false)
@@ -372,7 +387,7 @@ func RemoveCodexContextModeHook() {
 	}
 	craw, _ := util.ReadFileSafe(p.Config)
 	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(removedIdx) + ":0"
-	if cnext := util.RemoveBlock(craw, `hooks.state."`+key+`"`); cnext != craw {
+	if cnext := util.RemoveBlock(craw, codexHookStateHeader(key)); cnext != craw {
 		_ = util.WriteFile(p.Config, cnext)
 	}
 	codexCleanupOrphanedConfig()
@@ -433,7 +448,7 @@ func InstallCodexRtkHook() {
 	craw, _ := util.ReadFileSafe(p.Config)
 	craw = sweepStaleHookStateEntries(craw)
 	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(idx) + ":0"
-	block := util.NewTomlBlock(`hooks.state."` + key + `"`)
+	block := util.NewTomlBlock(codexHookStateHeader(key))
 	block.Set("trusted_hash", codexHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
 	cnext = applyCodexApprovalPolicy(cnext)
@@ -471,7 +486,7 @@ func RemoveCodexRtkHook() {
 							_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 							craw, _ := util.ReadFileSafe(p.Config)
 							key := hooksFile + ":pre_tool_use:" + strconv.Itoa(removedIdx) + ":0"
-							if cnext := util.RemoveBlock(craw, `hooks.state."`+key+`"`); cnext != craw {
+							if cnext := util.RemoveBlock(craw, codexHookStateHeader(key)); cnext != craw {
 								_ = util.WriteFile(p.Config, cnext)
 							}
 						}
@@ -557,7 +572,7 @@ func InstallCodexPermissionHook() {
 	craw, _ := util.ReadFileSafe(p.Config)
 	craw = sweepStaleHookStateEntries(craw)
 	key := hooksFile + ":permission_request:" + strconv.Itoa(idx) + ":0"
-	block := util.NewTomlBlock(`hooks.state."` + key + `"`)
+	block := util.NewTomlBlock(codexHookStateHeader(key))
 	block.Set("trusted_hash", codexPermHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
 	if cnext != craw {
@@ -589,7 +604,7 @@ func RemoveCodexPermissionHook() {
 							_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 							craw, _ := util.ReadFileSafe(p.Config)
 							key := hooksFile + ":permission_request:" + strconv.Itoa(removedIdx) + ":0"
-							if cnext := util.RemoveBlock(craw, `hooks.state."`+key+`"`); cnext != craw {
+							if cnext := util.RemoveBlock(craw, codexHookStateHeader(key)); cnext != craw {
 								_ = util.WriteFile(p.Config, cnext)
 							}
 						}

@@ -240,13 +240,22 @@ func readMcpProbeResponse(rd *bufio.Reader, framed bool) ([]byte, error) {
 	return buf, err
 }
 
+// toklessRunMcpCommand is the MCP proxy command; spaced exe paths break agent spawn parsing.
+func toklessRunMcpCommand() string {
+	self, err := os.Executable()
+	if err != nil {
+		return "tokless"
+	}
+	if strings.ContainsAny(self, " \t") {
+		return "tokless"
+	}
+	return self
+}
+
 // WrapAutoIndex routes an MCP launch through `tokless run-mcp --agent <id>` so
 // the per-project index is built/checked before the real server starts.
 func WrapAutoIndex(agent string, s McpSpawn) McpSpawn {
-	self, err := os.Executable()
-	if err != nil {
-		return s
-	}
+	self := toklessRunMcpCommand()
 	args := append([]string{"run-mcp", "--agent", agent, s.Command}, s.Args...)
 	return McpSpawn{Command: self, Args: args}
 }
