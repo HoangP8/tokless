@@ -126,6 +126,17 @@ func rtkRewrite(cmdLine string) (string, bool) {
 	if !strings.Contains(newCmd, "rtk ") {
 		return "", false
 	}
+	if strings.HasPrefix(newCmd, "/") || strings.HasPrefix(newCmd, "\\") {
+		rest := newCmd
+		if idx := strings.IndexByte(rest, ' '); idx >= 0 {
+			bin := rest[:idx]
+			tail := rest[idx:]
+			if li := strings.LastIndexByte(bin, '/'); li >= 0 {
+				bin = bin[li+1:]
+			}
+			newCmd = bin + tail
+		}
+	}
 	return newCmd, true
 }
 
