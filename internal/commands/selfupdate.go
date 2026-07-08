@@ -63,6 +63,7 @@ func MaybeSelfUpdate(opts InitOptions) {
 		os.Exit(130)
 	} else if ok {
 		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " tokless " + util.C.Gray("v"+local+" → v"+latest+" updated"))
+		reexecAfterSelfUpdate()
 	} else {
 		util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " tokless " + util.C.Gray("v"+local+" → v"+latest+" failed"))
 	}
