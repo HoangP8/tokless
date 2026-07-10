@@ -40,12 +40,6 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	return true, p.Config
 }
 
-func CodexHasMcp(toolID string) bool {
-	p := util.CodexPathsResolved()
-	raw, _ := util.ReadFileSafe(p.Config)
-	return util.HasBlock(raw, "mcp_servers."+toolID)
-}
-
 func codexHookStateHeader(key string) string {
 	return util.TomlDottedTableHeader("hooks.state", key)
 }
@@ -785,4 +779,5 @@ func Register() {
 	core.RegisterAgent(opencode)
 	core.RegisterAgent(codex)
 	core.RegisterAgent(antigravity)
+	core.RegisterAgent(copilot)
 }

@@ -18,6 +18,8 @@ func EnsureInstructionSeparators(agentIDs []string) {
 			path = util.CodexPathsResolved().Instructions
 		case "antigravity":
 			path = util.AntigravityPathsResolved().Instructions
+		case "copilot":
+			path = util.CopilotPathsResolved().Instructions
 		default:
 			continue
 		}

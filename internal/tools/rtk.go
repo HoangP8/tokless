@@ -168,6 +168,8 @@ func rtkTestShim(agent string) {
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "settings.json"),
 			`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":"~/.gemini/hooks/rtk-hook-gemini.sh"}]}]}}`+"\n")
+	case "copilot":
+		agents.InstallCopilotRtkHook()
 	}
 }
 
@@ -334,26 +336,22 @@ func overrideClaudeRtkHook() {
 			}
 		}
 	}
-	if changed {
-		_ = util.WriteFile(cp.Settings, util.StringifyJSON(cfg))
-	}
 	if len(pt) > 1 {
 		seen := map[string]bool{}
 		dedup := make([]any, 0, len(pt))
-		deduped := false
 		for _, g := range pt {
 			cmd := firstHookCommand(g)
-			if seen[cmd] {
-				deduped = true
-				continue
+			if !seen[cmd] {
+				seen[cmd] = true
+				dedup = append(dedup, g)
+			} else {
+				changed = true
 			}
-			seen[cmd] = true
-			dedup = append(dedup, g)
 		}
-		if deduped {
-			hm.Set("PreToolUse", dedup)
-			_ = util.WriteFile(cp.Settings, util.StringifyJSON(cfg))
-		}
+		hm.Set("PreToolUse", dedup)
+	}
+	if changed {
+		_ = util.WriteFile(cp.Settings, util.StringifyJSON(cfg))
 	}
 	agents.AllowClaudeBashPattern("Bash(rtk *)")
 	_ = os.Remove(filepath.Join(cp.Dir, "RTK.md"))
@@ -382,16 +380,7 @@ func firstHookCommand(g any) string {
 	return s
 }
 
-func toklessAbs() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return "tokless"
-	}
-	if strings.ContainsAny(exe, " \t") {
-		return "tokless"
-	}
-	return exe
-}
+func toklessAbs() string { return util.ToklessAbs() }
 
 // stripRtkRefFromMd removes only the @RTK.md reference line from a markdown
 // file (CLAUDE.md, AGENTS.md, GEMINI.md), preserving all other user content.
@@ -439,6 +428,21 @@ func rtkWireCodex() core.AgentFn {
 		}
 		agents.InstallCodexRtkHook()
 		return true, nil
+	}
+}
+
+func rtkWireCopilot() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install Copilot preToolUse hook (~/.copilot/hooks/tokless-rtk.json)")
+			return true, nil
+		}
+		if os.Getenv("TOKLESS_TEST") == "1" {
+			rtkTestShim("copilot")
+			return true, nil
+		}
+		agents.InstallCopilotRtkHook()
+		return agents.HasCopilotRtkHook(), nil
 	}
 }
 
@@ -496,6 +500,7 @@ var rtk = &core.ToolManifest{
 		"opencode":    rtkWire("opencode"),
 		"codex":       rtkWireCodex(),
 		"antigravity": rtkWireAntigravity(),
+		"copilot":     rtkWireCopilot(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -529,6 +534,11 @@ var rtk = &core.ToolManifest{
 			RemoveOwner("antigravity", "rtk")
 			return true, nil
 		},
+		"copilot": func(core.RunOpts) (bool, error) {
+			agents.RemoveCopilotRtkHook()
+			RemoveOwner("copilot", "rtk")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -542,6 +552,9 @@ var rtk = &core.ToolManifest{
 		},
 		"antigravity": func() *bool {
 			return core.BoolPtr(agents.HasAntigravityRtkHook())
+		},
+		"copilot": func() *bool {
+			return core.BoolPtr(agents.HasCopilotRtkHook())
 		},
 	},
 }

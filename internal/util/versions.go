@@ -310,6 +310,7 @@ func cavemanVersionDirs() []string {
 		filepath.Join(home, ".agents", "skills", "caveman"),
 		filepath.Join(gemini, "antigravity", "skills", "caveman"),
 		filepath.Join(gemini, "config", "skills", "caveman"),
+		filepath.Join(CopilotPathsResolved().SkillsDir, "caveman"),
 	}
 }
 
@@ -550,6 +551,7 @@ func ponytailVersionDirs() []string {
 		filepath.Join(home, ".agents", "skills", "ponytail"),
 		filepath.Join(gemini, "antigravity", "skills", "ponytail"),
 		filepath.Join(gemini, "config", "skills", "ponytail"),
+		filepath.Join(CopilotPathsResolved().SkillsDir, "ponytail"),
 	}
 }
 

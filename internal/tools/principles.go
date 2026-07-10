@@ -48,17 +48,20 @@ var principles = &core.ToolManifest{
 		"opencode":    principlesWireFor("opencode"),
 		"codex":       principlesWireFor("codex"),
 		"antigravity": principlesWireFor("antigravity"),
+		"copilot":     principlesWireFor("copilot"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      principlesUnwireFor("claude"),
 		"opencode":    principlesUnwireFor("opencode"),
 		"codex":       principlesUnwireFor("codex"),
 		"antigravity": principlesUnwireFor("antigravity"),
+		"copilot":     principlesUnwireFor("copilot"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { v := principlesVerifyFor("claude")(); return &v },
 		"opencode":    func() *bool { v := principlesVerifyFor("opencode")(); return &v },
 		"codex":       func() *bool { v := principlesVerifyFor("codex")(); return &v },
 		"antigravity": func() *bool { v := principlesVerifyFor("antigravity")(); return &v },
+		"copilot":     func() *bool { v := principlesVerifyFor("copilot")(); return &v },
 	},
 }

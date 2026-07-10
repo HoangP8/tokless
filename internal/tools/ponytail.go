@@ -206,6 +206,11 @@ func antigravityPonytailInstalled() bool {
 		util.Exists(filepath.Join(util.Home(), ".gemini", "antigravity", "skills", "ponytail"))
 }
 
+func copilotPonytailInstalled() bool {
+	return util.Exists(filepath.Join(util.CopilotPathsResolved().SkillsDir, "ponytail")) ||
+		util.Exists(filepath.Join(util.Home(), ".agents", "skills", "ponytail"))
+}
+
 func claudePluginListHasPonytail() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -321,6 +326,14 @@ func removePonytailCodexSkillCopies() {
 	_ = os.RemoveAll(filepath.Join(codexSkillsDirLocal(), "ponytail"))
 }
 
+func ponytailSkillsAddArgs(agent string) []string {
+	return []string{"-y", "skills", "add", "DietrichGebert/ponytail", "-a", skillsAgentID(agent), "-s", "*", "--yes", "-g"}
+}
+
+func ponytailSkillsRemoveArgs(agent string) []string {
+	return []string{"-y", "skills", "remove", "ponytail", "-a", skillsAgentID(agent), "-y", "-g"}
+}
+
 // ponytailWireCodex adds the marketplace when possible and writes the baseline.
 // Final plugin install/trust is interactive in Codex (/plugins + /hooks).
 func ponytailWireCodex(opts core.RunOpts) (bool, error) {
@@ -434,12 +447,28 @@ var ponytail = &core.ToolManifest{
 		"opencode":    ponytailWireOpencode,
 		"codex":       ponytailWireCodex,
 		"antigravity": ponytailWireAntigravity,
+		"copilot": func(opts core.RunOpts) (bool, error) {
+			if !opts.Upgrade && copilotPonytailInstalled() {
+				WriteOwner("copilot", "ponytail")
+				return true, nil
+			}
+			bin, args := resolveSkillsBin(ponytailSkillsAddArgs("copilot"))
+			_ = util.Run(bin, args, util.RunOptions{Capture: true})
+			WriteOwner("copilot", "ponytail")
+			return copilotPonytailInstalled(), nil
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireClaude,
 		"opencode":    ponytailUnwireOpencode,
 		"codex":       ponytailUnwireCodex,
 		"antigravity": ponytailUnwireAntigravity,
+		"copilot": func(opts core.RunOpts) (bool, error) {
+			_ = os.RemoveAll(filepath.Join(util.CopilotPathsResolved().SkillsDir, "ponytail"))
+			removePonytailModeState()
+			RemoveOwner("copilot", "ponytail")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -456,5 +485,6 @@ var ponytail = &core.ToolManifest{
 		},
 		"codex":       func() *bool { return core.BoolPtr(codexPonytailInstalled()) },
 		"antigravity": func() *bool { return core.BoolPtr(antigravityPonytailInstalled()) },
+		"copilot":     func() *bool { return core.BoolPtr(copilotPonytailInstalled()) },
 	},
 }
