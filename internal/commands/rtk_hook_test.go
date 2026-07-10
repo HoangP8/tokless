@@ -1,6 +1,11 @@
 package commands
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/util"
@@ -209,4 +214,115 @@ func TestStripRtkAbsPath(t *testing.T) {
 // utilHaveRtk returns true if the rtk binary is available on this system.
 func utilHaveRtk() bool {
 	return util.ResolveRtkBin() != ""
+}
+
+func TestCommandFromToolArgs(t *testing.T) {
+	raw, _ := json.Marshal(`{"command":"git status"}`)
+	if got := commandFromToolArgs(raw); got != "git status" {
+		t.Errorf("string toolArgs: got %q", got)
+	}
+	raw, _ = json.Marshal(map[string]string{"command": "ls -la"})
+	if got := commandFromToolArgs(raw); got != "ls -la" {
+		t.Errorf("object toolArgs: got %q", got)
+	}
+}
+
+func TestRunRtkHookCopilot(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"timestamp":1,"cwd":"/tmp","toolName":"bash","toolArgs":"{\"command\":\"git status\"}"}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+
+	code := RunRtkHookCopilot()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	out := strings.TrimSpace(buf.String())
+	if out == "" {
+		t.Fatal("expected rewrite JSON, got empty")
+	}
+	var resp struct {
+		PermissionDecision string            `json:"permissionDecision"`
+		ModifiedArgs       map[string]string `json:"modifiedArgs"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("bad JSON %q: %v", out, err)
+	}
+	if resp.PermissionDecision != "allow" {
+		t.Errorf("permissionDecision=%q", resp.PermissionDecision)
+	}
+	cmd := resp.ModifiedArgs["command"]
+	if !strings.HasPrefix(cmd, "rtk ") {
+		t.Errorf("modified command missing rtk prefix: %q", cmd)
+	}
+	if !strings.Contains(cmd, "git") {
+		t.Errorf("modified command missing git: %q", cmd)
+	}
+
+	// non-shell tool → no-op
+	payload2 := `{"toolName":"read","toolArgs":"{\"path\":\"x\"}"}`
+	rIn2, wIn2, _ := os.Pipe()
+	rOut2, wOut2, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn2, wOut2
+	go func() {
+		_, _ = io.WriteString(wIn2, payload2)
+		_ = wIn2.Close()
+	}()
+	code2 := RunRtkHookCopilot()
+	_ = wOut2.Close()
+	var buf2 bytes.Buffer
+	_, _ = io.Copy(&buf2, rOut2)
+	_ = rIn2.Close()
+	if code2 != 0 || strings.TrimSpace(buf2.String()) != "" {
+		t.Errorf("non-shell should no-op; code=%d out=%q", code2, buf2.String())
+	}
+
+	// VS Code Chat shape (runTerminalCommand + updatedInput)
+	payload3 := `{"tool_name":"runTerminalCommand","tool_input":{"command":"git status"}}`
+	rIn3, wIn3, _ := os.Pipe()
+	rOut3, wOut3, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn3, wOut3
+	go func() {
+		_, _ = io.WriteString(wIn3, payload3)
+		_ = wIn3.Close()
+	}()
+	code3 := RunRtkHookCopilot()
+	_ = wOut3.Close()
+	var buf3 bytes.Buffer
+	_, _ = io.Copy(&buf3, rOut3)
+	_ = rIn3.Close()
+	if code3 != 0 {
+		t.Fatalf("vscode exit code %d", code3)
+	}
+	out3 := strings.TrimSpace(buf3.String())
+	if out3 == "" {
+		t.Fatal("vscode: expected rewrite JSON, got empty")
+	}
+	var vscode struct {
+		HookSpecificOutput struct {
+			UpdatedInput map[string]string `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out3), &vscode); err != nil {
+		t.Fatalf("vscode bad JSON %q: %v", out3, err)
+	}
+	if !strings.HasPrefix(vscode.HookSpecificOutput.UpdatedInput["command"], "rtk ") {
+		t.Errorf("vscode missing rtk rewrite: %q", out3)
+	}
 }

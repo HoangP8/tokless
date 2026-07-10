@@ -126,6 +126,9 @@ func rtkRewrite(cmdLine string) (string, bool) {
 	if !strings.Contains(newCmd, "rtk ") {
 		return "", false
 	}
+	if strings.HasPrefix(strings.TrimSpace(newCmd), "rtk rtk ") {
+		return "", false
+	}
 	newCmd = stripRtkAbsPath(newCmd)
 	return newCmd, true
 }
@@ -250,6 +253,138 @@ func RunRtkHookCodex() int {
 	return 0
 }
 
-func RunRtkHookClaude() int {
-	return RunRtkHookCodex()
+// RunRtkHookCopilot rewrites shell commands for GitHub Copilot.
+func RunRtkHookCopilot() int {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(input) == 0 {
+		return 0
+	}
+
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(input, &req); err != nil {
+		return 0
+	}
+
+	// VS Code Chat / Claude-shaped payload (snake_case keys).
+	if v, ok := req["tool_name"]; ok {
+		var toolName string
+		if json.Unmarshal(v, &toolName) != nil || toolName == "" {
+			return 0
+		}
+		switch strings.ToLower(toolName) {
+		case "bash", "powershell", "shell", "runterminalcommand":
+		default:
+			return 0
+		}
+		cmdLine := ""
+		if ti, ok := req["tool_input"]; ok {
+			var inp struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal(ti, &inp) == nil {
+				cmdLine = inp.Command
+			}
+		}
+		if cmdLine == "" {
+			return 0
+		}
+		newCmd, changed := rtkRewriteIfNeeded(cmdLine)
+		if !changed {
+			return 0
+		}
+		resp := map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName":        "PreToolUse",
+				"permissionDecision":   "allow",
+				"permissionDecisionReason": "RTK auto-rewrite",
+				"updatedInput":         map[string]string{"command": newCmd},
+			},
+		}
+		if out, err := json.Marshal(resp); err == nil {
+			fmt.Println(string(out))
+		}
+		return 0
+	}
+
+	// Copilot CLI (camelCase).
+	toolName := copilotToolName(req)
+	switch strings.ToLower(toolName) {
+	case "bash", "powershell", "shell":
+	default:
+		return 0
+	}
+
+	cmdLine := copilotCommand(req)
+	if cmdLine == "" {
+		return 0
+	}
+	newCmd, changed := rtkRewriteIfNeeded(cmdLine)
+	if !changed {
+		return 0
+	}
+
+	resp := map[string]any{
+		"permissionDecision": "allow",
+		"modifiedArgs":       map[string]string{"command": newCmd},
+	}
+	if out, err := json.Marshal(resp); err == nil {
+		fmt.Println(string(out))
+	}
+	return 0
+}
+
+func rtkRewriteIfNeeded(cmdLine string) (string, bool) {
+	trimmed := strings.TrimSpace(cmdLine)
+	if strings.HasPrefix(trimmed, "rtk ") || trimmed == "rtk" {
+		return "", false
+	}
+	return rtkRewrite(cmdLine)
+}
+
+func copilotToolName(req map[string]json.RawMessage) string {
+	for _, key := range []string{"toolName", "tool_name"} {
+		if v, ok := req[key]; ok {
+			var s string
+			if json.Unmarshal(v, &s) == nil && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func copilotCommand(req map[string]json.RawMessage) string {
+	if v, ok := req["toolArgs"]; ok {
+		if c := commandFromToolArgs(v); c != "" {
+			return c
+		}
+	}
+	if v, ok := req["tool_input"]; ok {
+		var ti struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(v, &ti) == nil {
+			return ti.Command
+		}
+	}
+	return ""
+}
+
+func commandFromToolArgs(raw json.RawMessage) string {
+	var asStr string
+	if json.Unmarshal(raw, &asStr) == nil {
+		var args map[string]any
+		if json.Unmarshal([]byte(asStr), &args) == nil {
+			if c, ok := args["command"].(string); ok {
+				return c
+			}
+		}
+	}
+	var args map[string]any
+	if json.Unmarshal(raw, &args) == nil {
+		if c, ok := args["command"].(string); ok {
+			return c
+		}
+	}
+	return ""
 }
