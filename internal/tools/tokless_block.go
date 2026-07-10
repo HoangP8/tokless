@@ -20,6 +20,8 @@ func instructionPath(agent string) string {
 		return util.CodexPathsResolved().Instructions
 	case "antigravity":
 		return util.AntigravityPathsResolved().Instructions
+	case "copilot":
+		return util.CopilotPathsResolved().Instructions
 	}
 	return ""
 }
@@ -258,7 +260,7 @@ func writeOwnerInPath(path, cur, owner string) bool {
 	}
 	if containsOwner(owners, owner) {
 		sortOwnersByRegistry(owners)
-		want := strings.TrimRight(util.ToklessBody(owners), "\n")
+		want := strings.TrimRight(util.ToklessAgentBody(owners), "\n")
 		current := joinManagedBlocks(blocks)
 		if current == want {
 			return false
@@ -267,7 +269,7 @@ func writeOwnerInPath(path, cur, owner string) bool {
 	}
 	owners = append(owners, owner)
 	sortOwnersByRegistry(owners)
-	body := strings.TrimRight(util.ToklessBody(owners), "\n")
+	body := strings.TrimRight(util.ToklessAgentBody(owners), "\n")
 	return util.WriteFile(path, joinFile(head, body, tail)) == nil
 }
 
@@ -337,7 +339,7 @@ func removeOwnerInPath(path, cur, owner string) {
 		_ = util.WriteFile(path, strings.TrimRight(s, "\n")+"\n")
 		return
 	}
-	body := strings.TrimRight(util.ToklessBody(kept), "\n")
+	body := strings.TrimRight(util.ToklessAgentBody(kept), "\n")
 	_ = util.WriteFile(path, joinFile(head, body, tail))
 }
 

@@ -248,13 +248,7 @@ func antigravityLegacyRewriteScript() string {
 	return filepath.Join(util.Home(), ".gemini", "config", "tokless-rtk-rewrite.sh")
 }
 
-func getToklessAbs() string {
-	exe, err := os.Executable()
-	if err == nil && exe != "" {
-		return exe
-	}
-	return "tokless"
-}
+func getToklessAbs() string { return util.ToklessAbs() }
 
 // InstallAntigravityRtkHook installs the PreToolUse hook for agy.
 func InstallAntigravityRtkHook() {

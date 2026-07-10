@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 var IsWin = runtime.GOOS == "windows"
@@ -31,6 +32,18 @@ func Home() string {
 		return homeOverride
 	}
 	return resolveHome()
+}
+
+// ToklessAbs returns the absolute path to the running tokless binary.
+func ToklessAbs() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "tokless"
+	}
+	if strings.ContainsAny(exe, " \t") {
+		return "tokless"
+	}
+	return exe
 }
 
 // opencodeConfigDir mirrors opencode's own resolution (xdg-basedir under Bun):
@@ -148,6 +161,28 @@ func AntigravityPathsResolved() AntigravityPaths {
 		Settings:     filepath.Join(gemini, "settings.json"),
 		SkillsDir:    filepath.Join(gemini, "config", "skills"),
 		Instructions: filepath.Join(gemini, "GEMINI.md"),
+	}
+}
+
+// CopilotPaths holds GitHub Copilot CLI config locations.
+type CopilotPaths struct {
+	Dir, McpConfig, Settings, HooksDir, SkillsDir, Instructions string
+}
+
+func CopilotPathsResolved() CopilotPaths {
+	dir := filepath.Join(Home(), ".copilot")
+	if env := os.Getenv("COPILOT_HOME"); env != "" {
+		dir = env
+	} else if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		dir = filepath.Join(x, "copilot")
+	}
+	return CopilotPaths{
+		Dir:          dir,
+		McpConfig:    filepath.Join(dir, "mcp-config.json"),
+		Settings:     filepath.Join(dir, "settings.json"),
+		HooksDir:     filepath.Join(dir, "hooks"),
+		SkillsDir:    filepath.Join(dir, "skills"),
+		Instructions: filepath.Join(dir, "copilot-instructions.md"),
 	}
 }
 

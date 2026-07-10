@@ -1,15 +1,12 @@
 package commands
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -150,9 +147,15 @@ func resolveHookProjectDirFromInput(input []byte) string {
 	if len(input) > 0 {
 		var req struct {
 			WorkspacePaths []string `json:"workspacePaths"`
+			Cwd            string   `json:"cwd"`
 		}
-		if json.Unmarshal(input, &req) == nil && len(req.WorkspacePaths) > 0 {
-			return req.WorkspacePaths[0]
+		if json.Unmarshal(input, &req) == nil {
+			if len(req.WorkspacePaths) > 0 {
+				return findProjectDir(req.WorkspacePaths[0])
+			}
+			if req.Cwd != "" {
+				return findProjectDir(req.Cwd)
+			}
 		}
 	}
 	dir, err := os.Getwd()
@@ -176,66 +179,4 @@ func resolveCodegraphBin() string {
 		os.Setenv("PATH", prefix+sep+cur)
 	}
 	return util.ResolveCodegraphBin()
-}
-func RunClaudeCodegraphSyncHook() int {
-	dir, err := os.Getwd()
-	if err != nil {
-		return 0
-	}
-	dir = findProjectDir(dir)
-	if !looksLikeProject(dir) {
-		return 0
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	if !util.Exists(filepath.Join(dir, ".codegraph")) {
-		if bin := resolveCodegraphBin(); bin != "" {
-			cmd := exec.CommandContext(ctx, bin, "init", "-i")
-			cmd.Dir = dir
-			_ = cmd.Run()
-		}
-		return 0
-	}
-	if bin := resolveCodegraphBin(); bin != "" {
-		cmd := exec.CommandContext(ctx, bin, "sync", "-q")
-		cmd.Dir = dir
-		_ = cmd.Run()
-	}
-	return 0
-}
-
-func RunContextModeWarmup() int {
-	if contextModeSentinelAlive() {
-		return 0
-	}
-	spawn := util.PickMcpSpawn("context-mode", "serve", "--mcp")
-	cmd := exec.Command(spawn.Command, spawn.Args...)
-	backgroundSpawn(cmd)
-	return 0
-}
-
-func contextModeSentinelAlive() bool {
-	tmp := os.TempDir()
-	entries, err := os.ReadDir(tmp)
-	if err != nil {
-		return false
-	}
-	const prefix = "context-mode-mcp-ready-"
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), prefix) {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(tmp, e.Name()))
-		if err != nil {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			continue
-		}
-		if processAlive(pid) {
-			return true
-		}
-	}
-	return false
 }

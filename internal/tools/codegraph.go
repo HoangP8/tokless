@@ -136,9 +136,6 @@ func codegraphVerify(agent string) bool {
 	return false
 }
 
-func codegraphIndexed(dir string, _ core.RunOpts) bool {
-	return util.Exists(filepath.Join(dir, ".codegraph"))
-}
 
 func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 	if isTest() {
@@ -223,7 +220,6 @@ var codegraph = &core.ToolManifest{
 	Channel:      core.ChannelNpm,
 	Install:      codegraphEnsureInstalled,
 	IndexProject: codegraphIndexProject,
-	Indexed:      codegraphIndexed,
 	IndexReady:   func() bool { return isTest() || util.ResolveCodegraphBin() != "" },
 	WireFor: map[string]core.AgentFn{
 		"claude":      codegraphWire("claude"),

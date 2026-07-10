@@ -2,78 +2,8 @@ package util
 
 import (
 	_ "embed"
-	"encoding/json"
-	"os"
-	"os/exec"
 	"strings"
-	"time"
 )
-
-// McpInstructions probes an MCP server and returns result.instructions.
-func McpInstructions(spawn McpSpawn) (string, bool) {
-	if os.Getenv("TOKLESS_TEST") == "1" {
-		return "", false
-	}
-	initReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"tokless","version":"0"}}}` + "\n"
-	cmd := exec.Command(spawn.Command, spawn.Args...)
-	cmd.Stdin = strings.NewReader(initReq)
-	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", false
-	}
-	if err := cmd.Start(); err != nil {
-		return "", false
-	}
-	defer cmd.Process.Kill()
-
-	type result struct {
-		data []byte
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		buf := make([]byte, 0, 64*1024)
-		tmp := make([]byte, 4096)
-		for {
-			n, err := stdout.Read(tmp)
-			if n > 0 {
-				buf = append(buf, tmp[:n]...)
-				if idx := strings.IndexByte(string(buf), '\n'); idx >= 0 {
-					ch <- result{data: buf[:idx], err: nil}
-					return
-				}
-			}
-			if err != nil {
-				ch <- result{data: buf, err: err}
-				return
-			}
-		}
-	}()
-	timer := time.NewTimer(10 * time.Second)
-	defer timer.Stop()
-	select {
-	case r := <-ch:
-		cmd.Wait()
-		if len(r.data) == 0 {
-			return "", false
-		}
-		var resp struct {
-			Result struct {
-				Instructions string `json:"instructions"`
-			} `json:"result"`
-		}
-		if err := json.Unmarshal(r.data, &resp); err != nil {
-			return "", false
-		}
-		if resp.Result.Instructions == "" {
-			return "", false
-		}
-		return resp.Result.Instructions, true
-	case <-timer.C:
-		return "", false
-	}
-}
 
 // ToklessOwners is render order: meta rules first, then tools.
 var ToklessOwners = []string{
@@ -183,8 +113,6 @@ func ToklessAgentBody(owners []string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// ToklessBody returns the rendered body. Convenience over ToklessAgentBody.
-func ToklessBody(owners []string) string { return ToklessAgentBody(owners) }
 
 // TokenizeBody infers active owners from section headings present in body.
 func TokenizeBody(body string) []string {

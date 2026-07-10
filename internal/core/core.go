@@ -64,7 +64,6 @@ type ToolManifest struct {
 	UnwireFor       map[string]AgentFn
 	VerifyFor       map[string]VerifyFn
 	IndexProject    func(dir string, opts RunOpts) (bool, error)
-	Indexed         func(dir string, opts RunOpts) bool
 	IndexReady      func() bool
 }
 

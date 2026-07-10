@@ -223,16 +223,6 @@ func claudeMcpEqual(existing any, desired *util.OrderedMap) bool {
 	return jsonStr(orEmptyObj(envA)) == jsonStr(orEmptyObj(envB))
 }
 
-func ensureClaudeSkillDir() string {
-	p := util.ClaudeCodePaths()
-	_ = util.EnsureDir(p.SkillsDir)
-	return p.SkillsDir
-}
-
-func LocateClaudeCaveman() string {
-	return filepath.Join(ensureClaudeSkillDir(), "caveman")
-}
-
 func claudeKnownBinDirs() []string {
 	return []string{filepath.Join(util.Home(), ".local", "bin")}
 }
