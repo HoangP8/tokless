@@ -129,7 +129,7 @@ func RunCodegraphIndexHook() int {
 		if bin := resolveCodegraphBin(); bin != "" {
 			cmd := exec.Command(bin, "sync")
 			cmd.Dir = dir
-			_ = cmd.Run()
+			_ = cmd.Start()
 		}
 		return 0
 	}
@@ -137,9 +137,9 @@ func RunCodegraphIndexHook() int {
 	if bin == "" {
 		return 0
 	}
-	cmd := exec.Command(bin, "init", "-i")
+	cmd := exec.Command(bin, "init")
 	cmd.Dir = dir
-	_ = cmd.Run()
+	_ = cmd.Start()
 	return 0
 }
 
