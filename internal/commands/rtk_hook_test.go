@@ -325,4 +325,325 @@ func TestRunRtkHookCopilot(t *testing.T) {
 	if !strings.HasPrefix(vscode.HookSpecificOutput.UpdatedInput["command"], "rtk ") {
 		t.Errorf("vscode missing rtk rewrite: %q", out3)
 	}
+
+	// Pure already-rtk → allow; may surface same command in modifiedArgs.
+	payload4 := `{"toolName":"bash","toolArgs":"{\"command\":\"rtk git log --oneline\"}"}`
+	rIn4, wIn4, _ := os.Pipe()
+	rOut4, wOut4, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn4, wOut4
+	go func() {
+		_, _ = io.WriteString(wIn4, payload4)
+		_ = wIn4.Close()
+	}()
+	code4 := RunRtkHookCopilot()
+	_ = wOut4.Close()
+	var buf4 bytes.Buffer
+	_, _ = io.Copy(&buf4, rOut4)
+	_ = rIn4.Close()
+	if code4 != 0 {
+		t.Fatalf("already-rtk exit %d", code4)
+	}
+	out4 := strings.TrimSpace(buf4.String())
+	var already struct {
+		PermissionDecision string            `json:"permissionDecision"`
+		ModifiedArgs       map[string]string `json:"modifiedArgs"`
+	}
+	if err := json.Unmarshal([]byte(out4), &already); err != nil {
+		t.Fatalf("already-rtk bad JSON %q: %v", out4, err)
+	}
+	if already.PermissionDecision != "allow" {
+		t.Errorf("already-rtk must allow, got %q", already.PermissionDecision)
+	}
+	if c := already.ModifiedArgs["command"]; c != "" && c != "rtk git log --oneline" {
+		t.Errorf("already-rtk must not re-write command, got %q", c)
+	}
+
+	// Mixed: model-native rtk + bare git → must still rewrite bare half.
+	payloadMixed := `{"toolName":"bash","toolArgs":"{\"command\":\"rtk git log --oneline && git status\"}"}`
+	rInM, wInM, _ := os.Pipe()
+	rOutM, wOutM, _ := os.Pipe()
+	os.Stdin, os.Stdout = rInM, wOutM
+	go func() {
+		_, _ = io.WriteString(wInM, payloadMixed)
+		_ = wInM.Close()
+	}()
+	codeM := RunRtkHookCopilot()
+	_ = wOutM.Close()
+	var bufM bytes.Buffer
+	_, _ = io.Copy(&bufM, rOutM)
+	_ = rInM.Close()
+	if codeM != 0 {
+		t.Fatalf("mixed-rtk exit %d", codeM)
+	}
+	outM := strings.TrimSpace(bufM.String())
+	var mixed struct {
+		PermissionDecision string            `json:"permissionDecision"`
+		ModifiedArgs       map[string]string `json:"modifiedArgs"`
+	}
+	if err := json.Unmarshal([]byte(outM), &mixed); err != nil {
+		t.Fatalf("mixed-rtk bad JSON %q: %v", outM, err)
+	}
+	if mixed.PermissionDecision != "allow" {
+		t.Errorf("mixed-rtk must allow, got %q", mixed.PermissionDecision)
+	}
+	mc := mixed.ModifiedArgs["command"]
+	if !strings.Contains(mc, "rtk git status") {
+		t.Errorf("mixed-rtk must rewrite bare git status half, got %q", mc)
+	}
+	if strings.Contains(mc, "&& git status") {
+		t.Errorf("mixed-rtk left bare git status: %q", mc)
+	}
+
+	// Non-rtk, non-rewritable shell → no-op.
+	payload5 := `{"toolName":"bash","toolArgs":"{\"command\":\"true\"}"}`
+	rIn5, wIn5, _ := os.Pipe()
+	rOut5, wOut5, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn5, wOut5
+	go func() {
+		_, _ = io.WriteString(wIn5, payload5)
+		_ = wIn5.Close()
+	}()
+	code5 := RunRtkHookCopilot()
+	_ = wOut5.Close()
+	var buf5 bytes.Buffer
+	_, _ = io.Copy(&buf5, rOut5)
+	_ = rIn5.Close()
+	if code5 != 0 || strings.TrimSpace(buf5.String()) != "" {
+		t.Errorf("non-rtk non-rewrite should no-op; code=%d out=%q", code5, buf5.String())
+	}
+}
+
+func TestIsAlreadyRtk(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"rtk git status", true},
+		{"rtk", true},
+		{"  rtk ls  ", true},
+		{"/usr/local/bin/rtk git status", true},
+		{"git status", false},
+		{"echo rtk", false},
+		{"rtk git log && git status", false},
+	}
+	for _, tc := range cases {
+		if got := isAlreadyRtk(tc.in); got != tc.want {
+			t.Errorf("isAlreadyRtk(%q)=%v want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestCommandUsesRtk(t *testing.T) {
+	if !commandUsesRtk("rtk git status") {
+		t.Error("expected true for pure rtk")
+	}
+	if !commandUsesRtk("cd /tmp && rtk git log") {
+		t.Error("expected true for rtk mid-chain")
+	}
+	if commandUsesRtk("git status && ls") {
+		t.Error("expected false for no rtk")
+	}
+}
+
+func TestCopilotRtkDecideMixed(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	newCmd, changed, approve := copilotRtkDecide("rtk git log --oneline && git status")
+	if !approve {
+		t.Fatal("must approve")
+	}
+	if !changed {
+		t.Fatal("must rewrite bare half")
+	}
+	if strings.Contains(newCmd, "&& git status") && !strings.Contains(newCmd, "&& rtk git status") {
+		t.Fatalf("bare git status remained: %q", newCmd)
+	}
+	_, changed2, approve2 := copilotRtkDecide("rtk git status")
+	if !approve2 || changed2 {
+		t.Fatalf("pure rtk: approve=%v changed=%v", approve2, changed2)
+	}
+	_, ch3, ap3 := copilotRtkDecide("git remote -v")
+	if ch3 || ap3 {
+		t.Fatalf("git remote is not rewrite-supported; must leave bare: changed=%v approve=%v", ch3, ap3)
+	}
+	new4, changed4, approve4 := copilotRtkDecide("ls -la && git remote -v")
+	if !approve4 || !changed4 {
+		t.Fatalf("compound: expect rewrite ls half: approve=%v changed=%v", approve4, changed4)
+	}
+	if !strings.Contains(new4, "rtk ls") && !strings.Contains(new4, "rtk ls -la") {
+		if !strings.HasPrefix(strings.TrimSpace(new4), "rtk ") {
+			t.Fatalf("expected rtk ls half: %q", new4)
+		}
+	}
+	if strings.Contains(new4, "rtk git remote") {
+		t.Fatalf("must not force-prefix unsupported git remote: %q", new4)
+	}
+	partial := "git remote -v && rtk git branch -a"
+	new5, changed5, approve5 := copilotRtkDecide(partial)
+	if !approve5 {
+		t.Fatal("partial with rtk segment must approve")
+	}
+	if changed5 && strings.Contains(new5, "rtk git remote") {
+		t.Fatalf("must not invent rtk git remote: %q", new5)
+	}
+}
+
+func TestRtkRewriteBySegmentPreservesOpSpacing(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	in := "git status && rtk git log --oneline"
+	out, ok := rtkRewrite(in)
+	if !ok {
+		t.Fatal("expected rewrite")
+	}
+	if !strings.Contains(out, "rtk git status") {
+		t.Fatalf("bare half not rewritten: %q", out)
+	}
+	if strings.Contains(out, "&&rtk") || strings.Contains(out, "rtk&&") {
+		t.Fatalf("operator spacing crushed: %q", out)
+	}
+	_, ok2 := rtkRewrite(out)
+	if ok2 {
+		t.Fatalf("second pass must no-op, got rewrite of %q", out)
+	}
+}
+
+func TestRunRtkHookCopilotPreservesDescription(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	payload := `{"toolName":"bash","toolArgs":"{\"command\":\"git status\",\"description\":\"Check git status\"}"}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+	code := RunRtkHookCopilot()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var resp struct {
+		PermissionDecision string         `json:"permissionDecision"`
+		ModifiedArgs       map[string]any `json:"modifiedArgs"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &resp); err != nil {
+		t.Fatalf("json: %v out=%q", err, buf.String())
+	}
+	if resp.PermissionDecision != "allow" {
+		t.Fatalf("want allow, got %q", resp.PermissionDecision)
+	}
+	cmd, _ := resp.ModifiedArgs["command"].(string)
+	if !strings.HasPrefix(cmd, "rtk ") {
+		t.Fatalf("want rtk rewrite, got %q", cmd)
+	}
+	desc, _ := resp.ModifiedArgs["description"].(string)
+	if strings.HasPrefix(desc, "rtk") {
+		t.Fatalf("description must not be rtk-stamped, got %#v", resp.ModifiedArgs)
+	}
+}
+
+func TestRunRtkHookCopilotPostQuiet(t *testing.T) {
+	payload := `{
+		"toolName":"bash",
+		"toolArgs":"{\"command\":\"rtk git log --oneline -2\",\"description\":\"rtk · log\"}",
+		"toolResult":{"resultType":"success","textResultForLlm":"abc\ndef"}
+	}`
+	oldIn, oldOut, oldErr := os.Stdin, os.Stdout, os.Stderr
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdin, os.Stdout, os.Stderr = rIn, wOut, wErr
+	defer func() { os.Stdin, os.Stdout, os.Stderr = oldIn, oldOut, oldErr }()
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+	code := RunRtkHookCopilot()
+	_ = wOut.Close()
+	_ = wErr.Close()
+	var outBuf, errBuf bytes.Buffer
+	_, _ = io.Copy(&outBuf, rOut)
+	_, _ = io.Copy(&errBuf, rErr)
+	_ = rIn.Close()
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if strings.TrimSpace(outBuf.String()) != "" {
+		t.Fatalf("postToolUse must not emit stdout, got %q", outBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "rtk git log") {
+		t.Fatalf("stderr missing rtk trace: %q", errBuf.String())
+	}
+}
+
+func TestRunRtkHookCopilotPostSkipsElided(t *testing.T) {
+	payload := `{
+		"toolName":"bash",
+		"toolArgs":"{\"command\":\"rtk git status\"}",
+		"toolResult":{"resultType":"success","textResultForLlm":"[copilot:elided textResultForLlm (100 bytes)]"}
+	}`
+	oldIn, oldOut, oldErr := os.Stdin, os.Stdout, os.Stderr
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdin, os.Stdout, os.Stderr = rIn, wOut, wErr
+	defer func() { os.Stdin, os.Stdout, os.Stderr = oldIn, oldOut, oldErr }()
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+	code := RunRtkHookCopilot()
+	_ = wOut.Close()
+	_ = wErr.Close()
+	var outBuf, errBuf bytes.Buffer
+	_, _ = io.Copy(&outBuf, rOut)
+	_, _ = io.Copy(&errBuf, rErr)
+	_ = rIn.Close()
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if strings.TrimSpace(outBuf.String()) != "" {
+		t.Fatalf("postToolUse must not emit stdout, got %q", outBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "rtk git status") {
+		t.Fatalf("stderr missing rtk trace: %q", errBuf.String())
+	}
+}
+
+func TestRunRtkHookCopilotDualFireAlreadyRtk(t *testing.T) {
+	payload := `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rtk git status"}}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+	code := RunRtkHookCopilot()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	out := strings.TrimSpace(buf.String())
+	if !strings.Contains(out, `"permissionDecision":"allow"`) && !strings.Contains(out, `"permissionDecision": "allow"`) {
+		t.Fatalf("dual-fire already-rtk must allow, got %q", out)
+	}
+	if strings.Contains(out, "rtk rtk ") {
+		t.Fatalf("dual-fire must not double-prefix: %q", out)
+	}
 }
