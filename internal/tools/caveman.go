@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -455,6 +456,7 @@ var caveman = &core.ToolManifest{
 		"copilot": func(opts core.RunOpts) (bool, error) {
 			if !opts.Upgrade && copilotCavemanInstalled() {
 				WriteOwner("copilot", "caveman")
+				agents.SyncCopilotIdeInstructions()
 				return true, nil
 			}
 			bin, args := resolveSkillsBin(cavemanSkillsAddArgs("copilot"))
@@ -463,6 +465,7 @@ var caveman = &core.ToolManifest{
 			if opts.DryRun || isTest() {
 				return ran, err
 			}
+			agents.SyncCopilotIdeInstructions()
 			relocateCavemanSkills(util.CopilotPathsResolved().SkillsDir)
 			stampCavemanVersion()
 			return copilotCavemanInstalled(), err

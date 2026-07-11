@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -450,11 +451,13 @@ var ponytail = &core.ToolManifest{
 		"copilot": func(opts core.RunOpts) (bool, error) {
 			if !opts.Upgrade && copilotPonytailInstalled() {
 				WriteOwner("copilot", "ponytail")
+				agents.SyncCopilotIdeInstructions()
 				return true, nil
 			}
 			bin, args := resolveSkillsBin(ponytailSkillsAddArgs("copilot"))
 			_ = util.Run(bin, args, util.RunOptions{Capture: true})
 			WriteOwner("copilot", "ponytail")
+			agents.SyncCopilotIdeInstructions()
 			return copilotPonytailInstalled(), nil
 		},
 	},

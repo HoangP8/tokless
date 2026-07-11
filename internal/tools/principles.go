@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -48,7 +49,13 @@ var principles = &core.ToolManifest{
 		"opencode":    principlesWireFor("opencode"),
 		"codex":       principlesWireFor("codex"),
 		"antigravity": principlesWireFor("antigravity"),
-		"copilot":     principlesWireFor("copilot"),
+		"copilot": func(opts core.RunOpts) (bool, error) {
+			ok, err := principlesWireFor("copilot")(opts)
+			if ok {
+				agents.SyncCopilotIdeInstructions()
+			}
+			return ok, err
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      principlesUnwireFor("claude"),

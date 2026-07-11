@@ -44,7 +44,7 @@ func RunSelfUpdate() int {
 }
 
 func MaybeSelfUpdate(opts InitOptions) {
-	if opts.DryRun {
+	if opts.DryRun || strings.HasSuffix(util.ToklessVersion(), "-dev") {
 		return
 	}
 	selfUpdateRule()
