@@ -70,6 +70,7 @@ func InstallCopilotIdeContextModeHook() {
 		hooks.Set(ev, []any{h})
 	}
 	root := util.NewOrderedMap()
+	root.Set("version", 1)
 	root.Set("hooks", hooks)
 	_ = util.WriteFile(copilotIdeHooksFile("context-mode.json"), util.StringifyJSON(root))
 }
@@ -133,16 +134,12 @@ func InstallCopilotIdeRtkHook() {
 	hooks.Set("PreToolUse", []any{entry})
 	hooks.Set("PostToolUse", []any{entry})
 	root := util.NewOrderedMap()
+	root.Set("version", 1)
 	root.Set("hooks", hooks)
 	_ = util.WriteFile(copilotIdeHooksFile("tokless-rtk.json"), util.StringifyJSON(root))
 }
 
 func RemoveCopilotIdeRtkHook() { _ = os.Remove(copilotIdeHooksFile("tokless-rtk.json")) }
-
-func HasCopilotIdeRtkHook() bool {
-	raw, ok := util.ReadFileSafe(copilotIdeHooksFile("tokless-rtk.json"))
-	return ok && strings.Contains(raw, "rtk-hook copilot")
-}
 
 func copilotPermissionsFile() string {
 	return filepath.Join(util.CopilotPathsResolved().Dir, "permissions-config.json")
@@ -260,6 +257,7 @@ func InstallCopilotIdeCodegraphIndexHook() {
 	hooks := util.NewOrderedMap()
 	hooks.Set("PostToolUse", []any{entry})
 	root := util.NewOrderedMap()
+	root.Set("version", 1)
 	root.Set("hooks", hooks)
 	_ = util.WriteFile(copilotIdeHooksFile("tokless-codegraph-index.json"), util.StringifyJSON(root))
 }
@@ -441,26 +439,6 @@ func CopilotIdeMcpHas(toolID string) bool {
 		}
 	}
 	return false
-}
-
-// WriteCopilotIdeInstructions writes the TOKLESS body to .github/copilot-instructions.md.
-func WriteCopilotIdeInstructions(owners []string) {
-	path := copilotIdeInstructionsFile()
-	_ = util.EnsureDir(filepath.Dir(path))
-	body := util.ToklessAgentBody(owners)
-	_ = util.WriteFile(path, body+"\n")
-}
-
-func RemoveCopilotIdeInstructions() {
-	path := copilotIdeInstructionsFile()
-	raw, ok := util.ReadFileSafe(path)
-	if !ok {
-		return
-	}
-	if strings.TrimSpace(raw) == "" || !strings.Contains(raw, "## Principles") {
-		return
-	}
-	_ = os.Remove(path)
 }
 
 // SyncCopilotIdeInstructions copies the CLI merged instruction body to the IDE file.

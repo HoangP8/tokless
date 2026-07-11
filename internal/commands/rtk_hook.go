@@ -541,27 +541,6 @@ func copilotRtkPost(req map[string]json.RawMessage, snake bool) int {
 	return 0
 }
 
-func copilotToolResultText(req map[string]json.RawMessage, snake bool) string {
-	key := "toolResult"
-	if snake {
-		key = "tool_result"
-	}
-	raw, ok := req[key]
-	if !ok || len(raw) == 0 {
-		return ""
-	}
-	var m map[string]any
-	if json.Unmarshal(raw, &m) != nil {
-		return ""
-	}
-	for _, k := range []string{"textResultForLlm", "text_result_for_llm"} {
-		if s, ok := m[k].(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
 func copilotShellTool(name string) bool {
 	switch strings.ToLower(name) {
 	case "bash", "powershell", "shell", "runterminalcommand":
