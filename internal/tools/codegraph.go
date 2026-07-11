@@ -176,9 +176,10 @@ func codegraphWire(agent string) core.AgentFn {
 				agents.InstallAntigravityCodegraphIndexHook()
 				agents.CleanupDeadIdeHooks()
 			}
-			if agent == "copilot" {
-				agents.InstallCopilotCodegraphIndexHook()
-			}
+		if agent == "copilot" {
+			agents.InstallCopilotCodegraphIndexHook()
+			agents.InstallCopilotIdeCodegraphIndexHook()
+		}
 			return codegraphVerify(agent), nil
 		}
 		if opts.DryRun {
@@ -196,6 +197,9 @@ func codegraphWire(agent string) core.AgentFn {
 		}
 		if agent == "copilot" {
 			agents.InstallCopilotCodegraphIndexHook()
+			agents.InstallCopilotIdeCodegraphIndexHook()
+			agents.ConfigureCopilotIdeMcp("codegraph")
+			agents.SyncCopilotIdeInstructions()
 		}
 		return codegraphVerify(agent), nil
 	}
@@ -276,6 +280,8 @@ var codegraph = &core.ToolManifest{
 		"copilot": func(core.RunOpts) (bool, error) {
 			agents.RemoveCopilotMcp("codegraph")
 			agents.RemoveCopilotCodegraphIndexHook()
+			agents.RemoveCopilotIdeMcp("codegraph")
+			agents.RemoveCopilotIdeCodegraphIndexHook()
 			unwireAutoIndex("copilot")
 			RemoveOwner("copilot", "codegraph")
 			return true, nil

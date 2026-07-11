@@ -434,7 +434,7 @@ func rtkWireCodex() core.AgentFn {
 func rtkWireCopilot() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
-			util.L.Sub("[dry-run] would install Copilot preToolUse hook (~/.copilot/hooks/tokless-rtk.json)")
+			util.L.Sub("[dry-run] would install Copilot preToolUse hook (~/.copilot/hooks/tokless-rtk.json + .github/hooks/tokless-rtk.json)")
 			return true, nil
 		}
 		if os.Getenv("TOKLESS_TEST") == "1" {
@@ -442,6 +442,7 @@ func rtkWireCopilot() core.AgentFn {
 			return true, nil
 		}
 		agents.InstallCopilotRtkHook()
+		agents.InstallCopilotIdeRtkHook()
 		return agents.HasCopilotRtkHook(), nil
 	}
 }
@@ -536,6 +537,7 @@ var rtk = &core.ToolManifest{
 		},
 		"copilot": func(core.RunOpts) (bool, error) {
 			agents.RemoveCopilotRtkHook()
+			agents.RemoveCopilotIdeRtkHook()
 			RemoveOwner("copilot", "rtk")
 			return true, nil
 		},

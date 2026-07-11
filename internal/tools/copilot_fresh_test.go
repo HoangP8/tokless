@@ -113,6 +113,16 @@ func TestConfigureCopilotMcp_ContextMode(t *testing.T) {
 	if strings.Contains(raw, "run-mcp") {
 		t.Fatal("context-mode should NOT be autoindex wrapped")
 	}
+	if !strings.Contains(raw, "CONTEXT_MODE_PLATFORM") || !strings.Contains(raw, "copilot-cli") {
+		t.Fatalf("missing CONTEXT_MODE_PLATFORM=copilot-cli env: %s", raw)
+	}
+	if !strings.Contains(raw, "CONTEXT_MODE_COPILOT_PLUGIN") {
+		t.Fatalf("missing CONTEXT_MODE_COPILOT_PLUGIN env: %s", raw)
+	}
+	changed2, _ := agents.ConfigureCopilotMcp("context-mode")
+	if changed2 {
+		t.Fatal("second call should be no-op when env already set")
+	}
 }
 
 func TestCopilotMcpHas(t *testing.T) {
@@ -172,6 +182,12 @@ func TestCopilotRtkHook(t *testing.T) {
 	if !strings.Contains(raw, "PreToolUse") {
 		t.Fatal("missing PreToolUse event (VS Code)")
 	}
+	if !strings.Contains(raw, "postToolUse") {
+		t.Fatal("missing postToolUse event (CLI result stamp)")
+	}
+	if !strings.Contains(raw, "PostToolUse") {
+		t.Fatal("missing PostToolUse event (VS Code result stamp)")
+	}
 	if !agents.HasCopilotRtkHook() {
 		t.Fatal("should have after install")
 	}
@@ -212,17 +228,26 @@ func TestCopilotContextModeHook(t *testing.T) {
 	if !ok {
 		t.Fatal("hook file not written")
 	}
-	if !strings.Contains(raw, "context-mode hook copilot-cli pretooluse") {
-		t.Fatal("missing pretooluse hook")
+	for _, token := range []string{
+		"pretooluse", "posttooluse", "sessionstart",
+		"userpromptsubmit", "stop", "precompact",
+	} {
+		if !strings.Contains(raw, "context-mode hook copilot-cli "+token) {
+			t.Fatalf("missing %s hook in: %s", token, raw)
+		}
 	}
-	if !strings.Contains(raw, "context-mode hook copilot-cli posttooluse") {
-		t.Fatal("missing posttooluse hook")
+	for _, event := range []string{
+		"preToolUse", "postToolUse", "sessionStart",
+		"userPromptSubmitted", "agentStop", "preCompact",
+	} {
+		if !strings.Contains(raw, `"`+event+`"`) {
+			t.Fatalf("missing event key %s in: %s", event, raw)
+		}
 	}
-	if !strings.Contains(raw, "context-mode hook copilot-cli sessionstart") {
-		t.Fatal("missing sessionstart hook")
-	}
-	if !strings.Contains(raw, "context-mode hook copilot-cli precompact") {
-		t.Fatal("missing precompact hook")
+	if strings.Contains(raw, `"hooks": [`) || strings.Contains(raw, `"hooks":[`) {
+		if strings.Contains(raw, "timeoutSec") {
+			t.Fatalf("expected flat official shape, got nested: %s", raw)
+		}
 	}
 
 	if !agents.HasCopilotContextModeHook() {
@@ -330,5 +355,36 @@ func TestCopilotDoctorWireUnwire(t *testing.T) {
 	}
 	if agents.CopilotMcpHas("codegraph") {
 		t.Fatal("codegraph MCP not removed")
+	}
+}
+
+func TestEnsureCopilotRtkCommandApproval(t *testing.T) {
+	tmp := copilotTestHome(t)
+	perm := filepath.Join(tmp, ".copilot", "permissions-config.json")
+	_ = util.EnsureDir(filepath.Dir(perm))
+	_ = util.WriteFile(perm, `{
+  "locations": {
+    "/proj": {
+      "tool_approvals": [
+        {"kind": "mcp", "serverName": "codegraph", "toolName": null}
+      ]
+    }
+  }
+}`)
+	agents.EnsureCopilotRtkCommandApproval()
+	raw, ok := util.ReadFileSafe(perm)
+	if !ok {
+		t.Fatal("permissions missing after ensure")
+	}
+	if !strings.Contains(raw, `"kind": "commands"`) && !strings.Contains(raw, `"kind":"commands"`) {
+		t.Fatalf("expected commands approval, got: %s", raw)
+	}
+	if !strings.Contains(raw, `"rtk"`) {
+		t.Fatalf("expected rtk identifier, got: %s", raw)
+	}
+	agents.EnsureCopilotRtkCommandApproval()
+	raw2, _ := util.ReadFileSafe(perm)
+	if strings.Count(raw2, `"rtk"`) != strings.Count(raw, `"rtk"`) {
+		t.Fatalf("idempotent fail: before=%s after=%s", raw, raw2)
 	}
 }

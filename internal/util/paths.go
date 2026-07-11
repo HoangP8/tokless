@@ -38,12 +38,26 @@ func Home() string {
 func ToklessAbs() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "tokless"
+		return whichToklessOrBare()
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
+		exe = resolved
 	}
 	if strings.ContainsAny(exe, " \t") {
-		return "tokless"
+		return whichToklessOrBare()
+	}
+	base := filepath.Base(exe)
+	if strings.HasSuffix(base, ".test") || strings.Contains(exe, string(filepath.Separator)+"go-build") {
+		return whichToklessOrBare()
 	}
 	return exe
+}
+
+func whichToklessOrBare() string {
+	if w := Which("tokless"); w != "" {
+		return w
+	}
+	return "tokless"
 }
 
 // opencodeConfigDir mirrors opencode's own resolution (xdg-basedir under Bun):
