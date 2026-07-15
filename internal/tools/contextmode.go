@@ -623,7 +623,7 @@ var contextMode = &core.ToolManifest{
 		"codex":       func() *bool { return core.BoolPtr(ctxVerifyCodex()) },
 		"antigravity": func() *bool { return core.BoolPtr(ctxVerifyAntigravity()) },
 		"copilot": func() *bool {
-			return core.BoolPtr(agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook())
+			return core.BoolPtr(agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook())
 		},
 	},
 }

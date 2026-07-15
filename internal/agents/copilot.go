@@ -13,14 +13,25 @@ func copilotHooksFile(name string) string {
 	return filepath.Join(util.CopilotPathsResolved().HooksDir, name)
 }
 
+var ideProjectRoot string
+
+func SetIdeProjectRoot(p string) { ideProjectRoot = p }
+
+func ideRoot() string {
+	if ideProjectRoot != "" {
+		return ideProjectRoot
+	}
+	return "."
+}
+
 // IDE (VS Code) paths — project-scoped, written relative to cwd.
 
-func copilotIdeHooksDir() string  { return filepath.Join(".", ".github", "hooks") }
+func copilotIdeHooksDir() string  { return filepath.Join(ideRoot(), ".github", "hooks") }
 func copilotIdeHooksFile(name string) string {
 	return filepath.Join(copilotIdeHooksDir(), name)
 }
-func copilotIdeMcpFile() string          { return filepath.Join(".", ".vscode", "mcp.json") }
-func copilotIdeInstructionsFile() string { return filepath.Join(".", ".github", "copilot-instructions.md") }
+func copilotIdeMcpFile() string          { return filepath.Join(ideRoot(), ".vscode", "mcp.json") }
+func copilotIdeInstructionsFile() string { return filepath.Join(ideRoot(), ".github", "copilot-instructions.md") }
 
 // InstallCopilotContextModeHook writes the context-mode hook file.
 func InstallCopilotContextModeHook() {
@@ -140,6 +151,11 @@ func InstallCopilotIdeRtkHook() {
 }
 
 func RemoveCopilotIdeRtkHook() { _ = os.Remove(copilotIdeHooksFile("tokless-rtk.json")) }
+
+func HasCopilotIdeRtkHook() bool {
+	raw, ok := util.ReadFileSafe(copilotIdeHooksFile("tokless-rtk.json"))
+	return ok && strings.Contains(raw, "rtk-hook copilot")
+}
 
 func copilotPermissionsFile() string {
 	return filepath.Join(util.CopilotPathsResolved().Dir, "permissions-config.json")
@@ -264,6 +280,11 @@ func InstallCopilotIdeCodegraphIndexHook() {
 
 func RemoveCopilotIdeCodegraphIndexHook() {
 	_ = os.Remove(copilotIdeHooksFile("tokless-codegraph-index.json"))
+}
+
+func HasCopilotIdeCodegraphIndexHook() bool {
+	raw, ok := util.ReadFileSafe(copilotIdeHooksFile("tokless-codegraph-index.json"))
+	return ok && strings.Contains(raw, "copilot-hook codegraph-index")
 }
 
 func HasCopilotCodegraphIndexHook() bool {

@@ -135,7 +135,8 @@ func codegraphVerify(agent string) bool {
 		agents.CleanupDeadIdeHooks()
 		return agents.AntigravityMcpHas("codegraph") && agents.HasAntigravityCodegraphIndexHook()
 	case "copilot":
-		return agents.CopilotMcpHas("codegraph") && agents.HasCopilotCodegraphIndexHook()
+		return agents.CopilotMcpHas("codegraph") && agents.HasCopilotCodegraphIndexHook() &&
+			agents.CopilotIdeMcpHas("codegraph") && agents.HasCopilotIdeCodegraphIndexHook()
 	}
 	return false
 }
@@ -179,6 +180,7 @@ func codegraphWire(agent string) core.AgentFn {
 		if agent == "copilot" {
 			agents.InstallCopilotCodegraphIndexHook()
 			agents.InstallCopilotIdeCodegraphIndexHook()
+			agents.ConfigureCopilotIdeMcp("codegraph")
 		}
 			return codegraphVerify(agent), nil
 		}

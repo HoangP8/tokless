@@ -439,11 +439,12 @@ func rtkWireCopilot() core.AgentFn {
 		}
 		if os.Getenv("TOKLESS_TEST") == "1" {
 			rtkTestShim("copilot")
-			return true, nil
+			agents.InstallCopilotIdeRtkHook()
+			return agents.HasCopilotRtkHook() && agents.HasCopilotIdeRtkHook(), nil
 		}
 		agents.InstallCopilotRtkHook()
 		agents.InstallCopilotIdeRtkHook()
-		return agents.HasCopilotRtkHook(), nil
+		return agents.HasCopilotRtkHook() && agents.HasCopilotIdeRtkHook(), nil
 	}
 }
 
@@ -556,7 +557,7 @@ var rtk = &core.ToolManifest{
 			return core.BoolPtr(agents.HasAntigravityRtkHook())
 		},
 		"copilot": func() *bool {
-			return core.BoolPtr(agents.HasCopilotRtkHook())
+			return core.BoolPtr(agents.HasCopilotRtkHook() && agents.HasCopilotIdeRtkHook())
 		},
 	},
 }

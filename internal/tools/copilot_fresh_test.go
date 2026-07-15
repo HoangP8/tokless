@@ -14,6 +14,7 @@ func copilotTestHome(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
+	agents.SetIdeProjectRoot(tmp)
 	return tmp
 }
 
