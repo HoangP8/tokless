@@ -144,24 +144,53 @@ Examples:
 
 ## Context Tools (context-mode)
 
-Keep raw bytes out. Use ctx tools to derive answers from large data in-sandbox, print only needed results, and re-query later.
+Sandbox-first tools. Derive answers. Keep raw bytes out, print only needed results.
+
+```
+Use ctx?
+├─ YES → source >~200 lines/KB, multi-source, or worth re-querying → prioritize ctx tools
+└─ NO  → small file, single section, or verbatim-read for editing → Read directly
+```
 
 | Tool | Role | Replaces |
 |------|------|----------|
-| `ctx_batch_execute` | Run N commands parallel, auto-index, return matched sections | sequential bash + manual grep of output |
-| `ctx_execute` | Run code over data, print only derived answer | reading raw output into context |
-| `ctx_execute_file` | Analyze big file in-sandbox via `FILE_CONTENT` | Read whole file to eyeball |
-| `ctx_fetch_and_index` | Fetch web pages, index for re-query | WebFetch + re-read each time |
-| `ctx_index` | Chunk markdown/docs into FTS5 for re-query | manual grep over pasted content |
-| `ctx_search` | Query indexed content + session memory | re-asking user, re-deriving |
-| `ctx_memory` | Durable project facts, every session starts with them | rediscovering constraints each session |
-
-Use ctx when: source >~200 lines/KB, multi-source, or worth re-querying. Read directly for small files, single-section, or content you must consume verbatim to edit.
+| `ctx_execute` | Run code in sandbox. Only stdout enters context. | Bash for analysis tasks |
+| `ctx_execute_file` | Process file in sandbox. Raw bytes never leave. | Read on large files (>200 lines) |
+| `ctx_batch_execute` | Run N commands + auto-index output. Search in same call. Concurrency 1-8. | Multiple Bash + grep |
+| `ctx_index` | Chunk markdown/text into FTS5. Queryable via `ctx_search`. | Manual grep over pasted content |
+| `ctx_search` | Multi-strategy search across indexed content + session memory. Typo correction. | Re-asking user, re-deriving |
+| `ctx_fetch_and_index` | Fetch URL → markdown → index. Cache 24h (override `ttl`). Batch with `requests`+`concurrency`. | WebFetch + re-read |
 
 Examples:
-- `ctx_batch_execute(commands:[git diff, git status, tests], queries:["failures","changed"])` — replaces 3 bash calls + grep.
-- `ctx_execute_file(path:"large.log", code:"count errors; print last 5")` — replaces reading a 5000-line log.
-- `ctx_fetch_and_index(requests:[docs...]); ctx_search(["API example"], source:"docs")` — replaces WebFetch + re-read.
+
+```
+ctx_execute(language:"shell", code:"grep -rn 'TODO' src/ | head -20")
+```
+
+```
+ctx_execute_file(path:"app.log", language:"javascript", code:`
+  const lines = FILE_CONTENT.split('\\n');
+  const errs = lines.filter(l => /ERROR|FATAL/.test(l));
+  console.log(errs.length + ' errors');
+  console.log(errs.slice(-5).join('\\n'));
+`)
+```
+
+```
+ctx_batch_execute(commands:[
+  {label:"diff", command:"git diff HEAD~1"},
+  {label:"status", command:"git status"},
+  {label:"tests", command:"npm test 2>&1 | tail -20"},
+], queries:["failures","errors"])
+```
+
+```
+ctx_fetch_and_index(requests:[
+  {url:"https://docs.example.com/api", source:"api-docs"},
+  {url:"https://docs.example.com/guide", source:"guide"},
+], concurrency:4)
+ctx_search(queries:["auth endpoint","rate limits"], source:"api-docs")
+```
 
 Shell stays for git, mkdir, rm, mv, installs, tests. Write/Edit for file changes; ctx subprocess writes aren't host edits.
 
