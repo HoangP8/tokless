@@ -406,6 +406,20 @@ func stripRtkRefFromMd(path string) {
 	_ = util.WriteFile(path, result+"\n")
 }
 
+func rtkWireDroid() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install droid PreToolUse hook (~/.factory/hooks.json) routing Execute commands through rtk")
+			return true, nil
+		}
+		agents.InstallDroidRtkHook()
+		if wd, err := os.Getwd(); err == nil {
+			_ = os.Remove(filepath.Join(wd, ".agents", "rules", "droid-rtk-rules.md"))
+		}
+		return true, nil
+	}
+}
+
 func rtkWireAntigravity() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -503,6 +517,7 @@ var rtk = &core.ToolManifest{
 		"codex":       rtkWireCodex(),
 		"antigravity": rtkWireAntigravity(),
 		"copilot":     rtkWireCopilot(),
+		"droid":       rtkWireDroid(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -542,6 +557,11 @@ var rtk = &core.ToolManifest{
 			RemoveOwner("copilot", "rtk")
 			return true, nil
 		},
+		"droid": func(core.RunOpts) (bool, error) {
+			agents.RemoveDroidRtkHook()
+			RemoveOwner("droid", "rtk")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -558,6 +578,9 @@ var rtk = &core.ToolManifest{
 		},
 		"copilot": func() *bool {
 			return core.BoolPtr(agents.HasCopilotRtkHook() && agents.HasCopilotIdeRtkHook())
+		},
+		"droid": func() *bool {
+			return core.BoolPtr(agents.HasDroidRtkHook())
 		},
 	},
 }
