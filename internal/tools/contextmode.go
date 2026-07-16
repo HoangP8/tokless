@@ -109,6 +109,7 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	agents.ConfigureClaudeMcp("context-mode")
+	agents.AllowClaudeMcpToolProjectLocal("context-mode")
 	WriteOwner("claude", "context-mode")
 	util.L.Sub(util.C.Dim("tip: to enable slash commands, type inside Claude Code: /plugin marketplace add mksglu/context-mode && /plugin install context-mode@context-mode"))
 	return true, nil
@@ -425,6 +426,30 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
+// --- Droid ---
+
+func ctxWireDroid(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would: add context-mode MCP to ~/.factory/mcp.json + AGENTS.md")
+		return true, nil
+	}
+	agents.ConfigureDroidMcp("context-mode")
+	agents.RemoveDroidCtxModePreToolUse()
+	WriteOwner("droid", "context-mode")
+	return ctxVerifyDroid(), nil
+}
+
+func ctxUnwireDroid(opts core.RunOpts) (bool, error) {
+	agents.RemoveDroidMcp("context-mode")
+	agents.RemoveDroidCtxModePreToolUse()
+	RemoveOwner("droid", "context-mode")
+	return true, nil
+}
+
+func ctxVerifyDroid() bool {
+	return agents.DroidMcpHas("context-mode") && !agents.HasDroidCtxModePreToolUse()
+}
+
 // --- Antigravity (MCP + GEMINI.md, no PreToolUse hook) ---
 
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
@@ -609,6 +634,7 @@ var contextMode = &core.ToolManifest{
 		"codex":       ctxWireCodex,
 		"antigravity": ctxWireAntigravity,
 		"copilot":     ctxWireCopilot,
+		"droid":       ctxWireDroid,
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ctxUnwireClaude,
@@ -616,6 +642,7 @@ var contextMode = &core.ToolManifest{
 		"codex":       ctxUnwireCodex,
 		"antigravity": ctxUnwireAntigravity,
 		"copilot":     ctxUnwireCopilot,
+		"droid":       ctxUnwireDroid,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
@@ -625,6 +652,7 @@ var contextMode = &core.ToolManifest{
 		"copilot": func() *bool {
 			return core.BoolPtr(agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook())
 		},
+		"droid": func() *bool { return core.BoolPtr(ctxVerifyDroid()) },
 	},
 }
 

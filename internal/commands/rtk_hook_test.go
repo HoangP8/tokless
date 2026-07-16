@@ -647,3 +647,180 @@ func TestRunRtkHookCopilotDualFireAlreadyRtk(t *testing.T) {
 		t.Fatalf("dual-fire must not double-prefix: %q", out)
 	}
 }
+
+func TestRunRtkHookDroid(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"tool_name":"Execute","tool_input":{"command":"git status"}}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+
+	code := RunRtkHookDroid()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	out := strings.TrimSpace(buf.String())
+	if out == "" {
+		t.Fatal("expected rewrite JSON, got empty")
+	}
+	var resp struct {
+		HookSpecificOutput struct {
+			HookEventName      string            `json:"hookEventName"`
+			PermissionDecision string            `json:"permissionDecision"`
+			UpdatedInput       map[string]string `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("bad JSON %q: %v", out, err)
+	}
+	if resp.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Errorf("permissionDecision=%q", resp.HookSpecificOutput.PermissionDecision)
+	}
+	if resp.HookSpecificOutput.HookEventName != "PreToolUse" {
+		t.Errorf("hookEventName=%q", resp.HookSpecificOutput.HookEventName)
+	}
+	cmd := resp.HookSpecificOutput.UpdatedInput["command"]
+	if cmd == "" {
+		t.Fatal("updatedInput[command] is empty — key not detected")
+	}
+	if !strings.HasPrefix(cmd, "rtk ") {
+		t.Errorf("rewrite missing rtk prefix: %q", cmd)
+	}
+	if !strings.Contains(cmd, "git") {
+		t.Errorf("rewrite missing git: %q", cmd)
+	}
+	t.Logf("OK: command lowercase rewrite: %q", cmd)
+}
+
+func TestRunRtkHookDroidPascalCase(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"tool_name":"Execute","tool_input":{"CommandLine":"git log --oneline -5"}}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+
+	code := RunRtkHookDroid()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	out := strings.TrimSpace(buf.String())
+	var resp struct {
+		HookSpecificOutput struct {
+			PermissionDecision string            `json:"permissionDecision"`
+			UpdatedInput       map[string]string `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("bad JSON %q: %v", out, err)
+	}
+	cmd := resp.HookSpecificOutput.UpdatedInput["CommandLine"]
+	if cmd == "" {
+		t.Fatal("updatedInput[CommandLine] is empty — key not detected")
+	}
+	if !strings.HasPrefix(cmd, "rtk ") {
+		t.Errorf("rewrite missing rtk prefix: %q", cmd)
+	}
+	t.Logf("OK PascalCase rewrite: %q", cmd)
+}
+
+func TestRunRtkHookDroidNonExecuteNoOp(t *testing.T) {
+	payload := `{"tool_name":"Edit","tool_input":{"file_path":"/tmp/x.go","content":"foo"}}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+
+	code := RunRtkHookDroid()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Errorf("non-Execute must produce empty output, got %q", buf.String())
+	}
+}
+
+func TestRunRtkHookDroidUnsupportedPassthrough(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"tool_name":"Execute","tool_input":{"command":"echo hello"}}`
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+
+	go func() {
+		_, _ = io.WriteString(wIn, payload)
+		_ = wIn.Close()
+	}()
+
+	code := RunRtkHookDroid()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	var resp struct {
+		HookSpecificOutput struct {
+			PermissionDecision string            `json:"permissionDecision"`
+			UpdatedInput       map[string]string `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &resp); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	cmd := resp.HookSpecificOutput.UpdatedInput["command"]
+	if strings.Contains(cmd, "rtk ") {
+		t.Errorf("unsupported command must not be rewritten, got %q", cmd)
+	}
+	if resp.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Errorf("must allow unsupported command, got %q", resp.HookSpecificOutput.PermissionDecision)
+	}
+	t.Logf("OK passthrough: %q", cmd)
+}

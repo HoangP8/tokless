@@ -470,6 +470,14 @@ var caveman = &core.ToolManifest{
 			stampCavemanVersion()
 			return copilotCavemanInstalled(), err
 		},
+		"droid": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would write caveman instructions to ~/.factory/AGENTS.md")
+				return true, nil
+			}
+			WriteOwner("droid", "caveman")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -482,6 +490,7 @@ var caveman = &core.ToolManifest{
 		"codex":       func() *bool { return core.BoolPtr(codexCavemanInstalled()) },
 		"antigravity": func() *bool { return core.BoolPtr(antigravityCavemanInstalled()) },
 		"copilot":     func() *bool { return core.BoolPtr(copilotCavemanInstalled()) },
+		"droid":       func() *bool { return core.BoolPtr(HasOwner("droid", "caveman")) },
 	},
 
 	UnwireFor: map[string]core.AgentFn{
@@ -543,6 +552,10 @@ var caveman = &core.ToolManifest{
 				removeCavemanSkillCopies(util.CopilotPathsResolved().SkillsDir)
 			}
 			return ran, err
+		},
+		"droid": func(core.RunOpts) (bool, error) {
+			RemoveOwner("droid", "caveman")
+			return true, nil
 		},
 	},
 }

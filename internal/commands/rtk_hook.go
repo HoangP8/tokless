@@ -382,6 +382,68 @@ func RunRtkHookCodex() int {
 	return 0
 }
 
+// RunRtkHookDroid handles transparent command rewriting for Factory Droid.
+func RunRtkHookDroid() int {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(input) == 0 {
+		return 0
+	}
+
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(input, &req); err != nil {
+		return 0
+	}
+	var toolName string
+	if v, ok := req["tool_name"]; ok {
+		_ = json.Unmarshal(v, &toolName)
+	}
+	if toolName != "Execute" {
+		return 0
+	}
+
+	var toolInput map[string]any
+	if ti, ok := req["tool_input"]; ok {
+		_ = json.Unmarshal(ti, &toolInput)
+	}
+	cmdKey := ""
+	var cmdLine string
+	if c, ok := toolInput["command"].(string); ok && c != "" {
+		cmdKey = "command"
+		cmdLine = c
+	} else if c, ok := toolInput["CommandLine"].(string); ok && c != "" {
+		cmdKey = "CommandLine"
+		cmdLine = c
+	}
+	if cmdKey == "" {
+		return 0
+	}
+
+	updated := map[string]string{cmdKey: cmdLine}
+	if newCmd, changed := rtkRewrite(cmdLine); changed {
+		updated[cmdKey] = newCmd
+	}
+
+	type hookOut struct {
+		HookEventName      string            `json:"hookEventName"`
+		PermissionDecision string            `json:"permissionDecision"`
+		UpdatedInput       map[string]string `json:"updatedInput"`
+	}
+	resp := struct {
+		HookSpecificOutput hookOut `json:"hookSpecificOutput"`
+	}{
+		HookSpecificOutput: hookOut{
+			HookEventName:      "PreToolUse",
+			PermissionDecision: "allow",
+			UpdatedInput:       updated,
+		},
+	}
+
+	if out, err := json.Marshal(resp); err == nil {
+		fmt.Println(string(out))
+	}
+	return 0
+}
+
 // RunRtkHookCopilot rewrites bash/shell via `rtk rewrite` only. 
 var copilotRtkTracePath = filepath.Join(util.CopilotPathsResolved().Dir, "tokless-rtk.log")
 

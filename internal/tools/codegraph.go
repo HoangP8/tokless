@@ -87,6 +87,8 @@ func codegraphConfigureMcp(agent string) bool {
 		agents.ConfigureAntigravityMcp("codegraph")
 	case "copilot":
 		agents.ConfigureCopilotMcp("codegraph")
+	case "droid":
+		agents.ConfigureDroidMcp("codegraph")
 	}
 	return true
 }
@@ -137,6 +139,8 @@ func codegraphVerify(agent string) bool {
 	case "copilot":
 		return agents.CopilotMcpHas("codegraph") && agents.HasCopilotCodegraphIndexHook() &&
 			agents.CopilotIdeMcpHas("codegraph") && agents.HasCopilotIdeCodegraphIndexHook()
+	case "droid":
+		return agents.DroidMcpHas("codegraph") && agents.HasDroidCodegraphIndexHook()
 	}
 	return false
 }
@@ -182,6 +186,9 @@ func codegraphWire(agent string) core.AgentFn {
 			agents.InstallCopilotIdeCodegraphIndexHook()
 			agents.ConfigureCopilotIdeMcp("codegraph")
 		}
+		if agent == "droid" {
+			agents.InstallDroidCodegraphIndexHook()
+		}
 			return codegraphVerify(agent), nil
 		}
 		if opts.DryRun {
@@ -202,6 +209,9 @@ func codegraphWire(agent string) core.AgentFn {
 			agents.InstallCopilotIdeCodegraphIndexHook()
 			agents.ConfigureCopilotIdeMcp("codegraph")
 			agents.SyncCopilotIdeInstructions()
+		}
+		if agent == "droid" {
+			agents.InstallDroidCodegraphIndexHook()
 		}
 		return codegraphVerify(agent), nil
 	}
@@ -224,6 +234,7 @@ func unwireAutoIndex(agent string) {
 	case "antigravity":
 		unwireGeminiAutoIndex()
 	case "copilot":
+	case "droid":
 	}
 }
 
@@ -243,6 +254,7 @@ var codegraph = &core.ToolManifest{
 		"codex":       codegraphWire("codex"),
 		"antigravity": codegraphWire("antigravity"),
 		"copilot":     codegraphWire("copilot"),
+		"droid":       codegraphWire("droid"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -288,6 +300,12 @@ var codegraph = &core.ToolManifest{
 			RemoveOwner("copilot", "codegraph")
 			return true, nil
 		},
+		"droid": func(core.RunOpts) (bool, error) {
+			agents.RemoveDroidMcp("codegraph")
+			agents.RemoveDroidCodegraphIndexHook()
+			RemoveOwner("droid", "codegraph")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
@@ -295,5 +313,6 @@ var codegraph = &core.ToolManifest{
 		"codex":       func() *bool { return core.BoolPtr(codegraphVerify("codex")) },
 		"antigravity": func() *bool { return core.BoolPtr(codegraphVerify("antigravity")) },
 		"copilot":     func() *bool { return core.BoolPtr(codegraphVerify("copilot")) },
+		"droid":       func() *bool { return core.BoolPtr(codegraphVerify("droid")) },
 	},
 }

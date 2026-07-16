@@ -22,6 +22,8 @@ func instructionPath(agent string) string {
 		return util.AntigravityPathsResolved().Instructions
 	case "copilot":
 		return util.CopilotPathsResolved().Instructions
+	case "droid":
+		return filepath.Join(util.Home(), ".factory", "AGENTS.md")
 	}
 	return ""
 }

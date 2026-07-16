@@ -460,6 +460,14 @@ var ponytail = &core.ToolManifest{
 			agents.SyncCopilotIdeInstructions()
 			return copilotPonytailInstalled(), nil
 		},
+		"droid": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would write ponytail instructions to ~/.factory/AGENTS.md")
+				return true, nil
+			}
+			WriteOwner("droid", "ponytail")
+			return true, nil
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireClaude,
@@ -470,6 +478,10 @@ var ponytail = &core.ToolManifest{
 			_ = os.RemoveAll(filepath.Join(util.CopilotPathsResolved().SkillsDir, "ponytail"))
 			removePonytailModeState()
 			RemoveOwner("copilot", "ponytail")
+			return true, nil
+		},
+		"droid": func(core.RunOpts) (bool, error) {
+			RemoveOwner("droid", "ponytail")
 			return true, nil
 		},
 	},
@@ -489,5 +501,6 @@ var ponytail = &core.ToolManifest{
 		"codex":       func() *bool { return core.BoolPtr(codexPonytailInstalled()) },
 		"antigravity": func() *bool { return core.BoolPtr(antigravityPonytailInstalled()) },
 		"copilot":     func() *bool { return core.BoolPtr(copilotPonytailInstalled()) },
+		"droid":       func() *bool { return core.BoolPtr(HasOwner("droid", "ponytail")) },
 	},
 }
