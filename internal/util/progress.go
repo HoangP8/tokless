@@ -33,10 +33,11 @@ type Progress struct {
 	treeRoot   bool
 	rows       int
 	lastNonTTY string
+	lastWidth  int
 }
 
 func NewProgress(title string) *Progress {
-	return &Progress{title: title, tty: stdoutIsTTY() && vtReady, out: os.Stdout}
+	return &Progress{title: title, tty: stdoutIsTTY() && vtReady && !runningInsideClaudeCode(), out: os.Stdout}
 }
 
 // TreeStem is the vertical continuation prefix for nested installer rows.
@@ -82,7 +83,7 @@ func TreeFooter(ruleWidth int) {
 func NewSectionProgress(section string) *Progress {
 	return &Progress{
 		title:     section,
-		tty:       stdoutIsTTY() && vtReady,
+		tty:       stdoutIsTTY() && vtReady && !runningInsideClaudeCode(),
 		out:       os.Stdout,
 		treeStyle: true,
 	}
@@ -185,6 +186,33 @@ func (p *Progress) Step(phase string, frac float64) {
 	p.mu.Unlock()
 }
 
+// VisibleLen counts the display width of s, skipping ANSI escape sequences.
+func VisibleLen(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			for i++; i < len(s); i++ {
+				c := s[i]
+				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					break
+				}
+			}
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+
+func EraseStyledLine(s string) string {
+	_ = s
+	if !stdoutIsTTY() || runningInsideClaudeCode() {
+		return ""
+	}
+	return "\r\x1b[2K"
+}
+
 func padEnd(s string, n int) string {
 	if len(s) >= n {
 		return s
@@ -261,7 +289,9 @@ func (p *Progress) Done(summary string) {
 	p.mu.Unlock()
 	if p.treeStyle {
 		if p.tty && title != "" {
-			fmt.Fprintf(p.out, "\x1b[%dA\r\x1b[2K%s%s\x1b[%dB\r", rows+1, C.Dim(treeCornerGlyph(p.treeRoot)), C.Bold(title), rows+1)
+			titleLine := C.Dim(treeCornerGlyph(p.treeRoot)) + C.Bold(title)
+			up := rows + 1
+			fmt.Fprintf(p.out, "\x1b[%dA\r\x1b[2K%s\x1b[%dB\r", up, titleLine, up)
 		}
 		TreeClose()
 		return
@@ -282,11 +312,18 @@ func (p *Progress) repaint() {
 	}
 	line := fmt.Sprintf("%s%s %s %s%s%s", p.indent(), C.Cyan(frames[p.frame]), padEnd(p.current, 16),
 		C.Gray(fmt.Sprintf("[%s] %3d%%", fracBar(p.frac), pct)), phase, elapsed(time.Since(p.start)))
-	fmt.Fprint(p.out, "\r\x1b[2K"+line)
+	curWidth := VisibleLen(line)
+	pad := 0
+	if p.lastWidth > curWidth {
+		pad = p.lastWidth - curWidth
+	}
+	p.lastWidth = curWidth
+	fmt.Fprint(p.out, "\r\x1b[2K"+line+strings.Repeat(" ", pad))
 }
 
 func (p *Progress) clearLine() {
 	if p.tty {
+		p.lastWidth = 0
 		fmt.Fprint(p.out, "\r\x1b[2K")
 	}
 }

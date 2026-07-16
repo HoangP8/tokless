@@ -46,15 +46,16 @@ func RunDoctor(offline bool) int {
 	}
 
 	if !offline && os.Getenv("TOKLESS_TEST") != "1" {
+		statusLine := "  " + util.C.Gray("checking for updates…")
 		if stdoutTTY() {
-			fmt.Print("  " + util.C.Gray("checking for updates…"))
+			fmt.Print(statusLine)
 		} else {
-			util.L.Raw("  " + util.C.Gray("checking for updates…"))
+			util.L.Raw(statusLine)
 		}
 		v := util.GatherVersions()
 		outdated := util.CountOutdated(v)
 		if stdoutTTY() {
-			fmt.Print("\r\x1b[2K")
+			fmt.Print(util.EraseStyledLine(statusLine))
 		} else {
 			util.L.Raw("")
 		}
@@ -146,4 +147,4 @@ func listToolVersions(tools []*core.ToolManifest, v map[string]util.VersionInfo,
 	}
 }
 
-func stdoutTTY() bool { return util.StdoutANSI() }
+func stdoutTTY() bool { return util.StdoutANSI() && !util.RunningInsideClaudeCode() }

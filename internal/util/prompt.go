@@ -58,7 +58,7 @@ func SelectOne(question string, options []SelectOption) string {
 			break
 		}
 	}
-	if !stdinIsTTY() || !stdoutIsTTY() {
+	if !interactiveTTY() {
 		return options[selected].Value
 	}
 	restore, ok := rawMode()
@@ -227,7 +227,7 @@ func selectOneLine(question string, options []SelectOption, selected int) string
 
 // MultiSelect renders an interactive checklist; non-TTY returns enabled defaults.
 func MultiSelect(question string, options []MultiSelectOption) []string {
-	if !stdinIsTTY() || !stdoutIsTTY() {
+	if !interactiveTTY() {
 		var out []string
 		for _, o := range options {
 			if !o.Disabled && o.Selected {
@@ -483,7 +483,7 @@ func parseLineSelection(line string, items []MultiSelectOption, numByIdx []int, 
 
 // Confirm prompts yes/no; non-TTY returns defaultYes.
 func Confirm(question string, defaultYes bool) bool {
-	if !stdinIsTTY() || !stdoutIsTTY() {
+	if !interactiveTTY() {
 		return defaultYes
 	}
 	hint := "[Y/n]"

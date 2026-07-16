@@ -14,6 +14,15 @@ func StdoutANSI() bool  { return stdoutIsTTY() && vtReady }
 
 var vtReady = enableVT()
 
+func runningInsideClaudeCode() bool {
+	return os.Getenv("CLAUDECODE") == "1" ||
+		os.Getenv("CLAUDE_CODE_CHILD_SESSION") == "1"
+}
+
+func RunningInsideClaudeCode() bool { return runningInsideClaudeCode() }
+
+func interactiveTTY() bool { return stdinIsTTY() && stdoutIsTTY() && !runningInsideClaudeCode() }
+
 // colorsEnabled gates all ANSI output.
 var colorsEnabled = stdoutIsTTY() && vtReady && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
 
@@ -41,7 +50,6 @@ type Colors struct {
 	Bold, Dim, Italic, Underline, Inverse         func(string) string
 	Red, Green, Yellow, Blue, Magenta, Cyan, Gray func(string) string
 	Orange                                        func(string) string
-	BgCyan, BgGreen                               func(string) string
 }
 
 var C = Colors{
@@ -49,7 +57,6 @@ var C = Colors{
 	Dim:       wrap(2, 22),
 	Italic:    wrap(3, 23),
 	Underline: wrap(4, 24),
-	Inverse:   wrap(7, 27),
 	Red:       wrap(31, 39),
 	Green:     wrap(32, 39),
 	Yellow:    wrap(33, 39),
@@ -58,8 +65,6 @@ var C = Colors{
 	Cyan:      wrap(36, 39),
 	Gray:      wrap(90, 39),
 	Orange:    wrapFg256(208),
-	BgCyan:    wrap(46, 49),
-	BgGreen:   wrap(42, 49),
 }
 
 // Symbols carries unicode glyphs with ascii fallbacks.
