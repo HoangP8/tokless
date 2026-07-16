@@ -15,6 +15,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	p := util.ClaudeCodePaths()
 	_ = util.EnsureDir(p.Dir)
 	AllowClaudeMcpTool(toolID)
+	AllowClaudeMcpToolProjectLocal(toolID)
 	raw, _ := util.ReadFileSafe(p.GlobalJSON)
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
@@ -32,7 +33,6 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	desired.Set("type", "stdio")
 	desired.Set("command", spawn.Command)
 	desired.Set("args", toAnySlice(spawn.Args))
-
 	if existing, ok := servers.Get(toolID); ok {
 		if claudeMcpEqual(existing, desired) {
 			return false, p.GlobalJSON
@@ -41,6 +41,70 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	servers.Set(toolID, desired)
 	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
 	return true, p.GlobalJSON
+}
+
+// AllowClaudeMcpToolProjectLocal adds MCP permissions to project-local .claude/settings.local.json.
+func AllowClaudeMcpToolProjectLocal(toolID string) {
+	var entries []string
+	entries = append(entries, "mcp__"+toolID+"__.*")
+	for _, name := range claudeMcpToolNames(toolID) {
+		entries = append(entries, "mcp__"+toolID+"__"+name)
+	}
+	allowClaudeProjectLocalEntries(entries...)
+}
+
+func claudeMcpToolNames(toolID string) []string {
+	switch toolID {
+	case "context-mode":
+		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
+	case "codegraph":
+		return []string{"codegraph_explore"}
+	}
+	return nil
+}
+
+func allowClaudeProjectLocalEntries(entries ...string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(cwd, ".claude")
+	_ = util.EnsureDir(dir)
+	settingsFile := filepath.Join(dir, "settings.local.json")
+
+	raw, _ := util.ReadFileSafe(settingsFile)
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+	perms := getOrCreateMap(cfg, "permissions")
+	var allow []any
+	seen := map[string]bool{}
+	if v, ok := perms.Get("allow"); ok {
+		if a, ok := v.([]any); ok {
+			allow = a
+			for _, x := range allow {
+				if s, ok := x.(string); ok {
+					seen[s] = true
+				}
+			}
+		}
+	}
+	changed := false
+	for _, entry := range entries {
+		if seen[entry] {
+			continue
+		}
+		allow = append(allow, entry)
+		seen[entry] = true
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	perms.Set("allow", allow)
+	cfg.Set("permissions", perms)
+	_ = util.WriteFile(settingsFile, util.StringifyJSON(cfg))
 }
 
 // AllowClaudeMcpTool auto-approves every tool of an MCP server.
@@ -111,6 +175,39 @@ func DisallowClaudeMcpTool(toolID string) {
 	}
 	pm.Set("allow", kept)
 	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
+}
+
+// AllowClaudeBashPatternProjectLocal adds a Bash(specifier) entry to project-local settings.
+func AllowClaudeBashPatternProjectLocal(pattern string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	dir := filepath.Join(cwd, ".claude")
+	_ = util.EnsureDir(dir)
+	settingsFile := filepath.Join(dir, "settings.local.json")
+
+	raw, _ := util.ReadFileSafe(settingsFile)
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+	perms := getOrCreateMap(cfg, "permissions")
+	var allow []any
+	if v, ok := perms.Get("allow"); ok {
+		if a, ok := v.([]any); ok {
+			allow = a
+		}
+	}
+	for _, x := range allow {
+		if s, ok := x.(string); ok && s == pattern {
+			return
+		}
+	}
+	allow = append(allow, pattern)
+	perms.Set("allow", allow)
+	cfg.Set("permissions", perms)
+	_ = util.WriteFile(settingsFile, util.StringifyJSON(cfg))
 }
 
 // AllowClaudeBashPattern adds a Bash(specifier) entry to permissions.allow.
