@@ -9,10 +9,16 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+func setTestHome(t *testing.T) {
+	t.Helper()
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+}
+
 // --- MCP management ---
 
 func TestConfigureDroidMcp_WritesEntry(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	changed, file := ConfigureDroidMcp("codegraph")
 	if !changed {
 		t.Fatal("expected changed=true on first configure")
@@ -28,7 +34,7 @@ func TestConfigureDroidMcp_WritesEntry(t *testing.T) {
 
 // Verify enabledTools array written for Droid v0.170.0+ Deferred Context Engine.
 func TestConfigureDroidMcp_WritesEnabledTools(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	_, file := ConfigureDroidMcp("codegraph")
 	raw, _ := os.ReadFile(file)
 	cfg := util.TryParseJsonc(string(raw))
@@ -50,7 +56,7 @@ func TestConfigureDroidMcp_WritesEnabledTools(t *testing.T) {
 }
 
 func TestConfigureDroidMcp_IdempotentWithEnabledTools(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	ConfigureDroidMcp("codegraph")
 	changed, _ := ConfigureDroidMcp("codegraph")
 	if changed {
@@ -59,7 +65,7 @@ func TestConfigureDroidMcp_IdempotentWithEnabledTools(t *testing.T) {
 }
 
 func TestConfigureDroidMcp_Idempotent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	ConfigureDroidMcp("codegraph")
 	changed, _ := ConfigureDroidMcp("codegraph")
 	if changed {
@@ -68,7 +74,7 @@ func TestConfigureDroidMcp_Idempotent(t *testing.T) {
 }
 
 func TestDroidMcpHas_True(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	ConfigureDroidMcp("codegraph")
 	if !DroidMcpHas("codegraph") {
 		t.Fatal("expected DroidMcpHas to be true after configure")
@@ -76,14 +82,14 @@ func TestDroidMcpHas_True(t *testing.T) {
 }
 
 func TestDroidMcpHas_False(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	if DroidMcpHas("codegraph") {
 		t.Fatal("expected DroidMcpHas to be false before configure")
 	}
 }
 
 func TestRemoveDroidMcp(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	ConfigureDroidMcp("codegraph")
 	ok := RemoveDroidMcp("codegraph")
 	if !ok {
@@ -95,7 +101,7 @@ func TestRemoveDroidMcp(t *testing.T) {
 }
 
 func TestRemoveDroidMcp_NotFound(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	if RemoveDroidMcp("codegraph") {
 		t.Fatal("expected false when nothing to remove")
 	}
@@ -104,7 +110,7 @@ func TestRemoveDroidMcp_NotFound(t *testing.T) {
 // --- RTK hook ---
 
 func TestInstallDroidRtkHook(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	if HasDroidRtkHook() {
 		t.Fatal("expected no hook before install")
 	}
@@ -115,7 +121,7 @@ func TestInstallDroidRtkHook(t *testing.T) {
 }
 
 func TestInstallDroidRtkHook_Idempotent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	InstallDroidRtkHook()
 	raw1, _ := os.ReadFile(droidHooksFile())
 	InstallDroidRtkHook()
@@ -126,7 +132,7 @@ func TestInstallDroidRtkHook_Idempotent(t *testing.T) {
 }
 
 func TestRemoveDroidRtkHook(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	InstallDroidRtkHook()
 	RemoveDroidRtkHook()
 	if HasDroidRtkHook() {
@@ -137,7 +143,7 @@ func TestRemoveDroidRtkHook(t *testing.T) {
 // --- CodeGraph hook ---
 
 func TestInstallDroidCodegraphIndexHook(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	if HasDroidCodegraphIndexHook() {
 		t.Fatal("expected no hook before install")
 	}
@@ -148,7 +154,7 @@ func TestInstallDroidCodegraphIndexHook(t *testing.T) {
 }
 
 func TestRemoveDroidCodegraphIndexHook(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	InstallDroidCodegraphIndexHook()
 	RemoveDroidCodegraphIndexHook()
 	if HasDroidCodegraphIndexHook() {
@@ -159,7 +165,7 @@ func TestRemoveDroidCodegraphIndexHook(t *testing.T) {
 // --- Context-Mode: no PreToolUse hook (MCP + AGENTS.md only) ---
 
 func TestDroidContextModeHook_RemovedFromStaleInstall(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	InstallDroidRtkHook()
 	RemoveDroidCtxModePreToolUse()
 	if HasDroidCtxModePreToolUse() {
@@ -170,7 +176,7 @@ func TestDroidContextModeHook_RemovedFromStaleInstall(t *testing.T) {
 // --- combined hooks ---
 
 func TestDroidHooks_MultipleIndependent(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	InstallDroidRtkHook()
 	InstallDroidCodegraphIndexHook()
 
@@ -197,7 +203,7 @@ func TestDroidHooks_MultipleIndependent(t *testing.T) {
 // --- flat hooks schema ---
 
 func TestDroidHooks_FlatSchema(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	InstallDroidRtkHook()
 	raw, _ := os.ReadFile(droidHooksFile())
 	s := string(raw)
@@ -212,6 +218,7 @@ func TestDroidHooks_FlatSchema(t *testing.T) {
 // --- agent manifest ---
 
 func TestDroidRegistered(t *testing.T) {
+	setTestHome(t)
 	a := core.GetAgent("droid")
 	if a == nil {
 		t.Fatal("droid agent not registered")
@@ -222,8 +229,8 @@ func TestDroidRegistered(t *testing.T) {
 	if a.CLIBin != "droid" {
 		t.Fatalf("expected CLIBin 'droid', got %q", a.CLIBin)
 	}
-	if a.ConfigDir() != filepath.Join(os.Getenv("HOME"), ".factory") {
-		t.Fatalf("unexpected config dir: %q", a.ConfigDir())
+	if a.ConfigDir() != filepath.Join(util.Home(), ".factory") {
+		t.Fatalf("expected %s, got %q", filepath.Join(util.Home(), ".factory"), a.ConfigDir())
 	}
 }
 
