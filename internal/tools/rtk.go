@@ -170,6 +170,35 @@ func rtkTestShim(agent string) {
 			`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":"~/.gemini/hooks/rtk-hook-gemini.sh"}]}]}}`+"\n")
 	case "copilot":
 		agents.InstallCopilotRtkHook()
+	case "pi":
+		dir := filepath.Join(agents.PiAgentDirResolved(), "extensions")
+		_ = os.MkdirAll(dir, 0o755)
+		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk pi shim (tokless test)\n")
+	}
+}
+
+// rtkWirePi: rtk init -g --agent pi.
+func rtkWirePi() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would run: rtk init -g --agent pi")
+			return true, nil
+		}
+		if os.Getenv("TOKLESS_TEST") == "1" {
+			rtkTestShim("pi")
+			return agents.HasPiRtkExtension(), nil
+		}
+		rtkPath := util.ResolveRtkBin()
+		if rtkPath == "" {
+			util.L.Err("rtk binary not found on PATH or known install dirs")
+			return false, nil
+		}
+		r := util.Run(rtkPath, []string{"init", "-g", "--agent", "pi"}, util.RunOptions{Capture: true})
+		if r.Code != 0 {
+			util.L.Debug("rtk init --agent pi exited " + clip(r.Stderr))
+			return false, nil
+		}
+		return agents.HasPiRtkExtension(), nil
 	}
 }
 
@@ -518,6 +547,7 @@ var rtk = &core.ToolManifest{
 		"antigravity": rtkWireAntigravity(),
 		"copilot":     rtkWireCopilot(),
 		"droid":       rtkWireDroid(),
+		"pi":          rtkWirePi(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -562,6 +592,16 @@ var rtk = &core.ToolManifest{
 			RemoveOwner("droid", "rtk")
 			return true, nil
 		},
+		"pi": func(core.RunOpts) (bool, error) {
+			if os.Getenv("TOKLESS_TEST") != "1" {
+				if p := util.ResolveRtkBin(); p != "" {
+					util.Run(p, []string{"init", "--uninstall", "--agent", "pi"}, util.RunOptions{})
+				}
+			}
+			_ = os.Remove(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"))
+			RemoveOwner("pi", "rtk")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -581,6 +621,9 @@ var rtk = &core.ToolManifest{
 		},
 		"droid": func() *bool {
 			return core.BoolPtr(agents.HasDroidRtkHook())
+		},
+		"pi": func() *bool {
+			return core.BoolPtr(agents.HasPiRtkExtension())
 		},
 	},
 }
