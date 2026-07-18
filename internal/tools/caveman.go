@@ -478,6 +478,32 @@ var caveman = &core.ToolManifest{
 			WriteOwner("droid", "caveman")
 			return true, nil
 		},
+		"pi": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would: skills add JuliusBrussee/caveman -a pi (source, not pi package)")
+				return true, nil
+			}
+			agents.PiPurgeCavemanPackages()
+			if isTest() {
+				dir := filepath.Join(agents.PiSkillsDir(), "caveman")
+				_ = os.MkdirAll(dir, 0o755)
+				_ = util.WriteFile(filepath.Join(dir, "SKILL.md"), "# caveman\n")
+				WriteOwner("pi", "caveman")
+				return true, nil
+			}
+			if !opts.Upgrade && agents.PiSkillHas("caveman") {
+				WriteOwner("pi", "caveman")
+				return true, nil
+			}
+			bin, args := resolveSkillsBin(cavemanSkillsAddArgs("pi"))
+			ran, err := cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "))
+			WriteOwner("pi", "caveman")
+			if opts.DryRun {
+				return ran, err
+			}
+			stampCavemanVersion()
+			return agents.PiSkillHas("caveman"), err
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -491,6 +517,7 @@ var caveman = &core.ToolManifest{
 		"antigravity": func() *bool { return core.BoolPtr(antigravityCavemanInstalled()) },
 		"copilot":     func() *bool { return core.BoolPtr(copilotCavemanInstalled()) },
 		"droid":       func() *bool { return core.BoolPtr(HasOwner("droid", "caveman")) },
+		"pi":          func() *bool { return core.BoolPtr(agents.PiSkillHas("caveman") || HasOwner("pi", "caveman")) },
 	},
 
 	UnwireFor: map[string]core.AgentFn{
@@ -555,6 +582,17 @@ var caveman = &core.ToolManifest{
 		},
 		"droid": func(core.RunOpts) (bool, error) {
 			RemoveOwner("droid", "caveman")
+			return true, nil
+		},
+		"pi": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			agents.PiPurgeCavemanPackages()
+			bin, args := resolveSkillsBin(cavemanSkillsRemoveArgs("pi"))
+			_, _ = cavemanExec(bin, args, opts, bin+" "+strings.Join(args, " "))
+			removeCavemanSkillCopies(agents.PiSkillsDir())
+			RemoveOwner("pi", "caveman")
 			return true, nil
 		},
 	},

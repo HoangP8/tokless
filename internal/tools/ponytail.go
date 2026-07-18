@@ -13,6 +13,10 @@ import (
 )
 
 const ponytailRepo = "DietrichGebert/ponytail"
+
+var ponytailSkillNames = []string{
+	"ponytail", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review",
+}
 const ponytailOpencodePkg = "@dietrichgebert/ponytail"
 
 func ponytailExec(bin string, args []string, opts core.RunOpts, dryHint string, env ...string) (bool, error) {
@@ -468,6 +472,31 @@ var ponytail = &core.ToolManifest{
 			WriteOwner("droid", "ponytail")
 			return true, nil
 		},
+		"pi": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would: skills add DietrichGebert/ponytail -a pi (source, not pi package)")
+				return true, nil
+			}
+			agents.PiPurgePonytailPackages()
+			if isTest() {
+				dir := filepath.Join(agents.PiSkillsDir(), "ponytail")
+				_ = os.MkdirAll(dir, 0o755)
+				_ = util.WriteFile(filepath.Join(dir, "SKILL.md"), "# ponytail\n")
+				WriteOwner("pi", "ponytail")
+				return true, nil
+			}
+			if !opts.Upgrade && agents.PiSkillHas("ponytail") {
+				WriteOwner("pi", "ponytail")
+				return true, nil
+			}
+			bin, args := resolveSkillsBin(ponytailSkillsAddArgs("pi"))
+			_, err := ponytailExec(bin, args, opts, bin+" "+strings.Join(args, " "))
+			WriteOwner("pi", "ponytail")
+			if !opts.DryRun {
+				stampPonytailVersion()
+			}
+			return agents.PiSkillHas("ponytail"), err
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireClaude,
@@ -482,6 +511,19 @@ var ponytail = &core.ToolManifest{
 		},
 		"droid": func(core.RunOpts) (bool, error) {
 			RemoveOwner("droid", "ponytail")
+			return true, nil
+		},
+		"pi": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			agents.PiPurgePonytailPackages()
+			bin, args := resolveSkillsBin(ponytailSkillsRemoveArgs("pi"))
+			_, _ = ponytailExec(bin, args, opts, bin+" "+strings.Join(args, " "))
+			for _, name := range ponytailSkillNames {
+				_ = os.RemoveAll(filepath.Join(agents.PiSkillsDir(), name))
+			}
+			RemoveOwner("pi", "ponytail")
 			return true, nil
 		},
 	},
@@ -502,5 +544,6 @@ var ponytail = &core.ToolManifest{
 		"antigravity": func() *bool { return core.BoolPtr(antigravityPonytailInstalled()) },
 		"copilot":     func() *bool { return core.BoolPtr(copilotPonytailInstalled()) },
 		"droid":       func() *bool { return core.BoolPtr(HasOwner("droid", "ponytail")) },
+		"pi":          func() *bool { return core.BoolPtr(agents.PiSkillHas("ponytail") || HasOwner("pi", "ponytail")) },
 	},
 }
