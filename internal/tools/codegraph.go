@@ -89,6 +89,8 @@ func codegraphConfigureMcp(agent string) bool {
 		agents.ConfigureCopilotMcp("codegraph")
 	case "droid":
 		agents.ConfigureDroidMcp("codegraph")
+	case "pi":
+		agents.ConfigurePiMcp("codegraph")
 	}
 	return true
 }
@@ -141,6 +143,8 @@ func codegraphVerify(agent string) bool {
 			agents.CopilotIdeMcpHas("codegraph") && agents.HasCopilotIdeCodegraphIndexHook()
 	case "droid":
 		return agents.DroidMcpHas("codegraph") && agents.HasDroidCodegraphIndexHook()
+	case "pi":
+		return agents.PiMcpHas("codegraph") && piCodegraphIndexExtensionPresent()
 	}
 	return false
 }
@@ -172,6 +176,49 @@ func codegraphSyncBackground(bin, dir string) {
 	}
 }
 
+// Pi auto-index: session_start init/sync + debounced sync after edit/write/bash.
+const piCodegraphIndexTs = `import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent"
+import { stat } from "node:fs/promises"
+
+const SYNC_TOOLS = new Set(["edit", "write", "bash"])
+let syncTimer: ReturnType<typeof setTimeout> | undefined
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", async () => {
+    try {
+      await stat(".codegraph")
+      pi.exec("codegraph", ["sync"], { timeout: 60_000 }).catch(() => {})
+    } catch {
+      pi.exec("codegraph", ["init", "-i"], { timeout: 60_000 })
+        .then((r) => { if (r.code !== 0) pi.exec("codegraph", ["init"], { timeout: 60_000 }) })
+        .catch(() => {})
+    }
+  })
+
+  pi.on("tool_result", async (event: ToolResultEvent) => {
+    if (!SYNC_TOOLS.has(event.toolName)) return
+    if (syncTimer) clearTimeout(syncTimer)
+    syncTimer = setTimeout(() => {
+      pi.exec("codegraph", ["sync"], { timeout: 60_000 }).catch(() => {})
+      syncTimer = undefined
+    }, 2_000)
+  })
+}
+`
+
+func piCodegraphIndexPath() string {
+	return filepath.Join(agents.PiAgentDirResolved(), "extensions", "codegraph-index.ts")
+}
+
+func writePiCodegraphIndexExtension() {
+	_ = os.MkdirAll(filepath.Dir(piCodegraphIndexPath()), 0o755)
+	_ = util.WriteFile(piCodegraphIndexPath(), piCodegraphIndexTs)
+}
+
+func piCodegraphIndexExtensionPresent() bool {
+	return util.Exists(piCodegraphIndexPath())
+}
+
 func codegraphWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if isTest() {
@@ -181,14 +228,14 @@ func codegraphWire(agent string) core.AgentFn {
 				agents.InstallAntigravityCodegraphIndexHook()
 				agents.CleanupDeadIdeHooks()
 			}
-		if agent == "copilot" {
-			agents.InstallCopilotCodegraphIndexHook()
-			agents.InstallCopilotIdeCodegraphIndexHook()
-			agents.ConfigureCopilotIdeMcp("codegraph")
-		}
-		if agent == "droid" {
-			agents.InstallDroidCodegraphIndexHook()
-		}
+			if agent == "copilot" {
+				agents.InstallCopilotCodegraphIndexHook()
+				agents.InstallCopilotIdeCodegraphIndexHook()
+				agents.ConfigureCopilotIdeMcp("codegraph")
+			}
+			if agent == "droid" {
+				agents.InstallDroidCodegraphIndexHook()
+			}
 			return codegraphVerify(agent), nil
 		}
 		if opts.DryRun {
@@ -246,7 +293,7 @@ var codegraph = &core.ToolManifest{
 	InstallHint:  "npm i -g @colbymchenry/codegraph",
 	Channel:      core.ChannelNpm,
 	Install:      codegraphEnsureInstalled,
-		IndexProject: codegraphIndexProject,
+	IndexProject: codegraphIndexProject,
 	IndexReady:   func() bool { return isTest() || util.ResolveCodegraphBin() != "" },
 	WireFor: map[string]core.AgentFn{
 		"claude":      codegraphWire("claude"),
@@ -255,6 +302,20 @@ var codegraph = &core.ToolManifest{
 		"antigravity": codegraphWire("antigravity"),
 		"copilot":     codegraphWire("copilot"),
 		"droid":       codegraphWire("droid"),
+		"pi": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would: purge legacy pi-codegraph pkgs, install pi-mcp-adapter, mcp.json + codegraph-index.ts")
+				return true, nil
+			}
+			agents.PiPurgeCodegraphPackages()
+			if !agents.PiInstallSource(agents.PiSrcMcpAdapter) {
+				return false, nil
+			}
+			codegraphConfigureMcp("pi")
+			writePiCodegraphIndexExtension()
+			WriteOwner("pi", "codegraph")
+			return codegraphVerify("pi"), nil
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -306,6 +367,15 @@ var codegraph = &core.ToolManifest{
 			RemoveOwner("droid", "codegraph")
 			return true, nil
 		},
+		"pi": func(core.RunOpts) (bool, error) {
+			agents.RemovePiMcp("codegraph")
+			_ = os.Remove(piCodegraphIndexPath())
+			if !agents.PiMcpHasAny() {
+				agents.PiRemoveSource(agents.PiSrcMcpAdapter)
+			}
+			RemoveOwner("pi", "codegraph")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
@@ -314,5 +384,6 @@ var codegraph = &core.ToolManifest{
 		"antigravity": func() *bool { return core.BoolPtr(codegraphVerify("antigravity")) },
 		"copilot":     func() *bool { return core.BoolPtr(codegraphVerify("copilot")) },
 		"droid":       func() *bool { return core.BoolPtr(codegraphVerify("droid")) },
+		"pi":          func() *bool { return core.BoolPtr(codegraphVerify("pi")) },
 	},
 }

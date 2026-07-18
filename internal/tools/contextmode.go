@@ -450,6 +450,10 @@ func ctxVerifyDroid() bool {
 	return agents.DroidMcpHas("context-mode") && !agents.HasDroidCtxModePreToolUse()
 }
 
+func ctxVerifyPi() bool {
+	return agents.PiMcpHas("context-mode")
+}
+
 // --- Antigravity (MCP + GEMINI.md, no PreToolUse hook) ---
 
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
@@ -635,6 +639,19 @@ var contextMode = &core.ToolManifest{
 		"antigravity": ctxWireAntigravity,
 		"copilot":     ctxWireCopilot,
 		"droid":       ctxWireDroid,
+		"pi": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would: upstream context-mode MCP via pi-mcp-adapter (not pi package)")
+				return true, nil
+			}
+			agents.PiPurgeContextModePackages()
+			if !agents.PiInstallSource(agents.PiSrcMcpAdapter) {
+				return false, nil
+			}
+			agents.ConfigurePiMcp("context-mode")
+			WriteOwner("pi", "context-mode")
+			return ctxVerifyPi(), nil
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ctxUnwireClaude,
@@ -643,6 +660,15 @@ var contextMode = &core.ToolManifest{
 		"antigravity": ctxUnwireAntigravity,
 		"copilot":     ctxUnwireCopilot,
 		"droid":       ctxUnwireDroid,
+		"pi": func(opts core.RunOpts) (bool, error) {
+			agents.PiPurgeContextModePackages()
+			agents.RemovePiMcp("context-mode")
+			if !agents.PiMcpHasAny() {
+				agents.PiRemoveSource(agents.PiSrcMcpAdapter)
+			}
+			RemoveOwner("pi", "context-mode")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
@@ -653,6 +679,7 @@ var contextMode = &core.ToolManifest{
 			return core.BoolPtr(agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook())
 		},
 		"droid": func() *bool { return core.BoolPtr(ctxVerifyDroid()) },
+		"pi":    func() *bool { return core.BoolPtr(ctxVerifyPi()) },
 	},
 }
 
