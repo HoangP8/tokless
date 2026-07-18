@@ -71,8 +71,8 @@ irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 |
     <tr>
       <td align="center" width="140">
         <img src="assets/agents/pi.png" width="56" alt="Pi" /><br/>
-        <span style="color:#8b949e"><b>Pi</b></span><br/>
-        <sub><b style="color:#d29922">In progress</b></sub>
+        <b>Pi</b><br/>
+        <sub><b style="color:#3fb950">✓ Done</b></sub>
       </td>
       <td align="center" width="140">
         <img src="assets/agents/cursor.jpg" width="56" alt="Cursor" /><br/>
@@ -97,7 +97,7 @@ Pick one, some, or all:
 ```bash
 tokless                              # interactive: pick agents
 tokless --agents claude,opencode     # wire just these
-tokless --agents claude,opencode,codex,antigravity,copilot,droid  # all
+tokless --agents claude,opencode,codex,antigravity,copilot,droid,pi  # all
 ```
 
 ### Tools
@@ -115,13 +115,13 @@ tokless --agents claude,opencode,codex,antigravity,copilot,droid  # all
 
 Each tool is wired into each agent through the agent's native config system:
 
-| Tool | Claude | OpenCode | Codex | Antigravity | Copilot | Droid |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **rtk** | Hook + Allow | Plugin | Hook | Hook + Allow | Hook + Allow | Hook |
-| **caveman** | Plugin + Instruction | Plugin + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction |
-| **ponytail** | Plugin + Instruction | Plugin + Instruction | Plugin + Instruction | Plugin + Instruction | Skill + Instruction | Skill + Instruction |
-| **codegraph** | MCP + Allow + Instruction | MCP + Instruction | MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction |
-| **context-mode** | MCP + Allow + Instruction | Plugin + Instruction | Hook + MCP + Instruction | MCP + Instruction | MCP + Hook + Instruction | MCP + Instruction |
+| Tool | Claude | OpenCode | Codex | Antigravity | Copilot | Droid | Pi |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **rtk** | Hook + Allow | Plugin | Hook | Hook + Allow | Hook + Allow | Hook | Extension |
+| **caveman** | Plugin + Instruction | Plugin + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction |
+| **ponytail** | Plugin + Instruction | Plugin + Instruction | Plugin + Instruction | Plugin + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction |
+| **codegraph** | MCP + Allow + Instruction | MCP + Instruction | MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | MCP + Extension + Instruction |
+| **context-mode** | MCP + Allow + Instruction | Plugin + Instruction | Hook + MCP + Instruction | MCP + Instruction | MCP + Hook + Instruction | MCP + Instruction | MCP + Instruction |
 
 ## Usage
 
@@ -139,7 +139,7 @@ tokless --help       Show all commands and flags
 
 Flags:
 ```
---agents <list>   Subset: claude,opencode,codex,antigravity,copilot,droid
+--agents <list>   Subset: claude,opencode,codex,antigravity,copilot,droid,pi
 --tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode
 --dry-run         Preview, no writes
 --verbose         Every step
