@@ -401,3 +401,274 @@ func TestCavemanNotTrackable(t *testing.T) {
 		}
 	}
 }
+
+func TestInitPiWiring(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	tempdir := t.TempDir()
+
+	// --- seed existing user config ---
+	piDir := filepath.Join(tempdir, ".pi", "agent")
+	if err := os.MkdirAll(piDir, 0755); err != nil {
+		t.Fatalf("mkdir .pi/agent: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(piDir, "extensions"), 0755); err != nil {
+		t.Fatalf("mkdir extensions: %v", err)
+	}
+
+	// user settings.json with pre-existing packages
+	userSettings := `{"packages":["user-custom-pkg","another-user-pkg"],"theme":"dark"}`
+	if err := os.WriteFile(filepath.Join(piDir, "settings.json"), []byte(userSettings), 0644); err != nil {
+		t.Fatalf("write user settings.json: %v", err)
+	}
+
+	// user extensions (must survive init)
+	userExt := `// my custom extension
+export default async function(pi) { console.log("user ext") }`
+	if err := os.WriteFile(filepath.Join(piDir, "extensions", "my-custom.ts"), []byte(userExt), 0644); err != nil {
+		t.Fatalf("write user extension: %v", err)
+	}
+
+	// user AGENTS.md (must survive init)
+	userAgentsMd := "# My Project\n\nCustom instructions for my team.\n"
+	if err := os.WriteFile(filepath.Join(piDir, "AGENTS.md"), []byte(userAgentsMd), 0644); err != nil {
+		t.Fatalf("write user AGENTS.md: %v", err)
+	}
+
+	util.SetHomeOverride(tempdir)
+	t.Setenv("HOME", tempdir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
+	t.Setenv("PI_CODING_AGENT_DIR", "") // must not inherit outer env
+	defer util.SetHomeOverride("")
+
+	// --- run init for pi ---
+	code := commands.RunInit(commands.InitOptions{
+		Agents: []string{"pi"},
+	})
+	if code != 0 {
+		t.Fatalf("RunInit returned non-zero code: %d", code)
+	}
+
+	// --- verify settings.json packages ---
+	settingsRaw, err := os.ReadFile(filepath.Join(piDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	settings := string(settingsRaw)
+
+	// Only MCP bridge remains as a pi package; tools use skills/MCP.
+	if !strings.Contains(settings, "npm:pi-mcp-adapter") {
+		t.Errorf("settings.json missing pi-mcp-adapter, got:\n%s", settings)
+	}
+	// Must NOT install tools via old pi packages.
+	for _, bad := range []string{
+		"npm:context-mode", "npm:pi-caveman", "npm:pi-ponytail",
+		"git:github.com/JuliusBrussee/caveman", "git:github.com/DietrichGebert/ponytail",
+		"@vndv/pi-codegraph",
+	} {
+		if strings.Contains(settings, bad) {
+			t.Errorf("settings.json still has old pi package %q, got:\n%s", bad, settings)
+		}
+	}
+	// MCP: codegraph + context-mode
+	mcpRaw, _ := os.ReadFile(filepath.Join(piDir, "mcp.json"))
+	mcpStr := string(mcpRaw)
+	for _, want := range []string{"codegraph", "context-mode"} {
+		if !strings.Contains(mcpStr, want) {
+			t.Errorf("mcp.json missing %q, got:\n%s", want, mcpStr)
+		}
+	}
+	// Skills from source (skills CLI stubs in TOKLESS_TEST)
+	for _, skill := range []string{"caveman", "ponytail"} {
+		sk := filepath.Join(piDir, "skills", skill, "SKILL.md")
+		if !util.Exists(sk) {
+			t.Errorf("missing pi skill %s", sk)
+		}
+	}
+	// user's pre-existing packages preserved
+	for _, pkg := range []string{"user-custom-pkg", "another-user-pkg"} {
+		if !strings.Contains(settings, pkg) {
+			t.Errorf("settings.json lost user package %q, got:\n%s", pkg, settings)
+		}
+	}
+	// user's theme field preserved
+	if !strings.Contains(settings, `"theme"`) || !strings.Contains(settings, `"dark"`) {
+		t.Errorf("settings.json lost user theme field, got:\n%s", settings)
+	}
+
+	// RTK: rtk init --agent pi → extensions/rtk.ts
+	if !util.Exists(filepath.Join(piDir, "extensions", "rtk.ts")) {
+		t.Error("RTK extension rtk.ts not created")
+	}
+	// codegraph auto-index extension
+	if !util.Exists(filepath.Join(piDir, "extensions", "codegraph-index.ts")) {
+		t.Error("codegraph-index.ts not created for pi")
+	}
+
+	// --- verify user extensions preserved ---
+	userExtPath := filepath.Join(piDir, "extensions", "my-custom.ts")
+	if !util.Exists(userExtPath) {
+		t.Error("user extension my-custom.ts was deleted by init")
+	} else {
+		survived, _ := os.ReadFile(userExtPath)
+		if string(survived) != userExt {
+			t.Errorf("user extension my-custom.ts content changed, got:\n%s", string(survived))
+		}
+	}
+
+	// --- verify AGENTS.md ---
+	agentsMd, err := os.ReadFile(filepath.Join(piDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	agentsMdStr := string(agentsMd)
+
+	// user content preserved
+	if !strings.Contains(agentsMdStr, "Custom instructions for my team.") {
+		t.Errorf("AGENTS.md lost user content, got:\n%s", agentsMdStr)
+	}
+	// tokless managed sections present (owner markers)
+	for _, owner := range []string{"caveman", "codegraph", "context-mode", "ponytail"} {
+		if !strings.Contains(agentsMdStr, owner) {
+			t.Errorf("AGENTS.md missing owner %q, got:\n%s", owner, agentsMdStr)
+		}
+	}
+
+	// --- verify idempotency: re-run should not corrupt ---
+	code2 := commands.RunInit(commands.InitOptions{
+		Agents: []string{"pi"},
+	})
+	if code2 != 0 {
+		t.Fatalf("second RunInit returned non-zero code: %d", code2)
+	}
+
+	settingsRaw2, err := os.ReadFile(filepath.Join(piDir, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json after 2nd run: %v", err)
+	}
+	for _, pkg := range []string{"user-custom-pkg", "another-user-pkg", "npm:pi-mcp-adapter"} {
+		if !strings.Contains(string(settingsRaw2), pkg) {
+			t.Errorf("settings.json after 2nd run missing package %q", pkg)
+		}
+	}
+	for _, skill := range []string{"caveman", "ponytail"} {
+		if !util.Exists(filepath.Join(piDir, "skills", skill, "SKILL.md")) {
+			t.Errorf("skill %s missing after 2nd run", skill)
+		}
+	}
+	if !util.Exists(userExtPath) {
+		t.Error("user extension deleted after 2nd run")
+	}
+	agentsMd2, _ := os.ReadFile(filepath.Join(piDir, "AGENTS.md"))
+	if !strings.Contains(string(agentsMd2), "Custom instructions for my team.") {
+		t.Error("AGENTS.md user content lost after 2nd run")
+	}
+
+	// --- verify all pi tools report correct state after wiring ---
+	toolIDs := []string{"rtk", "caveman", "codegraph", "context-mode", "ponytail"}
+	for _, id := range toolIDs {
+		tm := core.GetTool(id)
+		if tm == nil {
+			t.Fatalf("tool %q not registered", id)
+		}
+		verifyFn, ok := tm.VerifyFor["pi"]
+		if !ok {
+			t.Errorf("tool %q has no VerifyFor pi", id)
+			continue
+		}
+		result := verifyFn()
+		if result == nil {
+			t.Errorf("tool %q VerifyFor pi returned nil", id)
+		} else if !*result {
+			t.Errorf("tool %q VerifyFor pi returned false after wiring", id)
+		}
+	}
+}
+
+func TestPiUnwire(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	tempdir := t.TempDir()
+
+	piDir := filepath.Join(tempdir, ".pi", "agent")
+	if err := os.MkdirAll(filepath.Join(piDir, "extensions"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	settings := `{"packages":["npm:pi-mcp-adapter"],"theme":"light"}`
+	if err := os.WriteFile(filepath.Join(piDir, "settings.json"), []byte(settings), 0644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	for _, skill := range []string{"caveman", "ponytail"} {
+		d := filepath.Join(piDir, "skills", skill)
+		_ = os.MkdirAll(d, 0755)
+		_ = os.WriteFile(filepath.Join(d, "SKILL.md"), []byte("# "+skill+"\n"), 0644)
+	}
+	mcp := `{"mcpServers":{"codegraph":{"command":"codegraph"},"context-mode":{"command":"context-mode"}}}`
+	if err := os.WriteFile(filepath.Join(piDir, "mcp.json"), []byte(mcp), 0644); err != nil {
+		t.Fatalf("write mcp: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(piDir, "extensions", "rtk.ts"), []byte("// rtk"), 0644); err != nil {
+		t.Fatalf("write rtk: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(piDir, "extensions", "codegraph-index.ts"), []byte("// cg"), 0644); err != nil {
+		t.Fatalf("write codegraph-index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(piDir, "AGENTS.md"), []byte("# Tokless\n\n<!-- caveman -->\n<!-- rtk -->\n\nUser content.\n"), 0644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	util.SetHomeOverride(tempdir)
+	t.Setenv("HOME", tempdir)
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	defer util.SetHomeOverride("")
+
+	// unwrap pi tools
+	opts := core.RunOpts{}
+	unwrapPi := func(toolID string) {
+		t.Helper()
+		tool := core.GetTool(toolID)
+		if tool == nil {
+			t.Fatalf("tool %q not registered", toolID)
+		}
+		fn, ok := tool.UnwireFor["pi"]
+		if !ok {
+			t.Fatalf("tool %q has no UnwireFor pi", toolID)
+		}
+		ok, err := fn(opts)
+		if err != nil {
+			t.Fatalf("unwrap %s for pi: %v", toolID, err)
+		}
+		if !ok {
+			t.Errorf("unwrap %s for pi returned false", toolID)
+		}
+	}
+
+	unwrapPi("rtk")
+	unwrapPi("caveman")
+	unwrapPi("context-mode")
+	unwrapPi("ponytail")
+	unwrapPi("codegraph")
+
+	if util.Exists(filepath.Join(piDir, "extensions", "rtk.ts")) {
+		t.Error("RTK extension should be removed after unwire")
+	}
+	if util.Exists(filepath.Join(piDir, "extensions", "codegraph-index.ts")) {
+		t.Error("codegraph-index.ts should be removed after unwire")
+	}
+
+	for _, skill := range []string{"caveman", "ponytail"} {
+		if util.Exists(filepath.Join(piDir, "skills", skill, "SKILL.md")) {
+			t.Errorf("skill %s still present after unwire", skill)
+		}
+	}
+	mcpRaw, _ := os.ReadFile(filepath.Join(piDir, "mcp.json"))
+	mcpStr := string(mcpRaw)
+	for _, bad := range []string{"codegraph", "context-mode"} {
+		if strings.Contains(mcpStr, bad) {
+			t.Errorf("mcp.json still contains %q after unwire", bad)
+		}
+	}
+	settingsRaw, _ := os.ReadFile(filepath.Join(piDir, "settings.json"))
+	settingsStr := string(settingsRaw)
+	if !strings.Contains(settingsStr, `"theme"`) || !strings.Contains(settingsStr, `"light"`) {
+		t.Errorf("settings.json lost user theme after unwire, got:\n%s", settingsStr)
+	}
+}
