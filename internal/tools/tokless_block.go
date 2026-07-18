@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -24,6 +25,8 @@ func instructionPath(agent string) string {
 		return util.CopilotPathsResolved().Instructions
 	case "droid":
 		return filepath.Join(util.Home(), ".factory", "AGENTS.md")
+	case "pi":
+		return filepath.Join(agents.PiAgentDirResolved(), "AGENTS.md")
 	}
 	return ""
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -60,6 +61,7 @@ func RunDoctor(offline bool) int {
 			util.L.Raw("")
 		}
 		listToolVersions(tools, v, false)
+		listPiPackageVersions()
 		util.L.Raw("")
 		if outdated > 0 {
 			util.L.Warn(plural(outdated) + " available — run " + util.C.Cyan("tokless update"))
@@ -144,6 +146,29 @@ func listToolVersions(tools []*core.ToolManifest, v map[string]util.VersionInfo,
 		} else {
 			util.L.Raw("  " + line)
 		}
+	}
+}
+
+// listPiPackageVersions lists tokless-managed Pi sources present in settings.
+func listPiPackageVersions() {
+	if util.Which("pi") == "" {
+		return
+	}
+	any := false
+	for _, src := range agents.PiPackageList() {
+		if !agents.PiSourceHas(src) {
+			continue
+		}
+		if !any {
+			util.L.Raw("")
+			util.L.Raw("  " + util.C.Bold("Pi packages") + util.C.Gray("  (MCP bridge; tokless update)"))
+			any = true
+		}
+		exact := agents.PiPackageSettingsSource(src)
+		if exact == "" {
+			exact = src
+		}
+		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(exact))
 	}
 }
 

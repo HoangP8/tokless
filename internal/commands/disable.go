@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -50,6 +51,15 @@ func runPurge() int {
 		for _, pkg := range []string{"context-mode", "@colbymchenry/codegraph"} {
 			if util.NpmInstalledVersionExported(pkg) != nil {
 				if r := util.Run(npm, []string{"uninstall", "-g", pkg}, util.RunOptions{Capture: true}); r.Code == 0 {
+					n++
+				}
+			}
+		}
+	}
+	if util.Which("pi") != "" {
+		for _, src := range agents.PiPackageList() {
+			if agents.PiSourceHas(src) {
+				if agents.PiRemoveSource(src) {
 					n++
 				}
 			}

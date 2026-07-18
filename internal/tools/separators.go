@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"path/filepath"
 	"regexp"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -20,6 +22,8 @@ func EnsureInstructionSeparators(agentIDs []string) {
 			path = util.AntigravityPathsResolved().Instructions
 		case "copilot":
 			path = util.CopilotPathsResolved().Instructions
+		case "pi":
+			path = filepath.Join(agents.PiAgentDirResolved(), "AGENTS.md")
 		default:
 			continue
 		}

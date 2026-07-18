@@ -3,7 +3,9 @@ package commands
 import (
 	"fmt"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
+
 	toolsPkg "github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -75,6 +77,11 @@ func RunUpdate(opts InitOptions) int {
 	}
 
 	if len(changed) == 0 {
+		if !opts.DryRun {
+			agents.PiUpdatePackages()
+		} else {
+			util.L.Sub("[dry-run] would run: pi update <tokless-managed sources only>")
+		}
 		util.L.Ok("Everything up to date.")
 		util.L.Raw("")
 		return 0
@@ -178,6 +185,7 @@ func RunUpdate(opts InitOptions) int {
 		toolsPkg.ConfigureInstructionConflicts(true)
 		resyncWiring(tools)
 		toolsPkg.ConfigureInstructionConflicts(false)
+		agents.PiUpdatePackages()
 	}
 
 	// Upgrade mutated installed versions; drop cached latest so next read is fresh.
