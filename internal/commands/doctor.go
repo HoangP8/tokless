@@ -14,6 +14,7 @@ type agentReport struct {
 	installed bool
 	wired     bool
 	missing   []string
+	runtime   []runtimeIssue
 }
 
 func RunDoctor(offline bool) int {
@@ -39,7 +40,14 @@ func RunDoctor(offline bool) int {
 				missing = append(missing, tool.Label)
 			}
 		}
-		reports = append(reports, agentReport{label: agent.Label, installed: true, wired: len(missing) == 0, missing: missing})
+		runtime := probeAgentRuntime(agent.ID)
+		reports = append(reports, agentReport{
+			label:     agent.Label,
+			installed: true,
+			wired:     len(missing) == 0 && len(runtime) == 0,
+			missing:   missing,
+			runtime:   runtime,
+		})
 	}
 
 	for _, r := range reports {
@@ -94,6 +102,12 @@ func doctorSummary(r agentReport) {
 	case r.wired:
 		mark = util.C.Green(util.Sym.Check)
 		status = util.C.Gray("all tools wired")
+	case len(r.runtime) > 0 && len(r.missing) == 0:
+		mark = util.C.Yellow(util.Sym.Warn)
+		status = util.C.Yellow("runtime: " + formatRuntimeIssues(r.runtime))
+	case len(r.runtime) > 0:
+		mark = util.C.Yellow(util.Sym.Warn)
+		status = util.C.Yellow("missing: " + joinComma(r.missing) + "; runtime: " + formatRuntimeIssues(r.runtime))
 	default:
 		mark = util.C.Yellow(util.Sym.Warn)
 		status = util.C.Yellow("missing: " + joinComma(r.missing))
