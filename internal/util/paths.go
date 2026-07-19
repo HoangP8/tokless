@@ -9,6 +9,16 @@ import (
 
 var IsWin = runtime.GOOS == "windows"
 
+// PersistedToklessCommand builds a shell command stored in an agent config.
+func PersistedToklessCommand(exe string, args ...string) string {
+	if strings.ContainsAny(exe, " \t") {
+		exe = "tokless"
+	} else if IsWin {
+		exe = strings.ReplaceAll(exe, "\\", "/")
+	}
+	return strings.Join(append([]string{exe}, args...), " ")
+}
+
 var homeOverride string
 
 // SetHomeOverride redirects all home-relative paths (used by tests/sandbox).
