@@ -94,19 +94,11 @@ func codexHooksFile() string {
 
 // codexHookCommand is the command Codex runs for every Bash tool call.
 func codexHookCommand() string {
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless" // spaced paths break cross-shell parsing; rely on PATH
-	}
-	return tok + " rtk-hook codex"
+	return toklessCommand("rtk-hook", "codex")
 }
 
 func codexPermHookCommand() string {
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-	return tok + " codex-perm codex"
+	return toklessCommand("codex-perm", "codex")
 }
 
 // codexHookTrustHash reproduces Codex's hook-trust hash.
@@ -145,10 +137,15 @@ func codexPermHookTrustHash(command string) string {
 }
 
 func codexGroupHasRtk(group *util.OrderedMap) bool {
-	hooksObj, ok := group.Get("hooks")
-	if !ok {
-		return false
-	}
+	return codexGroupHasManaged(group, "rtk-hook", "codex")
+}
+
+func codexGroupHasPerm(group *util.OrderedMap) bool {
+	return codexGroupHasManaged(group, "codex-perm", "codex")
+}
+
+func codexGroupHasManaged(group *util.OrderedMap, args ...string) bool {
+	hooksObj, _ := group.Get("hooks")
 	arr, ok := hooksObj.([]interface{})
 	if !ok {
 		return false
@@ -158,36 +155,103 @@ func codexGroupHasRtk(group *util.OrderedMap) bool {
 		if !ok {
 			continue
 		}
-		if cmd, ok := hm.Get("command"); ok {
-			if s, ok := cmd.(string); ok && strings.Contains(s, "rtk-hook codex") {
-				return true
-			}
+		cmd, _ := hm.Get("command")
+		s, _ := cmd.(string)
+		if toklessManagedCommand(s, args...) {
+			return true
 		}
 	}
 	return false
 }
 
-func codexGroupHasPerm(group *util.OrderedMap) bool {
-	hooksObj, ok := group.Get("hooks")
-	if !ok {
-		return false
-	}
-	arr, ok := hooksObj.([]interface{})
-	if !ok {
-		return false
-	}
-	for _, h := range arr {
-		hm, ok := h.(*util.OrderedMap)
-		if !ok {
-			continue
-		}
-		if cmd, ok := hm.Get("command"); ok {
-			if s, ok := cmd.(string); ok && strings.Contains(s, "codex-perm codex") {
-				return true
+type codexHookPos struct{ group, hook int }
+
+func codexTransformManagedGroups(groups []interface{}, matcher string, args []string, desired *util.OrderedMap) ([]interface{}, codexHookPos, map[codexHookPos]codexHookPos, []codexHookPos) {
+	out := make([]interface{}, 0, len(groups)+1)
+	desiredPos := codexHookPos{-1, -1}
+	moved := map[codexHookPos]codexHookPos{}
+	var removed []codexHookPos
+	var desiredHook any
+	if desired != nil {
+		if hooksObj, ok := desired.Get("hooks"); ok {
+			if hooks, ok := hooksObj.([]interface{}); ok && len(hooks) > 0 {
+				desiredHook = hooks[0]
 			}
 		}
 	}
-	return false
+	for oldGroup, g := range groups {
+		gm, ok := g.(*util.OrderedMap)
+		if !ok {
+			out = append(out, g)
+			continue
+		}
+		groupMatcher, _ := gm.Get("matcher")
+		hooksObj, _ := gm.Get("hooks")
+		hooks, ok := hooksObj.([]interface{})
+		if !ok {
+			out = append(out, g)
+			continue
+		}
+		kept := make([]interface{}, 0, len(hooks))
+		for oldHook, h := range hooks {
+			hm, isMap := h.(*util.OrderedMap)
+			managed := false
+			if groupMatcher == matcher && isMap {
+				cmd, _ := hm.Get("command")
+				command, _ := cmd.(string)
+				managed = toklessManagedCommand(command, args...)
+			}
+			if managed {
+				if desiredHook != nil && desiredPos.group == -1 {
+					desiredPos = codexHookPos{len(out), len(kept)}
+					kept = append(kept, desiredHook)
+				} else {
+					removed = append(removed, codexHookPos{oldGroup, oldHook})
+				}
+				continue
+			}
+			newPos := codexHookPos{len(out), len(kept)}
+			moved[codexHookPos{oldGroup, oldHook}] = newPos
+			kept = append(kept, h)
+		}
+		if len(kept) > 0 {
+			gm.Set("hooks", kept)
+			out = append(out, gm)
+		} else if len(hooks) == 0 {
+			out = append(out, gm)
+		}
+	}
+	if desiredHook != nil && desiredPos.group == -1 {
+		desiredPos = codexHookPos{len(out), 0}
+		out = append(out, desired)
+	}
+	return out, desiredPos, moved, removed
+}
+
+func codexRewriteHookState(raw, hooksFile, event string, moved map[codexHookPos]codexHookPos, removed []codexHookPos) string {
+	for _, pos := range removed {
+		key := hooksFile + ":" + event + ":" + strconv.Itoa(pos.group) + ":" + strconv.Itoa(pos.hook)
+		raw = util.RemoveBlock(raw, codexHookStateHeader(key))
+	}
+	type move struct{ old, new, placeholder string }
+	var moves []move
+	for oldPos, newPos := range moved {
+		if oldPos == newPos {
+			continue
+		}
+		oldKey := hooksFile + ":" + event + ":" + strconv.Itoa(oldPos.group) + ":" + strconv.Itoa(oldPos.hook)
+		newKey := hooksFile + ":" + event + ":" + strconv.Itoa(newPos.group) + ":" + strconv.Itoa(newPos.hook)
+		placeholder := "hooks.state.'__tokless_move_" + strconv.Itoa(len(moves)) + "__'"
+		oldHeader := "[" + codexHookStateHeader(oldKey) + "]"
+		if strings.Contains(raw, oldHeader) {
+			raw = strings.Replace(raw, oldHeader, "["+placeholder+"]", 1)
+			moves = append(moves, move{placeholder: placeholder, new: codexHookStateHeader(newKey)})
+		}
+	}
+	for _, m := range moves {
+		raw = strings.Replace(raw, "["+m.placeholder+"]", "["+m.new+"]", 1)
+	}
+	return raw
 }
 
 func codexRtkGroup(command string) *util.OrderedMap {
@@ -403,7 +467,6 @@ func InstallCodexRtkHook() {
 	_ = util.EnsureDir(p.Dir)
 	command := codexHookCommand()
 
-	// 1. Merge our PreToolUse "Bash" group into hooks.json.
 	hooksFile := codexHooksFile()
 	raw, _ := util.ReadFileSafe(hooksFile)
 	cfg := util.TryParseJsonc(raw)
@@ -419,33 +482,23 @@ func InstallCodexRtkHook() {
 	if v, ok := hooks.Get("PreToolUse"); ok {
 		preArr, _ = v.([]interface{})
 	}
-	idx := -1
-	for i, g := range preArr {
-		if gm, ok := g.(*util.OrderedMap); ok && codexGroupHasRtk(gm) {
-			idx = i
-			break
-		}
-	}
-	group := codexRtkGroup(command)
-	if idx == -1 {
-		preArr = append(preArr, group)
-		idx = len(preArr) - 1
-	} else {
-		preArr[idx] = group
-	}
+	preArr, pos, moved, removed := codexTransformManagedGroups(preArr, codexHookMatcher, []string{"rtk-hook", "codex"}, codexRtkGroup(command))
 	hooks.Set("PreToolUse", preArr)
 	if next := util.StringifyJSON(cfg); next != raw {
 		_ = util.WriteFile(hooksFile, next)
 	}
 
-	// 2. Pre-seed trust + ensure MCP auto-approval in config.toml.
 	craw, _ := util.ReadFileSafe(p.Config)
 	craw = sweepStaleHookStateEntries(craw)
-	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(idx) + ":0"
+	craw = codexRewriteHookState(craw, hooksFile, "pre_tool_use", moved, removed)
+	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(pos.group) + ":" + strconv.Itoa(pos.hook)
 	block := util.NewTomlBlock(codexHookStateHeader(key))
 	block.Set("trusted_hash", codexHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
 	cnext = applyCodexApprovalPolicy(cnext)
+	features := util.NewTomlBlock("features")
+	features.Set("hooks", true)
+	cnext = util.UpsertBlock(cnext, features, false)
 	if cnext != craw {
 		_ = util.WriteFile(p.Config, cnext)
 	}
@@ -466,21 +519,13 @@ func RemoveCodexRtkHook() {
 			if hooks, ok := mapChild(cfg, "hooks"); ok {
 				if v, ok := hooks.Get("PreToolUse"); ok {
 					if preArr, ok := v.([]interface{}); ok {
-						kept := preArr[:0]
-						removedIdx := -1
-						for i, g := range preArr {
-							if gm, ok := g.(*util.OrderedMap); ok && codexGroupHasRtk(gm) {
-								removedIdx = i
-								continue
-							}
-							kept = append(kept, g)
-						}
-						if removedIdx >= 0 {
+						kept, _, moved, removed := codexTransformManagedGroups(preArr, codexHookMatcher, []string{"rtk-hook", "codex"}, nil)
+						if len(removed) > 0 {
 							hooks.Set("PreToolUse", kept)
 							_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 							craw, _ := util.ReadFileSafe(p.Config)
-							key := hooksFile + ":pre_tool_use:" + strconv.Itoa(removedIdx) + ":0"
-							if cnext := util.RemoveBlock(craw, codexHookStateHeader(key)); cnext != craw {
+							cnext := codexRewriteHookState(craw, hooksFile, "pre_tool_use", moved, removed)
+							if cnext != craw {
 								_ = util.WriteFile(p.Config, cnext)
 							}
 						}
@@ -544,28 +589,15 @@ func InstallCodexPermissionHook() {
 	if v, ok := hooks.Get("PermissionRequest"); ok {
 		permArr, _ = v.([]interface{})
 	}
-	idx := -1
-	for i, g := range permArr {
-		if gm, ok := g.(*util.OrderedMap); ok && codexGroupHasPerm(gm) {
-			idx = i
-			break
-		}
-	}
-	group := codexPermGroup(command)
-	if idx == -1 {
-		permArr = append(permArr, group)
-		idx = len(permArr) - 1
-	} else {
-		permArr[idx] = group
-	}
+	permArr, pos, moved, removed := codexTransformManagedGroups(permArr, codexPermHookMatcher, []string{"codex-perm", "codex"}, codexPermGroup(command))
 	hooks.Set("PermissionRequest", permArr)
 	if next := util.StringifyJSON(cfg); next != raw {
 		_ = util.WriteFile(hooksFile, next)
 	}
-	// Pre-seed trust hash.
 	craw, _ := util.ReadFileSafe(p.Config)
 	craw = sweepStaleHookStateEntries(craw)
-	key := hooksFile + ":permission_request:" + strconv.Itoa(idx) + ":0"
+	craw = codexRewriteHookState(craw, hooksFile, "permission_request", moved, removed)
+	key := hooksFile + ":permission_request:" + strconv.Itoa(pos.group) + ":" + strconv.Itoa(pos.hook)
 	block := util.NewTomlBlock(codexHookStateHeader(key))
 	block.Set("trusted_hash", codexPermHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
@@ -584,21 +616,13 @@ func RemoveCodexPermissionHook() {
 			if hooks, ok := mapChild(cfg, "hooks"); ok {
 				if v, ok := hooks.Get("PermissionRequest"); ok {
 					if permArr, ok := v.([]interface{}); ok {
-						kept := permArr[:0]
-						removedIdx := -1
-						for i, g := range permArr {
-							if gm, ok := g.(*util.OrderedMap); ok && codexGroupHasPerm(gm) {
-								removedIdx = i
-								continue
-							}
-							kept = append(kept, g)
-						}
-						if removedIdx >= 0 {
+						kept, _, moved, removed := codexTransformManagedGroups(permArr, codexPermHookMatcher, []string{"codex-perm", "codex"}, nil)
+						if len(removed) > 0 {
 							hooks.Set("PermissionRequest", kept)
 							_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 							craw, _ := util.ReadFileSafe(p.Config)
-							key := hooksFile + ":permission_request:" + strconv.Itoa(removedIdx) + ":0"
-							if cnext := util.RemoveBlock(craw, codexHookStateHeader(key)); cnext != craw {
+							cnext := codexRewriteHookState(craw, hooksFile, "permission_request", moved, removed)
+							if cnext != craw {
 								_ = util.WriteFile(p.Config, cnext)
 							}
 						}

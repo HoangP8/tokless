@@ -26,12 +26,14 @@ func ideRoot() string {
 
 // IDE (VS Code) paths — project-scoped, written relative to cwd.
 
-func copilotIdeHooksDir() string  { return filepath.Join(ideRoot(), ".github", "hooks") }
+func copilotIdeHooksDir() string { return filepath.Join(ideRoot(), ".github", "hooks") }
 func copilotIdeHooksFile(name string) string {
 	return filepath.Join(copilotIdeHooksDir(), name)
 }
-func copilotIdeMcpFile() string          { return filepath.Join(ideRoot(), ".vscode", "mcp.json") }
-func copilotIdeInstructionsFile() string { return filepath.Join(ideRoot(), ".github", "copilot-instructions.md") }
+func copilotIdeMcpFile() string { return filepath.Join(ideRoot(), ".vscode", "mcp.json") }
+func copilotIdeInstructionsFile() string {
+	return filepath.Join(ideRoot(), ".github", "copilot-instructions.md")
+}
 
 // InstallCopilotContextModeHook writes the context-mode hook file.
 func InstallCopilotContextModeHook() {
@@ -94,11 +96,7 @@ func HasCopilotIdeContextModeHook() bool {
 }
 
 func copilotRtkHookCommand() string {
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-	return tok + " rtk-hook copilot"
+	return toklessCommand("rtk-hook", "copilot")
 }
 
 // InstallCopilotRtkHook writes ~/.copilot/hooks/tokless-rtk.json.
@@ -238,11 +236,7 @@ func copilotApprovalsHasRtk(approvals []any) bool {
 func InstallCopilotCodegraphIndexHook() {
 	p := util.CopilotPathsResolved()
 	_ = util.EnsureDir(p.HooksDir)
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-	cmd := tok + " copilot-hook codegraph-index"
+	cmd := toklessCommand("copilot-hook", "codegraph-index")
 	hook := util.NewOrderedMap()
 	hook.Set("type", "command")
 	hook.Set("command", cmd)
@@ -261,11 +255,7 @@ func RemoveCopilotCodegraphIndexHook() {
 // InstallCopilotIdeCodegraphIndexHook writes .github/hooks/tokless-codegraph-index.json for VS Code.
 func InstallCopilotIdeCodegraphIndexHook() {
 	_ = util.EnsureDir(copilotIdeHooksDir())
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-	cmd := tok + " copilot-hook codegraph-index"
+	cmd := toklessCommand("copilot-hook", "codegraph-index")
 	entry := util.NewOrderedMap()
 	entry.Set("type", "command")
 	entry.Set("command", cmd)

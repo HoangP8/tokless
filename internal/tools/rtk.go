@@ -275,24 +275,26 @@ func removeClaudeRtkHookGroup() {
 			out = append(out, g)
 			continue
 		}
-		drop := false
+		kept := make([]any, 0, len(arr))
 		for _, h := range arr {
 			hm, ok := h.(*util.OrderedMap)
 			if !ok {
+				kept = append(kept, h)
 				continue
 			}
-			if c, ok := hm.Get("command"); ok {
-				if s, ok := c.(string); ok && strings.Contains(s, "rtk-hook claude") {
-					drop = true
-					break
-				}
+			c, _ := hm.Get("command")
+			s, _ := c.(string)
+			if claudeRtkHookManaged(s) {
+				changed = true
+				continue
 			}
+			kept = append(kept, h)
 		}
-		if drop {
-			changed = true
+		if len(kept) == 0 && len(arr) > 0 {
 			continue
 		}
-		out = append(out, g)
+		gm.Set("hooks", kept)
+		out = append(out, gm)
 	}
 	if !changed {
 		return
@@ -312,8 +314,7 @@ func removeClaudeRtkHookGroup() {
 // with the tokless wrapper so the output includes explicit permissionDecision: "allow".
 func overrideClaudeRtkHook() {
 	cp := util.ClaudeCodePaths()
-	tok := toklessAbs()
-	newCmd := tok + " rtk-hook claude"
+	newCmd := claudeRtkHookCommand(util.ToklessAbs())
 	raw, ok := util.ReadFileSafe(cp.Settings)
 	if !ok {
 		return
@@ -358,25 +359,53 @@ func overrideClaudeRtkHook() {
 				continue
 			}
 			if c, ok := hm2.Get("command"); ok {
-				if s, ok := c.(string); ok && strings.Contains(s, "rtk hook claude") && !strings.Contains(s, "rtk-hook claude") {
+				if s, ok := c.(string); ok && claudeRtkHookManaged(s) && s != newCmd {
 					hm2.Set("command", newCmd)
 					changed = true
 				}
 			}
 		}
 	}
-	if len(pt) > 1 {
-		seen := map[string]bool{}
-		dedup := make([]any, 0, len(pt))
-		for _, g := range pt {
-			cmd := firstHookCommand(g)
-			if !seen[cmd] {
-				seen[cmd] = true
-				dedup = append(dedup, g)
-			} else {
-				changed = true
-			}
+	seenManaged := false
+	dedup := make([]any, 0, len(pt))
+	for _, g := range pt {
+		gm, ok := g.(*util.OrderedMap)
+		if !ok {
+			dedup = append(dedup, g)
+			continue
 		}
+		hooksVal, ok := gm.Get("hooks")
+		arr, ok := hooksVal.([]any)
+		if !ok {
+			dedup = append(dedup, g)
+			continue
+		}
+		kept := make([]any, 0, len(arr))
+		for _, h := range arr {
+			hm2, ok := h.(*util.OrderedMap)
+			if !ok {
+				kept = append(kept, h)
+				continue
+			}
+			c, _ := hm2.Get("command")
+			s, _ := c.(string)
+			if s == newCmd {
+				if seenManaged {
+					changed = true
+					continue
+				}
+				seenManaged = true
+			}
+			kept = append(kept, h)
+		}
+		if len(kept) == 0 && len(arr) > 0 {
+			changed = true
+			continue
+		}
+		gm.Set("hooks", kept)
+		dedup = append(dedup, gm)
+	}
+	if len(dedup) != len(pt) {
 		hm.Set("PreToolUse", dedup)
 	}
 	if changed {
@@ -387,29 +416,21 @@ func overrideClaudeRtkHook() {
 	stripRtkRefFromMd(filepath.Join(cp.Dir, "CLAUDE.md"))
 }
 
-func firstHookCommand(g any) string {
-	gm, ok := g.(*util.OrderedMap)
-	if !ok {
-		return ""
-	}
-	hooksVal, ok := gm.Get("hooks")
-	if !ok {
-		return ""
-	}
-	arr, ok := hooksVal.([]any)
-	if !ok || len(arr) == 0 {
-		return ""
-	}
-	first, ok := arr[0].(*util.OrderedMap)
-	if !ok {
-		return ""
-	}
-	c, _ := first.Get("command")
-	s, _ := c.(string)
-	return s
+func claudeRtkHookCommand(exe string) string {
+	return util.PersistedToklessCommand(exe, "rtk-hook", "claude")
 }
 
-func toklessAbs() string { return util.ToklessAbs() }
+func claudeRtkHookManaged(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 3 && fields[0] == "rtk" && fields[1] == "hook" && fields[2] == "claude" {
+		return true
+	}
+	if len(fields) != 3 || fields[1] != "rtk-hook" || fields[2] != "claude" {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(fields[0], "\\", "/")))
+	return base == "tokless" || base == "tokless.exe"
+}
 
 // stripRtkRefFromMd removes only the @RTK.md reference line from a markdown
 // file (CLAUDE.md, AGENTS.md, GEMINI.md), preserving all other user content.

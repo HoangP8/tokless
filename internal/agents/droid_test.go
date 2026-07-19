@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/core"
@@ -131,12 +132,56 @@ func TestInstallDroidRtkHook_Idempotent(t *testing.T) {
 	}
 }
 
+func TestInstallDroidRtkHookMigratesBackslashAndDeduplicates(t *testing.T) {
+	setTestHome(t)
+	raw := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"C:\\old\\tokless.exe rtk-hook droid"}]},{"matcher":"Execute","hooks":[{"type":"command","command":"D:\\old\\tokless.exe rtk-hook droid"}]},{"matcher":"Execute","hooks":[{"type":"command","command":"echo user"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+
+	InstallDroidRtkHook()
+	got, _ := os.ReadFile(droidHooksFile())
+	if strings.Count(string(got), "rtk-hook droid") != 1 {
+		t.Fatalf("managed hooks not deduplicated: %s", got)
+	}
+	if !strings.Contains(string(got), "echo user") {
+		t.Fatalf("user hook removed: %s", got)
+	}
+}
+
+func TestInstallDroidRtkHookPreservesWrapper(t *testing.T) {
+	setTestHome(t)
+	raw := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"custom-wrapper rtk-hook droid"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	InstallDroidRtkHook()
+	got, _ := os.ReadFile(droidHooksFile())
+	if !strings.Contains(string(got), "custom-wrapper rtk-hook droid") || strings.Count(string(got), "rtk-hook droid") != 2 {
+		t.Fatalf("wrapper claimed or managed hook missing: %s", got)
+	}
+}
+
 func TestRemoveDroidRtkHook(t *testing.T) {
 	setTestHome(t)
 	InstallDroidRtkHook()
 	RemoveDroidRtkHook()
 	if HasDroidRtkHook() {
 		t.Fatal("expected hook removed")
+	}
+}
+
+func TestRemoveDroidRtkHookPreservesUserSiblings(t *testing.T) {
+	setTestHome(t)
+	managed := toklessCommand("rtk-hook", "droid")
+	raw := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"` + managed + `"},{"type":"command","command":"echo user"},{"type":"command","command":"custom-wrapper rtk-hook droid"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	RemoveDroidRtkHook()
+	got, _ := os.ReadFile(droidHooksFile())
+	if strings.Contains(string(got), `"command": "`+managed+`"`) || !strings.Contains(string(got), "echo user") || !strings.Contains(string(got), "custom-wrapper rtk-hook droid") {
+		t.Fatalf("unexpected hooks after remove: %s", got)
 	}
 }
 
@@ -159,6 +204,37 @@ func TestRemoveDroidCodegraphIndexHook(t *testing.T) {
 	RemoveDroidCodegraphIndexHook()
 	if HasDroidCodegraphIndexHook() {
 		t.Fatal("expected hook removed")
+	}
+}
+
+func TestRemoveDroidCodegraphIndexHookPreservesUserSibling(t *testing.T) {
+	setTestHome(t)
+	managed := toklessCommand("index", "--auto", "droid")
+	raw := `{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"` + managed + `"},{"type":"command","command":"echo user"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	RemoveDroidCodegraphIndexHook()
+	got, _ := os.ReadFile(droidHooksFile())
+	if strings.Contains(string(got), managed) || !strings.Contains(string(got), "echo user") {
+		t.Fatalf("unexpected hooks after remove: %s", got)
+	}
+}
+
+func TestInstallDroidCodegraphIndexHookMigratesBackslashAndDeduplicates(t *testing.T) {
+	setTestHome(t)
+	raw := `{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"C:\\old\\tokless.exe index --auto droid"}]},{"matcher":"","hooks":[{"type":"command","command":"D:\\old\\tokless.exe index --auto droid"}]},{"matcher":"","hooks":[{"type":"command","command":"echo user"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+
+	InstallDroidCodegraphIndexHook()
+	got, _ := os.ReadFile(droidHooksFile())
+	if strings.Count(string(got), "index --auto droid") != 1 {
+		t.Fatalf("managed hooks not deduplicated: %s", got)
+	}
+	if !strings.Contains(string(got), "echo user") {
+		t.Fatalf("user hook removed: %s", got)
 	}
 }
 

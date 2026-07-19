@@ -248,15 +248,28 @@ func antigravityLegacyRewriteScript() string {
 	return filepath.Join(util.Home(), ".gemini", "config", "tokless-rtk-rewrite.sh")
 }
 
-func getToklessAbs() string { return util.ToklessAbs() }
+func toklessCommand(args ...string) string {
+	return util.PersistedToklessCommand(util.ToklessAbs(), args...)
+}
+
+func toklessManagedCommand(command string, args ...string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) != len(args)+1 {
+		return false
+	}
+	for i, arg := range args {
+		if fields[i+1] != arg {
+			return false
+		}
+	}
+	exe := strings.Trim(fields[0], `"'`)
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(exe, "\\", "/")))
+	return base == "tokless" || base == "tokless.exe"
+}
 
 // InstallAntigravityRtkHook installs the PreToolUse hook for agy.
 func InstallAntigravityRtkHook() {
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-	command := tok + " rtk-hook agy"
+	command := toklessCommand("rtk-hook", "agy")
 
 	_ = os.Remove(antigravityRewriteScript())
 	_ = os.Remove(antigravityLegacyRewriteScript())
@@ -506,11 +519,7 @@ func RemoveAntigravityCodegraphIndexHook() {
 
 // InstallAntigravityCodegraphIndexHook installs hooks for codegraph auto-init.
 func InstallAntigravityCodegraphIndexHook() {
-	tok := getToklessAbs()
-	if strings.ContainsAny(tok, " \t") {
-		tok = "tokless"
-	}
-	command := tok + " agy-hook codegraph-index"
+	command := toklessCommand("agy-hook", "codegraph-index")
 
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
