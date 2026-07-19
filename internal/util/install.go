@@ -35,20 +35,36 @@ func ToklessDataDir() string {
 func InstallMarkerPath() string { return filepath.Join(ToklessDataDir(), "install.json") }
 
 // WriteInstallMarker records how this binary was installed.
-func WriteInstallMarker(method, path string) error {
+func WriteInstallMarker(method, path, version string) error {
 	if err := EnsureDir(ToklessDataDir()); err != nil {
 		return err
 	}
 	b, err := json.Marshal(InstallRecord{
 		Method:  method,
 		Path:    path,
-		Version: ToklessVersion(),
+		Version: version,
 		At:      time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
 		return err
 	}
 	return WriteFile(InstallMarkerPath(), string(b))
+}
+
+// RefreshInstallMarker re-stamps the marker after a self-update. The channel
+// that originally installed tokless is preserved — self-update changes the
+// version in place, not how it got there — so only the version and timestamp
+// move. With no prior marker (e.g. a source build), the method is recorded as
+// "self-update", which is what actually replaced the binary.
+func RefreshInstallMarker(version string) {
+	method := "self-update"
+	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
+		var m InstallRecord
+		if json.Unmarshal([]byte(raw), &m) == nil && m.Method != "" {
+			method = m.Method
+		}
+	}
+	_ = WriteInstallMarker(method, ToklessAbs(), version)
 }
 
 // InstallInfo reports how the running binary was installed. exact is true only
