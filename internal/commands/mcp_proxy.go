@@ -4,6 +4,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -39,7 +41,20 @@ func resolveMcpCommand(path string, argv []string) (string, []string) {
 			return nodePath, append([]string{path}, argv[1:]...)
 		}
 	}
-	return path, argv[1:]
+	return path, normalizedCmdBatchArgs(path, argv[1:], runtime.GOOS == "windows")
+}
+
+func normalizedCmdBatchArgs(command string, args []string, windows bool) []string {
+	out := append([]string(nil), args...)
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, "\\", "/")))
+	if !windows || (base != "cmd" && base != "cmd.exe") || len(out) < 2 || !strings.EqualFold(out[0], "/c") {
+		return out
+	}
+	ext := strings.ToLower(filepath.Ext(strings.ReplaceAll(out[1], "\\", "/")))
+	if ext == ".cmd" || ext == ".bat" {
+		out[1] = strings.ReplaceAll(out[1], "/", "\\")
+	}
+	return out
 }
 
 func isNodeShebangScript(path string) bool {

@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -184,9 +183,6 @@ func TestWrapAutoIndexUsesToklessRunMcpCommand(t *testing.T) {
 	got := WrapAutoIndex("codex", McpSpawn{Command: "codegraph", Args: []string{"serve", "--mcp"}})
 	if got.Command == "" {
 		t.Fatal("empty command")
-	}
-	if strings.ContainsAny(got.Command, " \t") {
-		t.Fatalf("MCP proxy command must not contain spaces (got %q)", got.Command)
 	}
 	if len(got.Args) < 2 || got.Args[0] != "run-mcp" || got.Args[1] != "--agent" {
 		t.Fatalf("args = %v", got.Args)

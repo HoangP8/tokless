@@ -240,13 +240,10 @@ func readMcpProbeResponse(rd *bufio.Reader, framed bool) ([]byte, error) {
 	return buf, err
 }
 
-// toklessRunMcpCommand is the MCP proxy command; spaced exe paths break agent spawn parsing.
+// toklessRunMcpCommand is stored separately from its argv, so spaces are safe.
 func toklessRunMcpCommand() string {
 	self, err := os.Executable()
 	if err != nil {
-		return "tokless"
-	}
-	if strings.ContainsAny(self, " \t") {
 		return "tokless"
 	}
 	return self
