@@ -21,7 +21,8 @@ func TestPiAgentDir(t *testing.T) {
 		t.Fatalf("default: %q", got)
 	}
 	t.Setenv("PI_CODING_AGENT_DIR", "/custom/pi")
-	if got := piAgentDir(); got != "/custom/pi" {
+	expected, _ := filepath.Abs("/custom/pi")
+	if got := piAgentDir(); got != expected {
 		t.Fatalf("abs override: %q", got)
 	}
 	t.Setenv("PI_CODING_AGENT_DIR", "~/mypi")
