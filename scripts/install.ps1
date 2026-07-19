@@ -35,6 +35,16 @@ $key.Close()
 $v = & $dest --version 2>$null
 Write-Host "✔ tokless $v ready → $dest" -ForegroundColor Green
 
+# Record the install channel so `tokless info` can report it exactly.
+$dataDir = Join-Path $env:LOCALAPPDATA "tokless"
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+@{
+    method  = "install script"
+    path    = $dest
+    version = "$v"
+    at      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+} | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $dataDir "install.json") -Encoding UTF8
+
 $hadInstallerRun = Test-Path Env:TOKLESS_INSTALLER_RUN
 $prevInstallerRun = $env:TOKLESS_INSTALLER_RUN
 if ([Environment]::UserInteractive -and -not $env:CI) {

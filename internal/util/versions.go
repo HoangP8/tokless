@@ -37,6 +37,9 @@ func cachePath() string {
 	return filepath.Join(home, ".cache", "tokless", "versions.json")
 }
 
+// VersionCachePath exposes the update-check cache location for reporting.
+func VersionCachePath() string { return cachePath() }
+
 const cacheTTL = 6 * time.Hour
 
 func loadCache() (*cacheShape, bool) {
@@ -282,6 +285,57 @@ func InstalledVersionFor(id string) *string {
 		return ponytailInstalledVersion()
 	}
 	return nil
+}
+
+// InstalledPathFor reports where a tool lives on disk ("" if not found).
+// caveman/ponytail can be installed under several agents; this returns the
+// same first-match dir their version lookup uses.
+func InstalledPathFor(id string) string {
+	switch id {
+	case "rtk":
+		return ResolveRtkBin()
+	case "caveman":
+		for _, dir := range cavemanVersionDirs() {
+			if cavemanInstalled(dir) {
+				return dir
+			}
+		}
+	case "ponytail":
+		for _, dir := range ponytailVersionDirs() {
+			if ponytailInstalled(dir) {
+				return dir
+			}
+		}
+	case "codegraph":
+		return npmPkgDir("@colbymchenry/codegraph")
+	case "context-mode":
+		return npmPkgDir("context-mode")
+	case "tokless":
+		return npmPkgDir("tokless")
+	}
+	return ""
+}
+
+// npmPkgDir locates a globally installed npm package's directory.
+func npmPkgDir(pkg string) string {
+	var dirs []string
+	for _, prefix := range []string{npmPrefix(), userLocalNpmPrefix()} {
+		if prefix == "" {
+			continue
+		}
+		if IsWin {
+			dirs = append(dirs, filepath.Join(prefix, "node_modules", pkg))
+		} else {
+			dirs = append(dirs, filepath.Join(prefix, "lib", "node_modules", pkg))
+		}
+	}
+	dirs = append(dirs, filepath.Join(Home(), ".bun", "install", "global", "node_modules", pkg))
+	for _, d := range dirs {
+		if Exists(filepath.Join(d, "package.json")) {
+			return d
+		}
+	}
+	return ""
 }
 
 const cavemanVersionMarker = ".tokless-version"
