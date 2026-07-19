@@ -46,7 +46,7 @@ func helpText() string {
 	return util.C.Bold(util.C.Cyan("tokless")) + " — token-saving for AI coding agents (Claude Code, OpenCode, Codex, Antigravity, GitHub Copilot, Factory Droid, Pi)\n\n" +
 		util.C.Bold("Usage:") + "\n" +
 		"  " + cy("tokless") + "              Install + wire everything (default; safe to re-run)\n" +
-		"  " + cy("tokless update") + "       Show version diff and upgrade tools\n" +
+		"  " + cy("tokless update") + "       Update the tokless CLI, then show version diff and upgrade tools\n" +
 		"  " + cy("tokless doctor") + "       Show what's wired up; warn about anything broken\n" +
 		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
 		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n\n" +
