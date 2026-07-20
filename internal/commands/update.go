@@ -11,6 +11,10 @@ import (
 )
 
 func RunUpdate(opts InitOptions) int {
+	// Before the header: a successful self-update re-execs with the same args,
+	// so the new binary prints the header and runs the tool update itself.
+	MaybeSelfUpdate(opts)
+
 	util.L.Raw("")
 	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless update")) + util.C.Gray("  refresh tools to latest"))
 	util.L.Raw("")
