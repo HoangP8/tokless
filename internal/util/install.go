@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-// InstallRecord is the marker an installer writes so tokless can report,
-// exactly, which channel put it on disk. Path is recorded so a stale marker
-// (installed via curl, later rebuilt from source) can be detected instead of
-// reported as truth.
+// InstallRecord is the install.json marker (method + path for staleness checks).
 type InstallRecord struct {
 	Method  string `json:"method"`
 	Path    string `json:"path"`
@@ -19,7 +16,7 @@ type InstallRecord struct {
 	At      string `json:"at"`
 }
 
-// ToklessDataDir is the per-user directory tokless keeps its own state in.
+// ToklessDataDir is per-user tokless state (~/.local/share/tokless or %LOCALAPPDATA%\tokless).
 func ToklessDataDir() string {
 	if IsWin {
 		base := os.Getenv("LOCALAPPDATA")
@@ -31,10 +28,10 @@ func ToklessDataDir() string {
 	return filepath.Join(Home(), ".local", "share", "tokless")
 }
 
-// InstallMarkerPath is where installers write the install record.
+// InstallMarkerPath is install.json under ToklessDataDir.
 func InstallMarkerPath() string { return filepath.Join(ToklessDataDir(), "install.json") }
 
-// WriteInstallMarker records how this binary was installed.
+// WriteInstallMarker writes how this binary was installed.
 func WriteInstallMarker(method, path, version string) error {
 	if err := EnsureDir(ToklessDataDir()); err != nil {
 		return err
@@ -51,11 +48,7 @@ func WriteInstallMarker(method, path, version string) error {
 	return WriteFile(InstallMarkerPath(), string(b))
 }
 
-// RefreshInstallMarker re-stamps the marker after a self-update. The channel
-// that originally installed tokless is preserved — self-update changes the
-// version in place, not how it got there — so only the version and timestamp
-// move. With no prior marker (e.g. a source build), the method is recorded as
-// "self-update", which is what actually replaced the binary.
+// RefreshInstallMarker updates version/path after self-update; keeps prior method if any.
 func RefreshInstallMarker(version string) {
 	method := "self-update"
 	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
@@ -67,10 +60,7 @@ func RefreshInstallMarker(version string) {
 	_ = WriteInstallMarker(method, ToklessAbs(), version)
 }
 
-// InstallInfo reports how the running binary was installed. exact is true only
-// when a marker written by the installer matches this binary; otherwise the
-// method is inferred from the binary's location and callers must present it as
-// a guess.
+// InstallInfo returns install provenance. exact means marker path matches this binary.
 func InstallInfo() (rec InstallRecord, exact bool) {
 	exe := ToklessAbs()
 
@@ -86,7 +76,7 @@ func InstallInfo() (rec InstallRecord, exact bool) {
 	return InstallRecord{Method: inferInstallMethod(exe), Path: exe}, false
 }
 
-// samePath compares two binary paths tolerantly (case/separator on Windows).
+// samePath compares paths with Clean; on Windows also lowercases and normalizes slashes.
 func samePath(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -101,7 +91,7 @@ func samePath(a, b string) bool {
 	return norm(a) == norm(b)
 }
 
-// inferInstallMethod guesses the channel from where the binary lives.
+// inferInstallMethod guesses install channel from binary location.
 func inferInstallMethod(exe string) string {
 	if exe == "" || !strings.ContainsRune(exe, filepath.Separator) {
 		return "unknown"
@@ -110,10 +100,9 @@ func inferInstallMethod(exe string) string {
 	if IsWin {
 		slash = strings.ToLower(slash)
 	}
-	dir := filepath.ToSlash(filepath.Dir(exe))
+	dir := filepath.Dir(exe)
 
 	switch {
-	// Homebrew's dir is literally "Cellar"; match case-insensitively.
 	case strings.Contains(strings.ToLower(slash), "/cellar/"), strings.HasPrefix(slash, "/opt/homebrew/"),
 		strings.HasPrefix(slash, "/home/linuxbrew/"), strings.HasPrefix(slash, "/usr/local/homebrew/"):
 		return "homebrew"
@@ -121,7 +110,7 @@ func inferInstallMethod(exe string) string {
 		return "npm"
 	case isGoBinDir(dir):
 		return "go install"
-	case samePath(dir, filepath.Join(Home(), ".local", "bin")):
+	case isInstallScriptDir(dir):
 		return "install script"
 	case strings.Contains(slash, "/dist/release/"), strings.Contains(slash, "/go-build"):
 		return "source build"
@@ -129,7 +118,22 @@ func inferInstallMethod(exe string) string {
 	return "unknown"
 }
 
-// isGoBinDir reports whether dir is where `go install` drops binaries.
+// isInstallScriptDir matches curl/irm install destinations (unix + Windows).
+func isInstallScriptDir(dir string) bool {
+	if samePath(dir, filepath.Join(Home(), ".local", "bin")) {
+		return true
+	}
+	if !IsWin {
+		return false
+	}
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = filepath.Join(Home(), "AppData", "Local")
+	}
+	return samePath(dir, filepath.Join(base, "Programs", "tokless"))
+}
+
+// isGoBinDir is true when dir is GOBIN or $GOPATH/bin (or ~/go/bin).
 func isGoBinDir(dir string) bool {
 	if b := os.Getenv("GOBIN"); b != "" && samePath(dir, b) {
 		return true

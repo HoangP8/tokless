@@ -123,6 +123,49 @@ func padEnd(s string, n int) string {
 	return s + strings.Repeat(" ", n-len(s))
 }
 
+// cmdHeader prints the standard "tokless <cmd>  subtitle" banner.
+func cmdHeader(cmd, subtitle string) {
+	util.L.Raw("")
+	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless "+cmd)) + util.C.Gray("  "+subtitle))
+	util.L.Raw("")
+}
+
+// treeStatus prints a final "Status" branch with one leaf per line, then closes.
+func treeStatus(lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
+	util.TreeCorner("Status")
+	for _, line := range lines {
+		util.TreeLeaf(line)
+	}
+	util.TreeClose()
+}
+
+// Palette helpers for status / version trees.
+func paintVer(v string) string  { return util.C.Soft(v) }
+func paintName(s string) string { return util.C.Bold(s) }
+func paintPath(s string) string { return util.C.Gray(s) }
+func paintKey(s string) string  { return util.C.Cyan(s) }
+func paintCmd(s string) string  { return util.C.Bold(util.C.Cyan(s)) }
+func paintArrow() string        { return util.C.Dim("→") }
+
+// statusOK / statusWarn / statusInfo — consistent Status leaf styling.
+func statusOK(msg string) string {
+	return util.C.Green(util.Sym.Check) + " " + util.C.Green(msg)
+}
+func statusWarn(msg string) string {
+	return util.C.Yellow(util.Sym.Warn) + " " + util.C.Yellow(msg)
+}
+func statusInfo(msg string) string {
+	return util.C.Cyan(util.Sym.Info) + " " + msg
+}
+
+// statusKV is "✔ key   value" with a fixed key column.
+func statusKV(mark, key, value string) string {
+	return mark + " " + paintKey(padEnd(key, 8)) + value
+}
+
 func printRepoFooter(tree bool) {
 	if osEnvTest() {
 		return

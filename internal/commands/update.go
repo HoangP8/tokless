@@ -11,16 +11,13 @@ import (
 )
 
 func RunUpdate(opts InitOptions) int {
-	// Before the header: a successful self-update re-execs with the same args,
-	// so the new binary prints the header and runs the tool update itself.
 	MaybeSelfUpdate(opts)
 
-	util.L.Raw("")
-	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless update")) + util.C.Gray("  refresh tools to latest"))
-	util.L.Raw("")
+	cmdHeader("update", "refresh tools to latest")
 
 	if opts.DryRun {
-		util.L.Info("Dry run — would probe registries and reinstall changed tools only.")
+		util.L.Raw("  " + util.C.Cyan(util.Sym.Info) + " Dry run — probe only, no installs.")
+		util.L.Raw("")
 	}
 
 	probingLine := "  " + util.C.Gray("probing upstream…")
@@ -37,56 +34,64 @@ func RunUpdate(opts InitOptions) int {
 	}
 
 	var changed []string
+	util.TreeTop("Versions")
 	for _, t := range core.ListTools() {
+		if t.InstructionOnly {
+			continue
+		}
 		info, has := versions[t.ID]
-		installed := util.C.Gray("not on PATH")
+		name := paintName(padEnd(t.ID, 14))
+
+		installed := util.C.Dim("not on PATH")
 		if has && info.Installed != nil {
-			installed = "v" + *info.Installed
+			installed = paintVer(padEnd("v"+*info.Installed, 10))
+		} else {
+			installed = util.C.Dim(padEnd("not on PATH", 10))
 		}
 
-		latest := util.C.Gray("?")
+		latest := util.C.Dim(padEnd("?", 10))
 		if has && info.Latest != nil {
-			latest = "v" + *info.Latest
+			latest = paintVer(padEnd("v"+*info.Latest, 10))
 		}
 
 		mark := util.C.Gray(util.Sym.Bullet)
-		suffix := util.C.Gray(" (latest unknown)")
+		suffix := util.C.Dim(" (latest unknown)")
 
 		switch {
 		case has && info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
 			mark = util.C.Yellow("↑")
+			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
 			suffix = util.C.Yellow(" → upgrade")
 			changed = append(changed, t.ID)
 		case has && info.Installed == nil && info.Latest != nil:
 			mark = util.C.Yellow("+")
+			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
 			suffix = util.C.Yellow(" → install")
 			changed = append(changed, t.ID)
 		case has && info.Installed != nil && info.Latest != nil:
 			mark = util.C.Green(util.Sym.Check)
-			suffix = util.C.Gray(" (up to date)")
+			suffix = util.C.Green(" (up to date)")
 		}
 
-		util.L.Raw("  " + mark + " " + padEnd(t.ID, 14) + " " + padEnd(installed, 10) + " → " + padEnd(latest, 10) + suffix)
+		util.TreeLeaf(mark + " " + name + " " + installed + " " + paintArrow() + " " + latest + suffix)
 	}
-	util.L.Raw("")
+	util.TreeClose()
 
 	if opts.DryRun {
 		if len(changed) > 0 {
-			util.L.Info("Would upgrade: " + joinComma(changed))
+			treeStatus(statusInfo(util.C.Gray("Would upgrade: ") + util.C.Bold(paintVer(joinComma(changed)))))
 		} else {
-			util.L.Info("Everything up to date.")
+			treeStatus(statusOK("Everything up to date."))
 		}
+		printRepoFooter(true)
 		util.L.Raw("")
 		return 0
 	}
 
 	if len(changed) == 0 {
-		if !opts.DryRun {
-			agents.PiUpdatePackages()
-		} else {
-			util.L.Sub("[dry-run] would run: pi update <tokless-managed sources only>")
-		}
-		util.L.Ok("Everything up to date.")
+		agents.PiUpdatePackages()
+		treeStatus(statusOK("Everything up to date."))
+		printRepoFooter(true)
 		util.L.Raw("")
 		return 0
 	}
@@ -113,16 +118,12 @@ func RunUpdate(opts InitOptions) int {
 		}
 		changed = util.MultiSelect("Select tools to update", pick)
 		if len(changed) == 0 {
-			util.L.Raw("")
-			util.L.Info("No tools selected.")
+			treeStatus(statusInfo(util.C.Dim("No tools selected.")))
+			printRepoFooter(true)
 			util.L.Raw("")
 			return 0
 		}
 	}
-
-	util.L.Raw("  " + util.C.Bold("Upgrading: "+joinComma(changed)))
-	util.L.Raw("")
-	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless")) + util.C.Gray("  global token-saver for AI agents"))
 
 	if !opts.DryRun {
 		needNode, needGit, minNode := false, false, 0
@@ -154,8 +155,8 @@ func RunUpdate(opts InitOptions) int {
 			changed = keep
 		}
 		if len(changed) == 0 {
-			util.L.Raw("")
-			util.L.Err("Missing dependencies; nothing safe to update.")
+			treeStatus(util.C.Red(util.Sym.Cross) + " " + util.C.Gray("Missing dependencies; nothing safe to update."))
+			printRepoFooter(true)
 			util.L.Raw("")
 			return 1
 		}
@@ -167,7 +168,7 @@ func RunUpdate(opts InitOptions) int {
 			tools = append(tools, t)
 		}
 	}
-	bar := util.NewProgress("")
+	bar := util.NewSectionProgress("Upgrading " + joinComma(changed))
 	bar.Start(len(tools))
 	for _, tool := range tools {
 		bar.Begin(tool.Label)
@@ -196,8 +197,8 @@ func RunUpdate(opts InitOptions) int {
 	if !opts.DryRun {
 		util.BustVersionCache()
 	}
-	util.L.Raw("")
-	util.L.Ok("Updated " + joinComma(changed) + ".")
+	treeStatus(statusOK("Updated " + joinComma(changed) + "."))
+	printRepoFooter(true)
 	util.L.Raw("")
 	return 0
 }

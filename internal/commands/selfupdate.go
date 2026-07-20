@@ -123,9 +123,7 @@ func runStatus(label string, fn func()) {
 	<-stopped
 }
 
-// runSelfUpdateTo swaps the binary and, on success, re-stamps the install
-// marker so `tokless info` reports the new version instead of the one recorded
-// when the binary was first installed.
+// runSelfUpdateTo swaps the binary and refreshes install.json on success.
 func runSelfUpdateTo(latest string) (bool, bool) {
 	ok, interrupted := selfUpdateExec(latest)
 	if ok && os.Getenv("TOKLESS_TEST") != "1" {

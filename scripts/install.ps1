@@ -35,7 +35,7 @@ $key.Close()
 $v = & $dest --version 2>$null
 Write-Host "✔ tokless $v ready → $dest" -ForegroundColor Green
 
-# Record the install channel so `tokless info` can report it exactly.
+# install.json for `tokless info`
 $dataDir = Join-Path $env:LOCALAPPDATA "tokless"
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 @{

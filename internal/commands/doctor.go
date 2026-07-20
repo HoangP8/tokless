@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -18,16 +17,13 @@ type agentReport struct {
 }
 
 func RunDoctor(offline bool) int {
-	util.L.Raw("")
-	util.L.Raw("  " + util.C.Bold(util.C.Cyan("tokless doctor")) + util.C.Gray("  quick health check"))
-	util.L.Raw("")
+	cmdHeader("doctor", "quick health check")
 
 	tools := core.ListTools()
+	// UI + status: only agents present on this machine (Detect is OS-aware).
 	var reports []agentReport
 	for _, agent := range core.ListAgents() {
-		det := agent.Detect()
-		if !det.Installed {
-			reports = append(reports, agentReport{label: agent.Label})
+		if !agent.Detect().Installed {
 			continue
 		}
 		var missing []string
@@ -50,69 +46,125 @@ func RunDoctor(offline bool) int {
 		})
 	}
 
+	util.TreeTop("Agents")
+	if len(reports) == 0 {
+		util.TreeLeaf(util.C.Dim("none detected on this machine"))
+	} else {
+		for _, r := range reports {
+			util.TreeLeaf(doctorSummaryLine(r))
+		}
+	}
+	util.TreeClose()
+
+	broken := 0
+	installedAgents := len(reports)
 	for _, r := range reports {
-		doctorSummary(r)
+		if !r.wired {
+			broken++
+		}
 	}
 
+	outdated := -1
 	if !offline && os.Getenv("TOKLESS_TEST") != "1" {
-		statusLine := "  " + util.C.Gray("checking for updates…")
+		statusLine := util.TreeStem() + util.C.Gray("checking for updates…")
 		if stdoutTTY() {
 			fmt.Print(statusLine)
 		} else {
 			util.L.Raw(statusLine)
 		}
 		v := util.GatherVersions()
-		outdated := util.CountOutdated(v)
+		outdated = util.CountOutdated(v)
 		if stdoutTTY() {
 			fmt.Print(util.EraseStyledLine(statusLine))
 		} else {
 			util.L.Raw("")
 		}
-		listToolVersions(tools, v, false)
-		listPiPackageVersions()
-		util.L.Raw("")
-		if outdated > 0 {
-			util.L.Warn(plural(outdated) + " available — run " + util.C.Cyan("tokless update"))
-		} else {
-			util.L.Ok("All up to date.")
-		}
+
+		util.TreeCorner("Tools")
+		listToolVersions(tools, v, true)
+		util.TreeClose()
 	}
 
-	broken := 0
-	for _, r := range reports {
-		if r.installed && !r.wired {
-			broken++
-		}
-	}
-	if broken > 0 {
-		util.L.Raw("")
-		util.L.Info("Run " + util.C.Cyan("tokless") + " to fix.")
-	}
-	printRepoFooter(false)
+	treeStatus(doctorStatusLines(outdated, broken, installedAgents)...)
+	printRepoFooter(true)
 	util.L.Raw("")
 	return 0
 }
 
-func doctorSummary(r agentReport) {
-	var mark, status string
+// doctorStatusLines builds labeled Status leaves.
+func doctorStatusLines(outdated, broken, installedAgents int) []string {
+	toolsOK := outdated == 0
+	agentsOK := broken == 0
+	online := outdated >= 0
+
+	if online && toolsOK && agentsOK {
+		return []string{statusOK("Everything up to date.")}
+	}
+
+	var lines []string
+	if online {
+		if outdated > 0 {
+			lines = append(lines, statusKV(
+				util.C.Yellow(util.Sym.Warn),
+				"tools",
+				util.C.Yellow(plural(outdated)+" available")+" — run "+paintCmd("tokless update"),
+			))
+		} else {
+			lines = append(lines, statusKV(
+				util.C.Green(util.Sym.Check),
+				"tools",
+				util.C.Green("all up to date"),
+			))
+		}
+	}
+
+	if broken > 0 {
+		msg := itoa(broken) + " incomplete"
+		if broken == 1 {
+			msg = "1 incomplete"
+		}
+		lines = append(lines, statusKV(
+			util.C.Yellow(util.Sym.Warn),
+			"agents",
+			util.C.Yellow(msg)+" — run "+paintCmd("tokless"),
+		))
+	} else if installedAgents > 0 {
+		lines = append(lines, statusKV(
+			util.C.Green(util.Sym.Check),
+			"agents",
+			util.C.Green("all wired"),
+		))
+	} else {
+		lines = append(lines, statusKV(
+			util.C.Gray(util.Sym.Bullet),
+			"agents",
+			util.C.Dim("none installed"),
+		))
+	}
+
+	if !online && broken == 0 && installedAgents > 0 {
+		return []string{
+			statusOK("Agents look good."),
+			statusInfo(util.C.Gray("Skip --offline to check tool updates.")),
+		}
+	}
+	return lines
+}
+
+func doctorSummaryLine(r agentReport) string {
+	name := paintName(padEnd(r.label, 14))
 	switch {
 	case !r.installed:
-		mark = util.C.Gray(util.Sym.Bullet)
-		status = util.C.Gray("not installed")
+		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(r.label, 14)) + util.C.Gray("not installed")
 	case r.wired:
-		mark = util.C.Green(util.Sym.Check)
-		status = util.C.Gray("all tools wired")
+		return util.C.Green(util.Sym.Check) + " " + name + util.C.Green("all tools wired")
 	case len(r.runtime) > 0 && len(r.missing) == 0:
-		mark = util.C.Yellow(util.Sym.Warn)
-		status = util.C.Yellow("runtime: " + formatRuntimeIssues(r.runtime))
+		return util.C.Yellow(util.Sym.Warn) + " " + name + util.C.Yellow("runtime: "+formatRuntimeIssues(r.runtime))
 	case len(r.runtime) > 0:
-		mark = util.C.Yellow(util.Sym.Warn)
-		status = util.C.Yellow("missing: " + joinComma(r.missing) + "; runtime: " + formatRuntimeIssues(r.runtime))
+		return util.C.Yellow(util.Sym.Warn) + " " + name + util.C.Yellow("missing: "+joinComma(r.missing)+"; runtime: "+formatRuntimeIssues(r.runtime))
 	default:
-		mark = util.C.Yellow(util.Sym.Warn)
-		status = util.C.Yellow("missing: " + joinComma(r.missing))
+		return util.C.Yellow(util.Sym.Warn) + " " + name + util.C.Yellow("missing: "+joinComma(r.missing))
 	}
-	util.L.Raw("  " + mark + " " + padEnd(r.label, 14) + " " + status)
 }
 
 func toolVersionOutdated(tool *core.ToolManifest, info util.VersionInfo) bool {
@@ -123,25 +175,26 @@ func toolVersionOutdated(tool *core.ToolManifest, info util.VersionInfo) bool {
 }
 
 func toolVersionDisplayLine(tool *core.ToolManifest, info util.VersionInfo) string {
+	name := paintName(padEnd(tool.ID, 14))
 	switch {
 	case tool.InstructionOnly:
 		return ""
 	case tool.NotTrackable && info.Installed != nil:
-		return util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+"v"+*info.Installed)
+		return util.C.Green(util.Sym.Check) + " " + name + paintVer("v"+*info.Installed)
 	case tool.NotTrackable && info.Present:
-		return util.C.Green(util.Sym.Check) + " " + util.C.Gray(padEnd(tool.ID, 14)+"installed")
+		return util.C.Green(util.Sym.Check) + " " + name + util.C.Green("installed")
 	case tool.NotTrackable:
-		return util.C.Gray(util.Sym.Bullet + " " + padEnd(tool.ID, 14) + "not installed")
+		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(tool.ID, 14)) + util.C.Gray("not installed")
 	case toolVersionOutdated(tool, info):
-		return util.C.Yellow("↑") + " " + util.C.Gray(padEnd(tool.ID, 14)+padEnd("v"+*info.Installed, 10)+"→ ") + util.C.Green("v"+*info.Latest)
+		return util.C.Yellow("↑") + " " + name + paintVer(padEnd("v"+*info.Installed, 10)) + paintArrow() + " " + util.C.Bold(util.C.Green("v"+*info.Latest))
 	case info.Installed != nil:
-		row := padEnd(tool.ID, 14) + padEnd("v"+*info.Installed, 10)
+		row := name + paintVer(padEnd("v"+*info.Installed, 10))
 		if info.Latest != nil {
-			row += "→ v" + *info.Latest
+			row += paintArrow() + " " + paintVer("v"+*info.Latest)
 		}
-		return util.C.Green(util.Sym.Check) + " " + util.C.Gray(row)
+		return util.C.Green(util.Sym.Check) + " " + row
 	default:
-		return util.C.Gray("• " + padEnd(tool.ID, 14) + "not installed")
+		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(tool.ID, 14)) + util.C.Gray("not installed")
 	}
 }
 
@@ -160,29 +213,6 @@ func listToolVersions(tools []*core.ToolManifest, v map[string]util.VersionInfo,
 		} else {
 			util.L.Raw("  " + line)
 		}
-	}
-}
-
-// listPiPackageVersions lists tokless-managed Pi sources present in settings.
-func listPiPackageVersions() {
-	if util.Which("pi") == "" {
-		return
-	}
-	any := false
-	for _, src := range agents.PiPackageList() {
-		if !agents.PiSourceHas(src) {
-			continue
-		}
-		if !any {
-			util.L.Raw("")
-			util.L.Raw("  " + util.C.Bold("Pi packages") + util.C.Gray("  (MCP bridge; tokless update)"))
-			any = true
-		}
-		exact := agents.PiPackageSettingsSource(src)
-		if exact == "" {
-			exact = src
-		}
-		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray(exact))
 	}
 }
 

@@ -49,7 +49,7 @@ func wrapFg256(n int) func(string) string {
 type Colors struct {
 	Bold, Dim, Italic, Underline, Inverse         func(string) string
 	Red, Green, Yellow, Blue, Magenta, Cyan, Gray func(string) string
-	Orange                                        func(string) string
+	Orange, Soft                                  func(string) string
 }
 
 var C = Colors{
@@ -65,6 +65,7 @@ var C = Colors{
 	Cyan:      wrap(36, 39),
 	Gray:      wrap(90, 39),
 	Orange:    wrapFg256(208),
+	Soft: wrapFg256(111),
 }
 
 // Symbols carries unicode glyphs with ascii fallbacks.

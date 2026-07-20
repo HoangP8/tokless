@@ -37,7 +37,7 @@ func cachePath() string {
 	return filepath.Join(home, ".cache", "tokless", "versions.json")
 }
 
-// VersionCachePath exposes the update-check cache location for reporting.
+// VersionCachePath is the versions.json cache path (for tokless info).
 func VersionCachePath() string { return cachePath() }
 
 const cacheTTL = 6 * time.Hour
@@ -287,9 +287,7 @@ func InstalledVersionFor(id string) *string {
 	return nil
 }
 
-// InstalledPathFor reports where a tool lives on disk ("" if not found).
-// caveman/ponytail can be installed under several agents; this returns the
-// same first-match dir their version lookup uses.
+// InstalledPathFor returns a tool's on-disk path, or "" if missing.
 func InstalledPathFor(id string) string {
 	switch id {
 	case "rtk":
@@ -316,7 +314,7 @@ func InstalledPathFor(id string) string {
 	return ""
 }
 
-// npmPkgDir locates a globally installed npm package's directory.
+// npmPkgDir finds a global npm/bun package directory.
 func npmPkgDir(pkg string) string {
 	var dirs []string
 	for _, prefix := range []string{npmPrefix(), userLocalNpmPrefix()} {

@@ -52,12 +52,12 @@ func treeCornerGlyph(root bool) string {
 
 // TreeTop opens the first branch (down-only connector).
 func TreeTop(title string) {
-	fmt.Println(C.Dim(treeCornerGlyph(true)) + C.Bold(title))
+	fmt.Println(C.Dim(treeCornerGlyph(true)) + C.Bold(C.Magenta(title)))
 }
 
 // TreeCorner opens a mid-tree branch under an active trunk.
 func TreeCorner(title string) {
-	fmt.Println(C.Dim(treeCornerGlyph(false)) + C.Bold(title))
+	fmt.Println(C.Dim(treeCornerGlyph(false)) + C.Bold(C.Magenta(title)))
 }
 
 // TreeCornerStyled opens a mid-tree branch; title already styled.
@@ -203,7 +203,6 @@ func VisibleLen(s string) int {
 	}
 	return n
 }
-
 
 func EraseStyledLine(s string) string {
 	_ = s

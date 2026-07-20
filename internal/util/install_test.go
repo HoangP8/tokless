@@ -6,9 +6,6 @@ import (
 )
 
 func TestInferInstallMethod(t *testing.T) {
-	if IsWin {
-		t.Skip("path shapes below are unix-specific")
-	}
 	home := t.TempDir()
 	SetHomeOverride(home)
 	t.Cleanup(func() { SetHomeOverride("") })
@@ -19,14 +16,26 @@ func TestInferInstallMethod(t *testing.T) {
 		exe  string
 		want string
 	}{
-		{"/opt/homebrew/bin/tokless", "homebrew"},
-		{"/usr/local/Cellar/tokless/1.0.0/bin/tokless", "homebrew"},
-		{"/usr/lib/node_modules/tokless/node_modules/.bin/tokless", "npm"},
 		{filepath.Join(home, "go", "bin", "tokless"), "go install"},
 		{filepath.Join(home, ".local", "bin", "tokless"), "install script"},
-		{"/Users/x/src/tokless/dist/release/tokless-darwin-arm64", "source build"},
-		{"/usr/bin/tokless", "unknown"},
 		{"tokless", "unknown"},
+	}
+	if IsWin {
+		local := filepath.Join(home, "AppData", "Local")
+		t.Setenv("LOCALAPPDATA", local)
+		cases = append(cases,
+			struct{ exe, want string }{filepath.Join(local, "Programs", "tokless", "tokless.exe"), "install script"},
+			struct{ exe, want string }{filepath.Join(home, "AppData", "Roaming", "npm", "node_modules", "tokless", "node_modules", ".bin", "tokless.cmd"), "npm"},
+			struct{ exe, want string }{`C:\Windows\System32\tokless.exe`, "unknown"},
+		)
+	} else {
+		cases = append(cases,
+			struct{ exe, want string }{"/opt/homebrew/bin/tokless", "homebrew"},
+			struct{ exe, want string }{"/usr/local/Cellar/tokless/1.0.0/bin/tokless", "homebrew"},
+			struct{ exe, want string }{"/usr/lib/node_modules/tokless/node_modules/.bin/tokless", "npm"},
+			struct{ exe, want string }{"/Users/x/src/tokless/dist/release/tokless-darwin-arm64", "source build"},
+			struct{ exe, want string }{"/usr/bin/tokless", "unknown"},
+		)
 	}
 	for _, c := range cases {
 		if got := inferInstallMethod(c.exe); got != c.want {
@@ -35,8 +44,6 @@ func TestInferInstallMethod(t *testing.T) {
 	}
 }
 
-// A marker pointing at a different binary is stale (installed one way, then
-// rebuilt another) and must not be reported as exact.
 func TestInstallInfoRejectsStaleMarker(t *testing.T) {
 	home := t.TempDir()
 	SetHomeOverride(home)
@@ -58,8 +65,6 @@ func TestInstallInfoRejectsStaleMarker(t *testing.T) {
 	}
 }
 
-// A self-update replaces the binary at the same path, so the marker stays
-// "exact" — it must carry the new version, not the one recorded at install.
 func TestRefreshInstallMarkerAfterSelfUpdate(t *testing.T) {
 	home := t.TempDir()
 	SetHomeOverride(home)
@@ -82,7 +87,6 @@ func TestRefreshInstallMarkerAfterSelfUpdate(t *testing.T) {
 	}
 }
 
-// With no prior marker, a self-update records itself as the source.
 func TestRefreshInstallMarkerWithoutPrior(t *testing.T) {
 	home := t.TempDir()
 	SetHomeOverride(home)
