@@ -1,14 +1,26 @@
 package util
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestInferInstallMethod(t *testing.T) {
+// sandboxHome redirects Home + ToklessDataDir into t.TempDir (cross-OS).
+func sandboxHome(t *testing.T) string {
+	t.Helper()
 	home := t.TempDir()
 	SetHomeOverride(home)
+	if IsWin {
+		t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	}
 	t.Cleanup(func() { SetHomeOverride("") })
+	_ = os.Remove(InstallMarkerPath())
+	return home
+}
+
+func TestInferInstallMethod(t *testing.T) {
+	home := sandboxHome(t)
 	t.Setenv("GOBIN", "")
 	t.Setenv("GOPATH", "")
 
@@ -45,9 +57,7 @@ func TestInferInstallMethod(t *testing.T) {
 }
 
 func TestInstallInfoRejectsStaleMarker(t *testing.T) {
-	home := t.TempDir()
-	SetHomeOverride(home)
-	t.Cleanup(func() { SetHomeOverride("") })
+	home := sandboxHome(t)
 
 	if err := WriteInstallMarker("homebrew", filepath.Join(home, "nowhere", "tokless"), "1.0.0"); err != nil {
 		t.Fatal(err)
@@ -66,9 +76,7 @@ func TestInstallInfoRejectsStaleMarker(t *testing.T) {
 }
 
 func TestRefreshInstallMarkerAfterSelfUpdate(t *testing.T) {
-	home := t.TempDir()
-	SetHomeOverride(home)
-	t.Cleanup(func() { SetHomeOverride("") })
+	_ = sandboxHome(t)
 
 	if err := WriteInstallMarker("install script", ToklessAbs(), "0.2.6"); err != nil {
 		t.Fatal(err)
@@ -88,9 +96,7 @@ func TestRefreshInstallMarkerAfterSelfUpdate(t *testing.T) {
 }
 
 func TestRefreshInstallMarkerWithoutPrior(t *testing.T) {
-	home := t.TempDir()
-	SetHomeOverride(home)
-	t.Cleanup(func() { SetHomeOverride("") })
+	_ = sandboxHome(t)
 
 	RefreshInstallMarker("0.2.7")
 	rec, exact := InstallInfo()

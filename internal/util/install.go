@@ -17,7 +17,14 @@ type InstallRecord struct {
 }
 
 // ToklessDataDir is per-user tokless state (~/.local/share/tokless or %LOCALAPPDATA%\tokless).
+// Honors SetHomeOverride so tests never write outside the sandbox (esp. Windows LOCALAPPDATA).
 func ToklessDataDir() string {
+	if homeOverride != "" {
+		if IsWin {
+			return filepath.Join(homeOverride, "AppData", "Local", "tokless")
+		}
+		return filepath.Join(homeOverride, ".local", "share", "tokless")
+	}
 	if IsWin {
 		base := os.Getenv("LOCALAPPDATA")
 		if base == "" {
