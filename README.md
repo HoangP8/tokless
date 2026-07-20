@@ -129,6 +129,7 @@ Each tool is wired into each agent through the agent's native config system:
 tokless              Install + wire everything (default; safe to re-run)
 tokless update       Show version diff and upgrade tools
 tokless doctor       Show what's wired; warn about broken bits
+tokless info         Show how tokless was installed, plus paths and config locations
 tokless index        Build per-project codegraph indexes
 tokless disable      Disable one or more agents
 tokless uninstall    Remove everything tokless touched

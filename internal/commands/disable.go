@@ -124,6 +124,7 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		if util.Exists(cacheDir) {
 			_ = os.RemoveAll(cacheDir)
 		}
+		_ = os.Remove(util.InstallMarkerPath())
 	}
 
 	labels := make([]string, len(agentIDs))

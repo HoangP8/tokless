@@ -37,6 +37,14 @@ chmod +x "$tmp"
 install -m 0755 "$tmp" "${DEST}/tokless"
 ok "installed tokless $("${DEST}/tokless" --version 2>/dev/null) → ${DEST}/tokless"
 
+# Record the install channel so `tokless info` can report it exactly.
+data_dir="${HOME}/.local/share/tokless"
+mkdir -p "$data_dir"
+printf '{"method":"install script","path":"%s","version":"%s","at":"%s"}\n' \
+  "${DEST}/tokless" \
+  "$("${DEST}/tokless" --version 2>/dev/null)" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${data_dir}/install.json"
+
 # Ensure ~/.local/bin is on PATH for new shells.
 case ":${PATH}:" in
   *":${DEST}:"*) : ;;
