@@ -152,6 +152,11 @@ func TestConfigureAntigravityMcpMergeAndRemove(t *testing.T) {
 	_ = os.MkdirAll(p.Dir, 0o755)
 	_ = os.WriteFile(p.McpConfig, []byte(`{"mcpServers":{"user-server":{"command":"keepme"}}}`), 0o644)
 	_ = os.WriteFile(p.Settings, []byte(`{"mcpServers":{"codegraph":{"command":"old"}},"permissions":{"allow":["mcp(codegraph/*)"]}}`), 0o644)
+	_ = os.MkdirAll(filepath.Dir(p.McpConfigCLI), 0o755)
+	_ = os.WriteFile(p.McpConfigCLI, []byte(`{"shared-setting":true,"mcpServers":{"shared-user":{"command":"keep-shared"}}}`), 0o644)
+	cliMcp := filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")
+	_ = os.MkdirAll(filepath.Dir(cliMcp), 0o755)
+	_ = os.WriteFile(cliMcp, []byte(`{"cli-setting":true,"mcpServers":{"cli-user":{"command":"keep-cli"}}}`), 0o644)
 
 	changed, _ := ConfigureAntigravityMcp("codegraph")
 	if !changed {
@@ -168,8 +173,14 @@ func TestConfigureAntigravityMcpMergeAndRemove(t *testing.T) {
 			t.Fatalf("mcp_config.json missing %s:\n%s", want, raw)
 		}
 	}
+	rawCLI, _ := os.ReadFile(cliMcp)
+	for _, want := range []string{`"codegraph"`, `"serve"`, `"--mcp"`, `"context-mode"`} {
+		if !strings.Contains(string(rawCLI), want) {
+			t.Fatalf("CLI mcp_config.json missing %s:\n%s", want, rawCLI)
+		}
+	}
 	if !AntigravityMcpHas("codegraph") || !AntigravityMcpHas("context-mode") {
-		t.Fatal("AntigravityMcpHas should see both tools")
+		t.Fatal("AntigravityMcpHas should see both tools in shared and CLI configs")
 	}
 
 	rawLegacy, _ := os.ReadFile(p.McpConfig)
@@ -189,7 +200,7 @@ func TestConfigureAntigravityMcpMergeAndRemove(t *testing.T) {
 	if AntigravityMcpHas("codegraph") {
 		t.Fatal("codegraph should be removed")
 	}
-	for _, f := range []string{p.McpConfig, p.McpConfigCLI, p.Settings} {
+	for _, f := range []string{p.McpConfig, p.McpConfigCLI, cliMcp, p.Settings} {
 		raw, _ = os.ReadFile(f)
 		if strings.Contains(string(raw), `"codegraph"`) {
 			t.Fatalf("codegraph not removed from %s", f)
@@ -200,8 +211,93 @@ func TestConfigureAntigravityMcpMergeAndRemove(t *testing.T) {
 		t.Fatalf("remove clobbered unrelated entries:\n%s", raw)
 	}
 	raw, _ = os.ReadFile(p.McpConfigCLI)
-	if !strings.Contains(string(raw), `"context-mode"`) {
-		t.Fatalf("remove clobbered canonical entries:\n%s", raw)
+	for _, want := range []string{`"context-mode"`, `"shared-setting"`, `"shared-user"`, `"keep-shared"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("remove clobbered canonical entry %s:\n%s", want, raw)
+		}
+	}
+	raw, _ = os.ReadFile(cliMcp)
+	for _, want := range []string{`"context-mode"`, `"cli-setting"`, `"cli-user"`, `"keep-cli"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("remove clobbered CLI entry %s:\n%s", want, raw)
+		}
+	}
+	if cfg := util.TryParseJsonc(string(raw)); cfg != nil {
+		servers, _ := cfg.Get("mcpServers")
+		servers.(*util.OrderedMap).Delete("context-mode")
+		_ = os.WriteFile(cliMcp, []byte(util.StringifyJSON(cfg)), 0o644)
+	}
+	if !AntigravityMcpHas("context-mode") {
+		t.Fatal("AntigravityMcpHas should still find context-mode in shared config")
+	}
+}
+
+func TestConfigureAntigravityMcpPreservesMalformedConfigAndLegacyEntry(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
+	p := util.AntigravityPathsResolved()
+	_ = os.MkdirAll(filepath.Dir(p.McpConfigCLI), 0o755)
+	const malformed = `{"mcpServers":`
+	_ = os.WriteFile(p.McpConfigCLI, []byte(malformed), 0o644)
+	_ = os.MkdirAll(filepath.Dir(p.McpConfig), 0o755)
+	_ = os.WriteFile(p.McpConfig, []byte(`{"mcpServers":{"codegraph":{"command":"legacy"}}}`), 0o644)
+
+	ConfigureAntigravityMcp("codegraph")
+	raw, _ := os.ReadFile(p.McpConfigCLI)
+	if string(raw) != malformed {
+		t.Fatalf("malformed config was overwritten: %q", raw)
+	}
+	raw, _ = os.ReadFile(p.McpConfig)
+	if !strings.Contains(string(raw), `"codegraph"`) {
+		t.Fatalf("legacy fallback was removed after partial configure: %s", raw)
+	}
+	if !AntigravityMcpHas("codegraph") {
+		t.Fatal("AntigravityMcpHas should find codegraph despite malformed CLI config")
+	}
+}
+
+
+func TestAntigravityMcpHasAnySemantics(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
+	p := util.AntigravityPathsResolved()
+
+	// Case 1: Both configs empty → false
+	if AntigravityMcpHas("codegraph") {
+		t.Fatal("should be false when no configs exist")
+	}
+
+	// Case 2: Only shared config has tool → true
+	_ = os.MkdirAll(filepath.Dir(p.McpConfigCLI), 0o755)
+	_ = os.WriteFile(p.McpConfigCLI, []byte(`{"mcpServers":{"codegraph":{"command":"cg"}}}`), 0o644)
+	if !AntigravityMcpHas("codegraph") {
+		t.Fatal("should be true when shared config has the tool")
+	}
+
+	// Case 3: Shared is malformed, CLI has tool → true
+	_ = os.WriteFile(p.McpConfigCLI, []byte(`{invalid`), 0o644)
+	cliMcp := filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")
+	_ = os.MkdirAll(filepath.Dir(cliMcp), 0o755)
+	_ = os.WriteFile(cliMcp, []byte(`{"mcpServers":{"codegraph":{"command":"cg"}}}`), 0o644)
+	if !AntigravityMcpHas("codegraph") {
+		t.Fatal("should be true when CLI config has the tool despite malformed shared config")
+	}
+
+	// Case 4: Both malformed → false
+	_ = os.WriteFile(cliMcp, []byte(`{invalid`), 0o644)
+	if AntigravityMcpHas("codegraph") {
+		t.Fatal("should be false when both configs are malformed")
+	}
+
+	// Case 5: Shared has tool, CLI missing entirely → true
+	_ = os.Remove(cliMcp)
+	_ = os.WriteFile(p.McpConfigCLI, []byte(`{"mcpServers":{"codegraph":{"command":"cg"}}}`), 0o644)
+	if !AntigravityMcpHas("codegraph") {
+		t.Fatal("should be true when shared config has tool and CLI config is missing")
 	}
 }
 

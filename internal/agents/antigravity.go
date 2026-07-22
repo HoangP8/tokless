@@ -9,14 +9,18 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func antigravityMcpConfigFile() string {
-	return util.AntigravityPathsResolved().McpConfigCLI
+func antigravityMcpConfigFiles() []string {
+	p := util.AntigravityPathsResolved()
+	return []string{
+		p.McpConfigCLI,
+		filepath.Join(util.Home(), ".gemini", "antigravity-cli", "mcp_config.json"),
+	}
 }
 
 func antigravityLegacyMcpFiles() []string {
 	p := util.AntigravityPathsResolved()
 	gemini := filepath.Join(util.Home(), ".gemini")
-	files := []string{p.McpConfig, p.Settings, filepath.Join(gemini, "antigravity-cli", "mcp_config.json")}
+	files := []string{p.McpConfig, p.Settings}
 	for _, variant := range []string{"antigravity-ide"} {
 		if d := filepath.Join(gemini, variant); util.Exists(d) {
 			files = append(files, filepath.Join(d, "mcp_config.json"))
@@ -652,7 +656,8 @@ func RemoveAntigravityEntry(entry string) {
 	}
 }
 
-// ConfigureAntigravityMcp upserts mcpServers.<tool> into agy's canonical MCP config.
+// ConfigureAntigravityMcp upserts mcpServers.<tool> into agy's shared and
+// CLI-specific configs.
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
@@ -661,45 +666,61 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	} else {
 		spawn = util.PickMcpSpawn(toolID)
 	}
-	f := antigravityMcpConfigFile()
-	_ = util.EnsureDir(filepath.Dir(f))
-	raw, _ := util.ReadFileSafe(f)
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		cfg = util.NewOrderedMap()
+	allConfigured := true
+	for _, f := range antigravityMcpConfigFiles() {
+		raw, exists := util.ReadFileSafe(f)
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			if exists && strings.TrimSpace(raw) != "" {
+				util.L.Err("couldn't parse Antigravity MCP config " + f + "; leaving it unchanged")
+				allConfigured = false
+				continue
+			}
+			cfg = util.NewOrderedMap()
+		}
+		servers := getOrCreateMap(cfg, "mcpServers")
+		entry := util.NewOrderedMap()
+		entry.Set("command", spawn.Command)
+		if len(spawn.Args) > 0 {
+			entry.Set("args", spawn.Args)
+		}
+		entry.Set("trust", true)
+		servers.Set(toolID, entry)
+		if next := util.StringifyJSON(cfg); next != raw {
+			if err := util.WriteFile(f, next); err != nil {
+				util.L.Err("couldn't write Antigravity MCP config " + f + ": " + err.Error())
+				allConfigured = false
+				continue
+			}
+			changed = true
+			file = f
+		}
 	}
-	servers := getOrCreateMap(cfg, "mcpServers")
-	entry := util.NewOrderedMap()
-	entry.Set("command", spawn.Command)
-	if len(spawn.Args) > 0 {
-		entry.Set("args", spawn.Args)
+	if allConfigured {
+		removeAntigravityMcpFromFiles(toolID, antigravityLegacyMcpFiles())
 	}
-	entry.Set("trust", true)
-	servers.Set(toolID, entry)
-	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(f, next)
-		changed = true
-		file = f
-	}
-	removeAntigravityMcpFromFiles(toolID, antigravityLegacyMcpFiles())
 	AllowAntigravityEntry("mcp(" + toolID + "/*)")
 	return changed, file
 }
 
-// AntigravityMcpHas reports whether agy's canonical MCP config registers the tool.
+// AntigravityMcpHas reports whether at least one supported global MCP config
+// registers the tool. Unreadable or malformed files are skipped.
 func AntigravityMcpHas(toolID string) bool {
-	raw, ok := util.ReadFileSafe(antigravityMcpConfigFile())
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if s, ok := cfg.Get("mcpServers"); ok {
-		if sm, ok := s.(*util.OrderedMap); ok {
-			_, found := sm.Get(toolID)
-			return found
+	for _, f := range antigravityMcpConfigFiles() {
+		raw, ok := util.ReadFileSafe(f)
+		if !ok {
+			continue
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			continue
+		}
+		if s, ok := cfg.Get("mcpServers"); ok {
+			if sm, ok := s.(*util.OrderedMap); ok {
+				if _, found := sm.Get(toolID); found {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -873,9 +894,9 @@ var antigravity = &core.AgentManifest{
 	},
 }
 
-// RemoveAntigravityMcp deletes mcpServers.<tool> from canonical and legacy MCP config surfaces.
+// RemoveAntigravityMcp deletes mcpServers.<tool> from supported and legacy MCP config surfaces.
 func RemoveAntigravityMcp(toolID string) {
-	files := append([]string{antigravityMcpConfigFile()}, antigravityLegacyMcpFiles()...)
+	files := append(antigravityMcpConfigFiles(), antigravityLegacyMcpFiles()...)
 	removeAntigravityMcpFromFiles(toolID, files)
 	RemoveAntigravityEntry("mcp(" + toolID + "/*)")
 }
