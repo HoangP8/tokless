@@ -93,8 +93,12 @@ func TestResyncWiring_RepinsContextModeVersion(t *testing.T) {
 	resyncWiring([]*core.ToolManifest{ctxToolForTest(t)})
 
 	got := opencodePlugins(t, ocJSON)
-	if len(got) != 1 || got[0] != "context-mode" {
-		t.Fatalf("resync must re-wire to bare upstream spec: got %v want [context-mode]", got)
+	if len(got) != 0 {
+		t.Fatalf("resync must remove context-mode plugin: got %v", got)
+	}
+	raw, err := os.ReadFile(ocJSON)
+	if err != nil || !strings.Contains(string(raw), "\"context-mode\"") || !strings.Contains(string(raw), "--context-mode") {
+		t.Fatalf("resync must wire bounded context-mode MCP: %s", raw)
 	}
 }
 

@@ -111,8 +111,8 @@ func TestConfigureCopilotMcp_ContextMode(t *testing.T) {
 	if !strings.Contains(raw, "context-mode") {
 		t.Fatal("missing context-mode entry")
 	}
-	if strings.Contains(raw, "run-mcp") {
-		t.Fatal("context-mode should NOT be autoindex wrapped")
+	if !strings.Contains(raw, "run-mcp") || !strings.Contains(raw, "--context-mode") {
+		t.Fatal("context-mode should use bounded tokless MCP proxy")
 	}
 	if !strings.Contains(raw, "CONTEXT_MODE_PLATFORM") || !strings.Contains(raw, "copilot-cli") {
 		t.Fatalf("missing CONTEXT_MODE_PLATFORM=copilot-cli env: %s", raw)
