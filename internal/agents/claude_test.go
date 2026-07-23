@@ -43,7 +43,6 @@ func TestAllowClaudeMcpToolProjectLocalPreservesAndAppends(t *testing.T) {
 	got := string(raw)
 	for _, want := range []string{
 		"WebSearch",
-		"mcp__context-mode__.*",
 		"mcp__context-mode__ctx_search",
 		"mcp__context-mode__ctx_execute",
 		"mcp__context-mode__ctx_execute_file",
@@ -59,6 +58,9 @@ func TestAllowClaudeMcpToolProjectLocalPreservesAndAppends(t *testing.T) {
 		if strings.Count(got, `"`+want+`"`) != 1 {
 			t.Fatalf("duplicate %q in %s", want, got)
 		}
+	}
+	if strings.Contains(got, "mcp__context-mode__.*") {
+		t.Fatalf("context-mode wildcard should be migrated: %s", got)
 	}
 }
 

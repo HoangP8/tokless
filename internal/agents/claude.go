@@ -45,12 +45,21 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 
 // AllowClaudeMcpToolProjectLocal adds MCP permissions to project-local .claude/settings.local.json.
 func AllowClaudeMcpToolProjectLocal(toolID string) {
-	var entries []string
-	entries = append(entries, "mcp__"+toolID+"__.*")
-	for _, name := range claudeMcpToolNames(toolID) {
-		entries = append(entries, "mcp__"+toolID+"__"+name)
+	allowClaudeProjectLocalEntries(claudeMcpPermissionEntries(toolID)...)
+}
+
+func claudeMcpPermissionEntries(toolID string) []string {
+	if toolID == "codegraph" {
+		return []string{"mcp__codegraph__.*", "mcp__codegraph__codegraph_explore"}
 	}
-	allowClaudeProjectLocalEntries(entries...)
+	if names := claudeMcpToolNames(toolID); len(names) > 0 {
+		entries := make([]string, 0, len(names))
+		for _, name := range names {
+			entries = append(entries, "mcp__"+toolID+"__"+name)
+		}
+		return entries
+	}
+	return []string{"mcp__" + toolID + "__.*"}
 }
 
 func claudeMcpToolNames(toolID string) []string {
@@ -90,6 +99,13 @@ func allowClaudeProjectLocalEntries(entries ...string) {
 			}
 		}
 	}
+	allow = removeClaudeContextModeWildcard(allow)
+	seen = map[string]bool{}
+	for _, x := range allow {
+		if s, ok := x.(string); ok {
+			seen[s] = true
+		}
+	}
 	changed := false
 	for _, entry := range entries {
 		if seen[entry] {
@@ -107,7 +123,7 @@ func allowClaudeProjectLocalEntries(entries ...string) {
 	_ = util.WriteFile(settingsFile, util.StringifyJSON(cfg))
 }
 
-// AllowClaudeMcpTool auto-approves every tool of an MCP server.
+// AllowClaudeMcpTool auto-approves managed MCP tools.
 func AllowClaudeMcpTool(toolID string) {
 	p := util.ClaudeCodePaths()
 	raw, _ := util.ReadFileSafe(p.Settings)
@@ -122,16 +138,37 @@ func AllowClaudeMcpTool(toolID string) {
 			allow = a
 		}
 	}
-	entry := "mcp__" + toolID + "__.*"
+	allow = removeClaudeContextModeWildcard(allow)
+	seen := make(map[string]bool, len(allow))
 	for _, x := range allow {
-		if s, ok := x.(string); ok && s == entry {
-			return
+		if s, ok := x.(string); ok {
+			seen[s] = true
 		}
 	}
-	allow = append(allow, entry)
+	changed := false
+	for _, entry := range claudeMcpPermissionEntries(toolID) {
+		if !seen[entry] {
+			allow = append(allow, entry)
+			changed = true
+		}
+	}
+	if !changed && toolID != "context-mode" {
+		return
+	}
 	perms.Set("allow", allow)
 	cfg.Set("permissions", perms)
 	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
+}
+
+func removeClaudeContextModeWildcard(entries []any) []any {
+	kept := entries[:0]
+	for _, entry := range entries {
+		if s, ok := entry.(string); ok && s == "mcp__context-mode__.*" {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
 }
 
 func DisallowClaudeMcpTool(toolID string) {
@@ -160,11 +197,17 @@ func DisallowClaudeMcpTool(toolID string) {
 	if !ok {
 		return
 	}
-	want := "mcp__" + toolID + "__.*"
+	wants := map[string]bool{}
+	for _, entry := range claudeMcpPermissionEntries(toolID) {
+		wants[entry] = true
+	}
+	if toolID == "context-mode" {
+		wants["mcp__context-mode__.*"] = true
+	}
 	kept := make([]any, 0, len(allow))
 	changed := false
 	for _, x := range allow {
-		if s, ok := x.(string); ok && s == want {
+		if s, ok := x.(string); ok && wants[s] {
 			changed = true
 			continue
 		}
