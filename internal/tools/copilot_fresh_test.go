@@ -284,6 +284,31 @@ func TestCopilotInstructionBlock(t *testing.T) {
 	}
 }
 
+func TestCopilotInstructionToolsSyncIdeInstructions(t *testing.T) {
+	tmp := copilotTestHome(t)
+	t.Cleanup(func() { agents.SetIdeProjectRoot("") })
+	t.Setenv("TOKLESS_TEST", "1")
+
+	for _, tool := range []*core.ToolManifest{caveman, ponytail} {
+		ok, err := tool.WireFor["copilot"](core.RunOpts{})
+		if err != nil || !ok {
+			t.Fatalf("wire %s: ok=%v err=%v", tool.ID, ok, err)
+		}
+	}
+
+	cli, ok := util.ReadFileSafe(util.CopilotPathsResolved().Instructions)
+	if !ok {
+		t.Fatal("CLI instructions not written")
+	}
+	ide, ok := util.ReadFileSafe(filepath.Join(tmp, ".github", "copilot-instructions.md"))
+	if !ok {
+		t.Fatal("IDE instructions not written")
+	}
+	if ide != cli {
+		t.Fatalf("IDE instructions differ from CLI instructions\nIDE:\n%s\nCLI:\n%s", ide, cli)
+	}
+}
+
 func TestCopilotContextModeWireUnwire(t *testing.T) {
 	copilotTestHome(t)
 	t.Setenv("TOKLESS_TEST", "1")

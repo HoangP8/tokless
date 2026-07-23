@@ -168,6 +168,35 @@ func TestUnifiedBody_AcceptsLegacyArrowHeadings(t *testing.T) {
 	}
 }
 
+func TestUnifiedBody_PiAndDroidInstructionPaths(t *testing.T) {
+	setupHome(t)
+	piDir := filepath.Join(util.Home(), "custom-pi")
+	t.Setenv("PI_CODING_AGENT_DIR", piDir)
+
+	for _, tc := range []struct {
+		agent string
+		tool  string
+		path  string
+	}{
+		{"pi", "caveman", filepath.Join(piDir, "AGENTS.md")},
+		{"droid", "ponytail", filepath.Join(util.Home(), ".factory", "AGENTS.md")},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			ok, err := lookupTool(t, tc.tool).WireFor[tc.agent](core.RunOpts{})
+			if err != nil || !ok {
+				t.Fatalf("wire %s/%s: ok=%v err=%v", tc.agent, tc.tool, ok, err)
+			}
+			raw, err := os.ReadFile(tc.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), util.SectionsByOwner[tc.tool]) {
+				t.Fatalf("missing %s section:\n%s", tc.tool, raw)
+			}
+		})
+	}
+}
+
 func setupHome(t *testing.T) {
 	t.Helper()
 	tmp := t.TempDir()
