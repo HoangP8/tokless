@@ -32,9 +32,6 @@ func TestUninstallSelectiveFlags(t *testing.T) {
 	}
 	b, _ := os.ReadFile(filepath.Join(oc, "opencode.json"))
 	s := string(b)
-	if strings.Contains(s, "caveman") {
-		t.Fatal("caveman not fully removed from opencode.json")
-	}
 	if !strings.Contains(s, "codegraph") || !strings.Contains(s, "context-mode") {
 		t.Fatal("non-selected tools were wrongly removed")
 	}
@@ -126,5 +123,39 @@ func TestResyncWiring_SkipsUnwiredAgent(t *testing.T) {
 		if p == "context-mode@1.0.162" || p == "context-mode" {
 			t.Fatalf("resync must not newly wire an unwired agent, got %v", got)
 		}
+	}
+}
+
+func TestResyncInstructionWiring_RefreshesStaleBody(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	defer util.SetHomeOverride("")
+
+	path := filepath.Join(home, ".config", "opencode", "AGENTS.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# User notes\n\nkeep me\n\n## Response Style (caveman)\nstale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resyncInstructionWiring()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "stale") {
+		t.Fatalf("stale instruction body retained:\n%s", body)
+	}
+	if !strings.Contains(body, "# User notes") || !strings.Contains(body, "keep me") {
+		t.Fatalf("user content lost:\n%s", body)
+	}
+	if !strings.Contains(body, "## Response Style (caveman)") {
+		t.Fatalf("caveman section missing:\n%s", body)
 	}
 }

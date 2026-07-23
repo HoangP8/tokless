@@ -89,6 +89,9 @@ func RunUpdate(opts InitOptions) int {
 	}
 
 	if len(changed) == 0 {
+		toolsPkg.ConfigureInstructionConflicts(true)
+		resyncInstructionWiring()
+		toolsPkg.ConfigureInstructionConflicts(false)
 		agents.PiUpdatePackages()
 		treeStatus(statusOK("Everything up to date."))
 		printRepoFooter(true)
@@ -189,6 +192,7 @@ func RunUpdate(opts InitOptions) int {
 	if !opts.DryRun {
 		toolsPkg.ConfigureInstructionConflicts(true)
 		resyncWiring(tools)
+		resyncInstructionWiring()
 		toolsPkg.ConfigureInstructionConflicts(false)
 		agents.PiUpdatePackages()
 	}
@@ -224,4 +228,15 @@ func resyncWiring(tools []*core.ToolManifest) {
 			})
 		}
 	}
+}
+
+// resyncInstructionWiring refreshes already-wired static instructions on update.
+func resyncInstructionWiring() {
+	var tools []*core.ToolManifest
+	for _, tool := range core.ListTools() {
+		if tool.InstructionOnly {
+			tools = append(tools, tool)
+		}
+	}
+	resyncWiring(tools)
 }
