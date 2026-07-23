@@ -15,6 +15,11 @@ func RunMcp(argv []string) int {
 		agent = argv[1]
 		argv = argv[2:]
 	}
+	contextMode := false
+	if len(argv) > 0 && argv[0] == "--context-mode" {
+		contextMode = true
+		argv = argv[1:]
+	}
 	if len(argv) == 0 {
 		return 1
 	}
@@ -32,7 +37,7 @@ func RunMcp(argv []string) int {
 	if err != nil {
 		path = argv[0]
 	}
-	return runMcpProxy(agent, path, argv, os.Environ())
+	return runMcpProxy(agent, path, argv, os.Environ(), contextMode)
 }
 
 func isCodegraphCommand(p string) bool {
