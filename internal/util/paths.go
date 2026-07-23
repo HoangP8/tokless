@@ -105,7 +105,7 @@ func Exists(p string) bool {
 
 // ClaudePaths holds Claude Code config locations.
 type ClaudePaths struct {
-	Dir, Settings, GlobalJSON, Instructions, SkillsDir string
+	Dir, Settings, GlobalJSON, Instructions string
 }
 
 func ClaudeCodePaths() ClaudePaths {
@@ -121,7 +121,6 @@ func ClaudeCodePaths() ClaudePaths {
 		Settings:     filepath.Join(dir, "settings.json"),
 		GlobalJSON:   globalJSON,
 		Instructions: filepath.Join(dir, "CLAUDE.md"),
-		SkillsDir:    filepath.Join(dir, "skills"),
 	}
 }
 
@@ -172,7 +171,7 @@ func CodexPathsResolved() CodexPaths {
 
 // AntigravityPaths
 type AntigravityPaths struct {
-	Dir, McpConfig, McpConfigCLI, Settings, SkillsDir, Instructions string
+	Dir, McpConfig, McpConfigCLI, Settings, Instructions string
 }
 
 func AntigravityPathsResolved() AntigravityPaths {
@@ -183,14 +182,13 @@ func AntigravityPathsResolved() AntigravityPaths {
 		McpConfig:    filepath.Join(dir, "mcp_config.json"),
 		McpConfigCLI: filepath.Join(gemini, "config", "mcp_config.json"),
 		Settings:     filepath.Join(gemini, "settings.json"),
-		SkillsDir:    filepath.Join(gemini, "config", "skills"),
 		Instructions: filepath.Join(gemini, "GEMINI.md"),
 	}
 }
 
 // CopilotPaths holds GitHub Copilot CLI config locations.
 type CopilotPaths struct {
-	Dir, McpConfig, Settings, HooksDir, SkillsDir, Instructions string
+	Dir, McpConfig, Settings, HooksDir, Instructions string
 }
 
 func CopilotPathsResolved() CopilotPaths {
@@ -205,7 +203,6 @@ func CopilotPathsResolved() CopilotPaths {
 		McpConfig:    filepath.Join(dir, "mcp-config.json"),
 		Settings:     filepath.Join(dir, "settings.json"),
 		HooksDir:     filepath.Join(dir, "hooks"),
-		SkillsDir:    filepath.Join(dir, "skills"),
 		Instructions: filepath.Join(dir, "copilot-instructions.md"),
 	}
 }

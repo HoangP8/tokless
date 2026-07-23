@@ -36,11 +36,6 @@ func piExtensionsDir() string { return filepath.Join(piAgentDir(), "extensions")
 func piMcpFile() string       { return filepath.Join(piAgentDir(), "mcp.json") }
 
 func PiAgentDirResolved() string { return piAgentDir() }
-func PiSkillsDir() string        { return filepath.Join(piAgentDir(), "skills") }
-
-func PiSkillHas(name string) bool {
-	return util.Exists(filepath.Join(PiSkillsDir(), name, "SKILL.md"))
-}
 
 func HasPiRtkExtension() bool {
 	return util.Exists(filepath.Join(piExtensionsDir(), "rtk.ts"))
@@ -77,14 +72,6 @@ const PiSrcMcpAdapter = "npm:pi-mcp-adapter"
 func PiPackageList() []string { return []string{PiSrcMcpAdapter} }
 
 var (
-	piLegacyCaveman = []string{
-		"git:github.com/JuliusBrussee/caveman", "npm:pi-caveman",
-		"git:github.com/jonjonrankin/pi-caveman", "npm:@vanillagreen/pi-caveman", "npm:caveman-pi",
-	}
-	piLegacyPonytail = []string{
-		"git:github.com/DietrichGebert/ponytail", "npm:pi-ponytail",
-		"npm:@dietrichgebert/ponytail", "git:github.com/thelegendtubaguy/pi-ponytail",
-	}
 	piLegacyContextMode = []string{"npm:context-mode"}
 	piLegacyCodegraph   = []string{
 		"npm:@vndv/pi-codegraph", "npm:@estebanforge/pi-codegraph-enhanced",
@@ -93,8 +80,6 @@ var (
 	}
 )
 
-func PiPurgeCavemanPackages() int     { return piPurge(piLegacyCaveman) }
-func PiPurgePonytailPackages() int    { return piPurge(piLegacyPonytail) }
 func PiPurgeContextModePackages() int { return piPurge(piLegacyContextMode) }
 func PiPurgeCodegraphPackages() int   { return piPurge(piLegacyCodegraph) }
 

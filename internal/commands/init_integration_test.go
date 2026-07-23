@@ -386,18 +386,13 @@ func TestCavemanNotTrackable(t *testing.T) {
 	if !caveman.NotTrackable {
 		t.Errorf("expected tool 'caveman' to have NotTrackable set to true, but got false")
 	}
-
-	trackableTools := map[string]bool{
-		"rtk":          true,
-		"codegraph":    true,
-		"context-mode": true,
+	if !caveman.InstructionOnly {
+		t.Errorf("expected tool 'caveman' to have InstructionOnly set to true, but got false")
 	}
 
 	for _, tool := range core.ListTools() {
-		if trackableTools[tool.ID] {
-			if tool.NotTrackable {
-				t.Errorf("expected tool %q to have NotTrackable set to false, but got true", tool.ID)
-			}
+		if tool.InstructionOnly && !tool.NotTrackable {
+			t.Errorf("instruction-only tool %q must have NotTrackable=true", tool.ID)
 		}
 	}
 }
@@ -477,13 +472,6 @@ export default async function(pi) { console.log("user ext") }`
 			t.Errorf("mcp.json missing %q, got:\n%s", want, mcpStr)
 		}
 	}
-	// Skills from source (skills CLI stubs in TOKLESS_TEST)
-	for _, skill := range []string{"caveman", "ponytail"} {
-		sk := filepath.Join(piDir, "skills", skill, "SKILL.md")
-		if !util.Exists(sk) {
-			t.Errorf("missing pi skill %s", sk)
-		}
-	}
 	// user's pre-existing packages preserved
 	for _, pkg := range []string{"user-custom-pkg", "another-user-pkg"} {
 		if !strings.Contains(settings, pkg) {
@@ -550,11 +538,6 @@ export default async function(pi) { console.log("user ext") }`
 			t.Errorf("settings.json after 2nd run missing package %q", pkg)
 		}
 	}
-	for _, skill := range []string{"caveman", "ponytail"} {
-		if !util.Exists(filepath.Join(piDir, "skills", skill, "SKILL.md")) {
-			t.Errorf("skill %s missing after 2nd run", skill)
-		}
-	}
 	if !util.Exists(userExtPath) {
 		t.Error("user extension deleted after 2nd run")
 	}
@@ -595,11 +578,6 @@ func TestPiUnwire(t *testing.T) {
 	settings := `{"packages":["npm:pi-mcp-adapter"],"theme":"light"}`
 	if err := os.WriteFile(filepath.Join(piDir, "settings.json"), []byte(settings), 0644); err != nil {
 		t.Fatalf("write settings: %v", err)
-	}
-	for _, skill := range []string{"caveman", "ponytail"} {
-		d := filepath.Join(piDir, "skills", skill)
-		_ = os.MkdirAll(d, 0755)
-		_ = os.WriteFile(filepath.Join(d, "SKILL.md"), []byte("# "+skill+"\n"), 0644)
 	}
 	mcp := `{"mcpServers":{"codegraph":{"command":"codegraph"},"context-mode":{"command":"context-mode"}}}`
 	if err := os.WriteFile(filepath.Join(piDir, "mcp.json"), []byte(mcp), 0644); err != nil {
@@ -654,11 +632,6 @@ func TestPiUnwire(t *testing.T) {
 		t.Error("codegraph-index.ts should be removed after unwire")
 	}
 
-	for _, skill := range []string{"caveman", "ponytail"} {
-		if util.Exists(filepath.Join(piDir, "skills", skill, "SKILL.md")) {
-			t.Errorf("skill %s still present after unwire", skill)
-		}
-	}
 	mcpRaw, _ := os.ReadFile(filepath.Join(piDir, "mcp.json"))
 	mcpStr := string(mcpRaw)
 	for _, bad := range []string{"codegraph", "context-mode"} {

@@ -30,6 +30,9 @@ func toolVersionNote(tool *core.ToolManifest) string {
 }
 
 func toolNeedsNode(tool *core.ToolManifest) bool {
+	if tool.InstructionOnly {
+		return false
+	}
 	return tool.NeedsNode || tool.Channel == core.ChannelNpm || tool.MinNodeMajor > 0
 }
 
