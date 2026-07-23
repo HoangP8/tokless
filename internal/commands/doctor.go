@@ -152,10 +152,10 @@ func doctorStatusLines(outdated, broken, installedAgents int) []string {
 }
 
 func doctorSummaryLine(r agentReport) string {
-	name := paintName(padEnd(r.label, 14))
+	name := paintName(padEnd(r.label, 16))
 	switch {
 	case !r.installed:
-		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(r.label, 14)) + util.C.Gray("not installed")
+		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(r.label, 16)) + util.C.Gray("not installed")
 	case r.wired:
 		return util.C.Green(util.Sym.Check) + " " + name + util.C.Green("all tools wired")
 	case len(r.runtime) > 0 && len(r.missing) == 0:

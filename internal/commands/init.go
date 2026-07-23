@@ -63,10 +63,16 @@ func RunInit(opts InitOptions) int {
 		nodeOK, gitOK = util.EnsureDeps(needNode, needGit, minNode)
 	}
 
-	toolBar := util.NewRootSectionProgress("Tools")
-	toolBar.Start(len(tools))
-	installLogs := map[string]string{}
+	var installTools []*core.ToolManifest
 	for _, tool := range tools {
+		if !tool.InstructionOnly {
+			installTools = append(installTools, tool)
+		}
+	}
+	toolBar := util.NewRootSectionProgress("Tools")
+	toolBar.Start(len(installTools))
+	installLogs := map[string]string{}
+	for _, tool := range installTools {
 		toolBar.Begin(tool.Label)
 		if toolNeedsNode(tool) && !nodeOK {
 			toolBar.Fail("needs Node.js — https://nodejs.org/en/download")
