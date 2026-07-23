@@ -44,9 +44,9 @@ func mcpKeys(cfg *util.OrderedMap) []string {
 
 func TestSetContextModePluginBare_AppendsBareWhenMissing(t *testing.T) {
 	cfg := util.TryParseJsonc(`{"plugin":["other@1.0.0"]}`)
-	setContextModePluginBare(cfg)
+	removeContextModePlugin(cfg)
 	got := pluginStrings(t, cfg)
-	want := []string{"other@1.0.0", "context-mode"}
+	want := []string{"other@1.0.0"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -59,9 +59,9 @@ func TestSetContextModePluginBare_AppendsBareWhenMissing(t *testing.T) {
 
 func TestSetContextModePluginBare_StripsStalePinToBare(t *testing.T) {
 	cfg := util.TryParseJsonc(`{"plugin":["other@1.0.0","context-mode@1.0.157"]}`)
-	setContextModePluginBare(cfg)
+	removeContextModePlugin(cfg)
 	got := pluginStrings(t, cfg)
-	want := []string{"other@1.0.0", "context-mode"}
+	want := []string{"other@1.0.0"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -77,10 +77,10 @@ func TestSetContextModePluginBare_DropsMcpContextMode(t *testing.T) {
 		"plugin":["other@1.0.0","context-mode@1.0.157"],
 		"mcp":{"context-mode":{"type":"local"},"codegraph":{"type":"local"}}
 	}`)
-	setContextModePluginBare(cfg)
+	removeContextModePlugin(cfg)
 
 	got := pluginStrings(t, cfg)
-	want := []string{"other@1.0.0", "context-mode"}
+	want := []string{"other@1.0.0"}
 	if len(got) != len(want) {
 		t.Fatalf("plugin mismatch: got %v want %v", got, want)
 	}
@@ -90,43 +90,43 @@ func TestSetContextModePluginBare_DropsMcpContextMode(t *testing.T) {
 		}
 	}
 	keys := mcpKeys(cfg)
-	if len(keys) != 1 || keys[0] != "codegraph" {
-		t.Fatalf("mcp must keep only codegraph, got %v (zero-tools trap if context-mode remains)", keys)
+	if len(keys) != 2 || keys[0] != "context-mode" || keys[1] != "codegraph" {
+		t.Fatalf("mcp entries changed: %v", keys)
 	}
 }
 
 func TestSetContextModePluginBare_RemovesMcpKeyEntirelyWhenOnlyEntry(t *testing.T) {
 	cfg := util.TryParseJsonc(`{"plugin":[],"mcp":{"context-mode":{"type":"local"}}}`)
-	setContextModePluginBare(cfg)
-	if _, ok := cfg.Get("mcp"); ok {
-		t.Fatalf("mcp key should be removed entirely when context-mode was its only entry")
+	removeContextModePlugin(cfg)
+	if _, ok := cfg.Get("mcp"); !ok {
+		t.Fatal("context-mode MCP entry should remain")
 	}
 }
 
 func TestSetContextModePluginBare_Idempotent(t *testing.T) {
 	cfg := util.TryParseJsonc(`{"plugin":["a@1","context-mode","b@2"]}`)
-	setContextModePluginBare(cfg)
+	removeContextModePlugin(cfg)
 	first := pluginStrings(t, cfg)
-	setContextModePluginBare(cfg)
+	removeContextModePlugin(cfg)
 	second := pluginStrings(t, cfg)
 
-	if countContextMode(second) != 1 {
-		t.Fatalf("idempotency broken: %d context-mode entries: %v", countContextMode(second), second)
+	if countContextMode(second) != 0 {
+		t.Fatalf("context-mode plugin remains: %v", second)
 	}
 	if len(first) != len(second) {
 		t.Fatalf("non-idempotent: %v then %v", first, second)
 	}
-	if second[0] != "a@1" || second[len(second)-1] != "context-mode" {
+	if len(second) != 2 || second[0] != "a@1" || second[1] != "b@2" {
 		t.Fatalf("unexpected ordering after idempotent re-apply: %v", second)
 	}
 }
 
 func TestSetContextModePluginBare_NeverVersionPins(t *testing.T) {
 	cfg := util.NewOrderedMap()
-	setContextModePluginBare(cfg)
+	removeContextModePlugin(cfg)
 	got := pluginStrings(t, cfg)
-	if len(got) != 1 || got[0] != "context-mode" {
-		t.Fatalf("must write bare 'context-mode', got %v", got)
+	if len(got) != 0 {
+		t.Fatalf("unexpected plugins: %v", got)
 	}
 }
 

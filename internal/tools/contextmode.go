@@ -125,8 +125,9 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	op := util.OpenCodePathsResolved()
 	_ = util.EnsureDir(op.Dir)
 	cfg := loadOrdered(op.Config)
-	setContextModePlugin(cfg)
+	removeContextModePlugin(cfg)
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	agents.ConfigureOpenCodeMcp("context-mode")
 	WriteOwner("opencode", "context-mode")
 	if isTest() {
 		return true, nil
@@ -136,7 +137,7 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-func setContextModePlugin(cfg *util.OrderedMap) {
+func removeContextModePlugin(cfg *util.OrderedMap) {
 	plugins := getArr(cfg, "plugin")
 	kept := make([]any, 0, len(plugins))
 	for _, p := range plugins {
@@ -145,18 +146,7 @@ func setContextModePlugin(cfg *util.OrderedMap) {
 		}
 		kept = append(kept, p)
 	}
-	kept = append(kept, "context-mode")
 	cfg.Set("plugin", kept)
-	if mv, ok := cfg.Get("mcp"); ok {
-		if mm, ok := mv.(*util.OrderedMap); ok {
-			if _, has := mm.Get("context-mode"); has {
-				mm.Delete("context-mode")
-				if mm.Len() == 0 {
-					cfg.Delete("mcp")
-				}
-			}
-		}
-	}
 }
 
 // cleanAllContextModeCache clears stale cached dirs so bare @latest refetches.
@@ -571,7 +561,7 @@ func ctxVerifyOpenCode() bool {
 			_, hasLegacy = mm.Get("context-mode")
 		}
 	}
-	return hasPlugin && !hasLegacy
+	return hasPlugin || hasLegacy
 }
 
 func ctxVerifyCodex() bool {

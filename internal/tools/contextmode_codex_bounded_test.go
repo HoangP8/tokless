@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -10,6 +11,64 @@ import (
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
+
+// assertContextModeProxy rejects upstream context-mode registrations. Every
+// agent config must launch tokless first, with context-mode as its inner MCP.
+func assertContextModeProxy(t *testing.T, registration, raw string) {
+	t.Helper()
+	want := util.PickMcpSpawn("context-mode")
+	outer := regexp.MustCompile(`(?s)(?:"command"\s*:\s*(?:"|\[\s*")|command\s*=\s*")` + regexp.QuoteMeta(want.Command) + `"`)
+	if !outer.MatchString(raw) {
+		t.Fatalf("%s outer command is not tokless run-mcp proxy %q:\n%s", registration, want.Command, raw)
+	}
+	if !regexp.MustCompile(`(?s)run-mcp.*--context-mode.*context-mode`).MatchString(raw) {
+		t.Fatalf("%s writes raw or incomplete context-mode registration:\n%s", registration, raw)
+	}
+	if regexp.MustCompile(`(?m)(?:"command"\s*:\s*"context-mode"|command\s*=\s*"context-mode")`).MatchString(raw) {
+		t.Fatalf("%s uses context-mode as outer command instead of tokless proxy:\n%s", registration, raw)
+	}
+}
+
+func TestContextModeRegistrationsUseToklessProxy(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("TOKLESS_TEST", "1")
+	agents.SetIdeProjectRoot(tmp)
+	t.Cleanup(func() {
+		util.SetHomeOverride("")
+		agents.SetIdeProjectRoot("")
+	})
+
+	tests := []struct {
+		name string
+		wire func() (bool, string)
+	}{
+		{"claude", func() (bool, string) { return agents.ConfigureClaudeMcp("context-mode") }},
+		{"opencode", func() (bool, string) { return agents.ConfigureOpenCodeMcp("context-mode") }},
+		{"codex", func() (bool, string) { return agents.ConfigureCodexMcp("context-mode") }},
+		{"antigravity", func() (bool, string) { return agents.ConfigureAntigravityMcp("context-mode") }},
+		{"copilot-cli", func() (bool, string) { return agents.ConfigureCopilotMcp("context-mode") }},
+		{"copilot-ide", func() (bool, string) { return agents.ConfigureCopilotIdeMcp("context-mode") }},
+		{"droid", func() (bool, string) { return agents.ConfigureDroidMcp("context-mode") }},
+		{"pi", func() (bool, string) { return agents.ConfigurePiMcp("context-mode") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed, file := tt.wire()
+			if !changed || file == "" {
+				t.Fatalf("registration did not write: changed=%v file=%q", changed, file)
+			}
+			raw, ok := util.ReadFileSafe(file)
+			if !ok {
+				t.Fatalf("read registration %s", file)
+			}
+			assertContextModeProxy(t, tt.name, raw)
+		})
+	}
+}
 
 // TestWireCodexManual_BoundedShape verifies that wireCodexManual writes MCP +
 // AGENTS.md with CONTEXT-MODE marker block plus a single minimal context-mode
