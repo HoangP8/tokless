@@ -31,12 +31,17 @@ func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 	if extraArgs == nil {
 		extraArgs = []string{}
 	}
+	var spawn McpSpawn
 	if bin == "codegraph" {
 		if spawn, ok := PickCodegraphSpawn(extraArgs...); ok {
 			return spawn
 		}
 	} else if p := Which(bin); p != "" {
-		return wrapCmdShim(McpSpawn{Command: spawnCommand(bin, p), Args: extraArgs})
+		spawn = wrapCmdShim(McpSpawn{Command: spawnCommand(bin, p), Args: extraArgs})
+		if bin == "context-mode" {
+			return WrapContextMode(spawn)
+		}
+		return spawn
 	}
 	pkg, ok := pkgForBin[bin]
 	if !ok {
@@ -47,7 +52,11 @@ func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 	if p := Which("npx"); p != "" {
 		cmd = spawnCommand("npx", p)
 	}
-	return wrapCmdShim(McpSpawn{Command: cmd, Args: args})
+	spawn = wrapCmdShim(McpSpawn{Command: cmd, Args: args})
+	if bin == "context-mode" {
+		return WrapContextMode(spawn)
+	}
+	return spawn
 }
 
 // PickCodegraphSpawn returns only a spawn that serves the expected MCP tool.
@@ -254,5 +263,12 @@ func toklessRunMcpCommand() string {
 func WrapAutoIndex(agent string, s McpSpawn) McpSpawn {
 	self := toklessRunMcpCommand()
 	args := append([]string{"run-mcp", "--agent", agent, s.Command}, s.Args...)
+	return McpSpawn{Command: self, Args: args}
+}
+
+func WrapContextMode(s McpSpawn) McpSpawn {
+	self := toklessRunMcpCommand()
+	args := append([]string{"run-mcp", "--context-mode"}, s.Command)
+	args = append(args, s.Args...)
 	return McpSpawn{Command: self, Args: args}
 }

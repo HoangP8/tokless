@@ -71,12 +71,12 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	t.Setenv("PATH", cmdDir)
 
 	spawnCmd := PickMcpSpawn("context-mode", "serve", "--mcp")
-	if spawnCmd.Command != "cmd" {
-		t.Errorf("Expected Command == cmd, got %s", spawnCmd.Command)
+	if spawnCmd.Command != toklessRunMcpCommand() {
+		t.Errorf("Expected Command == tokless, got %s", spawnCmd.Command)
 	}
-	expectedArgs := []string{"/c", Which("context-mode"), "serve", "--mcp"}
-	if !filepath.IsAbs(expectedArgs[1]) {
-		t.Fatalf("test setup: Which(context-mode) not absolute: %q", expectedArgs[1])
+	expectedArgs := []string{"run-mcp", "--context-mode", "cmd", "/c", Which("context-mode"), "serve", "--mcp"}
+	if !filepath.IsAbs(expectedArgs[4]) {
+		t.Fatalf("test setup: Which(context-mode) not absolute: %q", expectedArgs[4])
 	}
 	if !reflect.DeepEqual(spawnCmd.Args, expectedArgs) {
 		t.Errorf("Expected Args == %v, got %v", expectedArgs, spawnCmd.Args)
@@ -89,10 +89,10 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	t.Setenv("PATH", exeDir+";"+cmdDir)
 
 	spawnExe := PickMcpSpawn("context-mode", "serve", "--mcp")
-	if spawnExe.Command != Which("context-mode") || !filepath.IsAbs(spawnExe.Command) {
-		t.Errorf("Expected Command == absolute exe path %q, got %s", Which("context-mode"), spawnExe.Command)
+	if spawnExe.Command != toklessRunMcpCommand() {
+		t.Errorf("Expected Command == tokless, got %s", spawnExe.Command)
 	}
-	expectedExeArgs := []string{"serve", "--mcp"}
+	expectedExeArgs := []string{"run-mcp", "--context-mode", Which("context-mode"), "serve", "--mcp"}
 	if !reflect.DeepEqual(spawnExe.Args, expectedExeArgs) {
 		t.Errorf("Expected Args == %v, got %v", expectedExeArgs, spawnExe.Args)
 	}
@@ -104,12 +104,12 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	t.Setenv("PATH", npxDir)
 
 	spawnFallback := PickMcpSpawn("context-mode")
-	if spawnFallback.Command != "cmd" {
-		t.Errorf("Expected fallback Command == cmd, got %s", spawnFallback.Command)
+	if spawnFallback.Command != toklessRunMcpCommand() {
+		t.Errorf("Expected fallback Command == tokless, got %s", spawnFallback.Command)
 	}
-	expectedFallbackArgs := []string{"/c", Which("npx"), "--no-install", "context-mode"}
-	if !filepath.IsAbs(expectedFallbackArgs[1]) {
-		t.Fatalf("test setup: Which(npx) not absolute: %q", expectedFallbackArgs[1])
+	expectedFallbackArgs := []string{"run-mcp", "--context-mode", "cmd", "/c", Which("npx"), "--no-install", "context-mode"}
+	if !filepath.IsAbs(expectedFallbackArgs[4]) {
+		t.Fatalf("test setup: Which(npx) not absolute: %q", expectedFallbackArgs[4])
 	}
 	if !reflect.DeepEqual(spawnFallback.Args, expectedFallbackArgs) {
 		t.Errorf("Expected fallback Args == %v, got %v", expectedFallbackArgs, spawnFallback.Args)
