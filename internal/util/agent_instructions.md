@@ -134,7 +134,10 @@ Prebuilt code index. `codegraph_explore` gives source, call path, and blast radi
 │           NO re-search, NO re-read of what codegraph returned. Spilled?
 │           grep the spill for the symbol you NEED — do NOT Read/View whole.
 │           ONE call beats dozens of grep+search+Read.
-└─ NO  → work normal (read / grep / ast_grep). Don't call codegraph.
+└─ NO  → Evaluate before falling back:
+         1. Tiny project (e.g., 1-2 files)? → Skip init. Fallback to normal (read/grep).
+         2. Complex project? → You MUST actively execute the terminal command `codegraph init` to bootstrap.
+         3. 🛑 Failsafe: Once built, go to YES. ONLY if `init` errors out or CLI is missing, fallback to normal work.
 ```
 
 Examples:
