@@ -123,7 +123,7 @@ Prebuilt code index. `codegraph_explore` gives source, call path, and blast radi
 
 ```
 .codegraph/ index exists and works?
-├─ YES → Before calling codegraph_explore, you MUST run `codegraph init` in the terminal first to ensure the index is up-to-date. Then call codegraph_explore FIRST. Always. Source + blast radius + call path in ONE call.
+├─ YES → Before calling codegraph_explore, you MUST run `codegraph sync` (or `codegraph index`) in the terminal first to ensure the index is up-to-date. Then call codegraph_explore FIRST. Always. Source + blast radius + call path in ONE call.
 │        ├─ Use for: how does X work, flow A→B, architecture, who calls Y, blast radius, subsystem structure, where is X, reading a file.
 │        ├─ grep/search/read ONLY for non-code codegraph doesn't index (configs, docs, .env) — AFTER codegraph narrows it down, never as the first move.
 │        └─ Trust results — full AST parse, safe to edit from. NO re-grep, NO re-search, NO re-read of what codegraph returned. Spilled? grep the spill for the symbol you NEED — do NOT Read/View whole. ONE call beats dozens of grep+search+Read.
