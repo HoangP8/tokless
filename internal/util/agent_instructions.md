@@ -122,23 +122,14 @@ Non-trivial logic leaves ONE runnable check (assert-based demo/self-check or one
 Prebuilt code index. `codegraph_explore` gives source, call path, and blast radius in one call.
 
 ```
-.codegraph/ index exists and works?
-├─ YES → codegraph_explore FIRST. Always. Source + blast radius + call path
-│        in ONE call.
-│        ├─ Use for: how does X work, flow A→B, architecture, who calls Y,
-│        │   blast radius, subsystem structure, where is X, reading a file.
-│        ├─ grep/search/read ONLY for non-code codegraph doesn't index
-│        │   (configs, docs, .env) — AFTER codegraph narrows it down,
-│        │   never as the first move.
-│        ├─ Trust results — full AST parse, safe to edit from. NO re-grep,
-│           NO re-search, NO re-read of what codegraph returned. Spilled?
-│           grep the spill for the symbol you NEED — do NOT Read/View whole.
-│           ONE call beats dozens of grep+search+Read.
-│        └─ If explore fails (e.g. "not indexed" or error) → treat as NO (needs init/bootstrap).
-└─ NO  → Evaluate before falling back:
-         1. Tiny project (e.g., 1-2 files)? → Skip init. Fallback to normal (read/grep).
-         2. Complex project? → You MUST actively execute the terminal command `codegraph init` to bootstrap.
-         3. 🛑 Failsafe: Once built, go to YES. ONLY if `init` errors out or CLI is missing, fallback to normal work.
+Evaluate project scale first:
+1. Tiny project (e.g., <= 5 source files and flat directory)? → Skip codegraph. Fallback to normal tools (read/grep) directly.
+2. Complex project (e.g., > 5 source files or nested subdirectories)? → You MUST always run the terminal command `codegraph init` first to build or update the index to the latest state. Once initialized/updated:
+   └─ Use `codegraph_explore` FIRST. Always. Source + blast radius + call path in ONE call.
+      ├─ Use for: how does X work, flow A→B, architecture, who calls Y, blast radius, subsystem structure, where is X, reading a file.
+      ├─ grep/search/read ONLY for non-code codegraph doesn't index (configs, docs, .env) — AFTER codegraph narrows it down, never as the first move.
+      └─ Trust results — full AST parse, safe to edit from. NO re-grep, NO re-search, NO re-read of what codegraph returned. Spilled? grep the spill for the symbol you NEED — do NOT Read/View whole. ONE call beats dozens of grep+search+Read.
+3. 🛑 Failsafe: ONLY if `codegraph init` or `codegraph_explore` errors out, or the CLI is missing, fallback to normal tools. (Note: Initializing the index for complex projects is required and does NOT violate ponytail).
 ```
 
 Examples:
