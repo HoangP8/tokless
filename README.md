@@ -28,9 +28,11 @@
 <tr><td>✔️</td><td><b>Non-tech friendly</b> — under 30 seconds, anyone can do it</td></tr>
 </table>
 
-### Installation
+### Installation (Manual)
 
 <img src="assets/install.svg" width="100%" alt="install" />
+
+Supported platforms: macOS/Linux x64 or arm64; Windows x64.
 
 macOS / Linux:
 ```bash
@@ -42,91 +44,94 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
 ```
 
-### Supported Agents
+### Installation (Agent)
+
+Let your coding agent install tokless, choose what to configure, and verify the result:
+
+```text
+https://raw.githubusercontent.com/HoangP8/tokless/main/docs/installation.md
+```
+
+### Agents
 
 <div align="center">
   <table>
     <tr>
-      <td align="center" width="140">
-        <img src="assets/agents/claude.jpg" width="56" alt="Claude Code" /><br/>
-        <b>Claude Code</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/opencode.png" width="56" alt="OpenCode" /><br/>
-        <b>OpenCode</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/codex.jpg" width="56" alt="Codex" /><br/>
-        <b>Codex</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/antigravity.png" width="56" alt="Antigravity" /><br/>
-        <b>Antigravity</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
+      <td align="center" width="140"><a href="https://github.com/anthropics/claude-code"><img src="assets/agents/claude.jpg" width="48" height="48" alt="Claude Code" /></a><br/><b>Claude Code</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://github.com/openai/codex"><img src="assets/agents/codex.jpg" width="48" height="48" alt="Codex" /></a><br/><b>Codex</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://antigravity.google"><img src="assets/agents/antigravity.png" width="48" height="48" alt="Antigravity" /></a><br/><b>Antigravity</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://github.com/github/copilot-cli"><img src="assets/agents/copilot.jpg" width="48" height="48" alt="GitHub Copilot" /></a><br/><b>GitHub Copilot</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
     </tr>
     <tr>
-      <td align="center" width="140">
-        <img src="assets/agents/pi.png" width="56" alt="Pi" /><br/>
-        <b>Pi</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/cursor.jpg" width="56" alt="Cursor" /><br/>
-        <span style="color:#8b949e"><b>Cursor</b></span><br/>
-        <sub><b style="color:#d29922">In progress</b></sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/factory.png" width="56" alt="Factory Droid" /><br/>
-        <b>Factory Droid</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
-      <td align="center" width="140">
-        <img src="assets/agents/copilot.jpg" width="56" alt="GitHub Copilot" /><br/>
-        <b>GitHub Copilot</b><br/>
-        <sub><b style="color:#3fb950">✓ Done</b></sub>
-      </td>
+      <td align="center" width="140"><a href="https://factory.ai"><img src="assets/agents/factory.png" width="48" height="48" alt="Factory Droid" /></a><br/><b>Factory Droid</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://pi.dev"><img src="assets/agents/pi.png" width="48" height="48" alt="Pi" /></a><br/><b>Pi</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://cursor.com"><img src="assets/agents/cursor.jpg" width="48" height="48" alt="Cursor" /></a><br/><b>Cursor</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+      <td align="center" width="140"><a href="https://x.ai/cli"><picture><source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png" /><source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" /><img src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="48" height="48" alt="Grok Build" /></picture></a><br/><b>Grok Build</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+      <td align="center" width="140"><a href="https://kilo.ai/cli"><img src="https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-kilocode.png" width="48" height="48" alt="Kilo Code" /></a><br/><b>Kilo Code</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+    </tr>
+    <tr>
+      <td align="center" width="140"><a href="https://omp.sh/"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="48" height="48" alt="Oh My Pi" /></a><br/><b>Oh My Pi (OMP)</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+      <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="48" height="48" alt="Cline" /></a><br/><b>Cline</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+      <td align="center" width="140">&nbsp;</td>
+      <td align="center" width="140">&nbsp;</td>
+      <td align="center" width="140">&nbsp;</td>
     </tr>
   </table>
 </div>
 
-Pick one, some, or all:
+Interactive install detects installed supported agents; choose one, some, or all:
 ```bash
 tokless                              # interactive: pick agents
 tokless --agents claude,opencode     # wire just these
-tokless --agents claude,opencode,codex,antigravity,copilot,droid,pi  # all
 ```
 
-### Tools
+## Included Tools
 
-| Tool | ⭐ | What it does |
+tokless combines focused agent rules with installed tools, exposing only the core MCP surface by default.
+
+| Package | ⭐ | Purpose |
 | :--- | :---: | :--- |
-| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | ![](https://img.shields.io/github/stars/multica-ai/andrej-karpathy-skills?style=flat-square&label=) | Distilled meta-rules from Karpathy's LLM-coding post — think before coding, simplicity first, surgical changes, goal-driven. Drops overbuild and wrong-assumption failures. |
-| [caveman](https://github.com/JuliusBrussee/caveman) | ![](https://img.shields.io/github/stars/JuliusBrussee/caveman?style=flat-square&label=) | Skill/plugin forcing terse caveman-speak across 30+ agents — 65% output token cut, technical content untouched. |
-| [ponytail](https://github.com/DietrichGebert/ponytail) | ![](https://img.shields.io/github/stars/DietrichGebert/ponytail?style=flat-square&label=) | Skill embedding a lazy senior dev — minimum-code, stdlib-first, no speculative features across 16 agents. |
-| [rtk](https://github.com/rtk-ai/rtk) | ![](https://img.shields.io/github/stars/rtk-ai/rtk?style=flat-square&label=) | CLI proxy filtering/compressing command output before it hits the LLM; 100+ commands, single Rust binary, <10ms overhead. |
-| [codegraph](https://github.com/colbymchenry/codegraph) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=) | Pre-indexed SQLite code knowledge graph — auto-syncs on file change, returns verbatim source + call paths via 1 MCP tool across 8+ agents. |
-| [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | MCP server for 17 clients — sandboxes tool output, persists session memory, enforces think-in-code. |
+| [karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) | ![](https://img.shields.io/github/stars/multica-ai/andrej-karpathy-skills?style=flat-square&label=) | Coding principles: think first, simplify, edit surgically, verify. |
+| [caveman](https://github.com/JuliusBrussee/caveman) | ![](https://img.shields.io/github/stars/JuliusBrussee/caveman?style=flat-square&label=) | Terse response rules that preserve technical accuracy. |
+| [ponytail](https://github.com/DietrichGebert/ponytail) | ![](https://img.shields.io/github/stars/DietrichGebert/ponytail?style=flat-square&label=) | Minimal-code rules: reuse first, avoid speculative work. |
+| [rtk](https://github.com/rtk-ai/rtk) | ![](https://img.shields.io/github/stars/rtk-ai/rtk?style=flat-square&label=) | Filters command output before it reaches the agent. |
+| [codegraph](https://github.com/colbymchenry/codegraph) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=) | Indexed code graph for source, call paths, and impact. |
+| [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | Sandboxed context tools with session memory and focused analysis. |
+
+### Callable MCP surface
+
+```text
+Tools
+├── CodeGraph · 1/1 tool
+│   └── codegraph_explore
+└── Context-Mode · 6/11 upstream tools
+    ├── ctx_execute
+    ├── ctx_batch_execute
+    ├── ctx_execute_file
+    ├── ctx_index
+    ├── ctx_search
+    └── ctx_fetch_and_index
+```
 
 ## Configuration
 
-Each tool is wired into each agent through the agent's native config system:
+tokless manages agent config and instruction blocks; not every item uses native config.
+
+> **Instruction** means tokless-owned static rules. `tokless update` refreshes them.
 
 | Tool | Claude | OpenCode | Codex | Antigravity | Copilot | Droid | Pi |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **rtk** | Hook + Allow | Plugin | Hook | Hook + Allow | Hook + Allow | Hook | Extension |
-| **caveman** | Plugin + Instruction | Plugin + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction |
-| **ponytail** | Plugin + Instruction | Plugin + Instruction | Plugin + Instruction | Plugin + Instruction | Skill + Instruction | Skill + Instruction | Skill + Instruction |
+| **caveman** | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction |
+| **ponytail** | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction |
 | **codegraph** | MCP + Allow + Instruction | MCP + Instruction | MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | MCP + Extension + Instruction |
-| **context-mode** | MCP + Allow + Instruction | Plugin + Instruction | Hook + MCP + Instruction | MCP + Instruction | MCP + Hook + Instruction | MCP + Instruction | MCP + Instruction |
+| **context-mode** | MCP + Allow + Instruction | MCP + Instruction | Hook + MCP + Instruction | MCP + Instruction | MCP + Hook + Instruction | MCP + Instruction | MCP + Extension + Instruction |
 
 ## Usage
 
 ```
-tokless              Install + wire everything (default; safe to re-run)
+tokless              Install tools, then pick detected agents (safe to re-run)
 tokless update       Update the tokless CLI, then show version diff and upgrade tools
 tokless doctor       Show what's wired; warn about broken bits
 tokless info         Show how tokless was installed, plus paths and config locations

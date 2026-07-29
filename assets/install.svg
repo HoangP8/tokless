@@ -1,112 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="420" viewBox="0 0 820 420" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-kerning="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="502" viewBox="0 0 960 502" role="img" aria-labelledby="title desc">
+  <title id="title">Tokless terminal install flow</title>
+  <desc id="desc">Tokless terminal UI showing tool setup, a seven-agent picker, and its Caveman and Ponytail instruction wiring.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0d1117"/>
+    <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#161b22"/>
       <stop offset="1" stop-color="#010409"/>
     </linearGradient>
-    <linearGradient id="titlebar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1c2128"/>
+    <linearGradient id="titlebar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#21262d"/>
       <stop offset="1" stop-color="#161b22"/>
     </linearGradient>
-    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.5"/>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#010409" flood-opacity=".7"/>
     </filter>
+    <pattern id="grain" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="5" r=".55" fill="#fff" opacity=".05"/>
+      <circle cx="21" cy="17" r=".45" fill="#fff" opacity=".035"/>
+      <circle cx="11" cy="25" r=".35" fill="#fff" opacity=".03"/>
+    </pattern>
+    <style>
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-kerning: none; }
+      .muted { fill: #8b949e; } .dim { fill: #6e7681; } .text { fill: #c9d1d9; }
+      .green { fill: #3fb950; } .cyan { fill: #56b6c2; } .purple { fill: #a371f7; } .orange { fill: #d75f00; }
+      .strong { font-weight: 700; }
+    </style>
   </defs>
 
-  <g filter="url(#softShadow)">
-    <rect x="10" y="10" width="800" height="400" rx="10" fill="url(#bg)" stroke="#30363d" stroke-width="1"/>
-    <rect x="10" y="10" width="800" height="34" rx="10" fill="url(#titlebar)"/>
-    <rect x="10" y="32" width="800" height="12" fill="url(#titlebar)"/>
-    <circle cx="30" cy="27" r="6" fill="#ff5f56"/>
-    <circle cx="50" cy="27" r="6" fill="#ffbd2e"/>
-    <circle cx="70" cy="27" r="6" fill="#27c93f"/>
-    <text x="410" y="32" fill="#8b949e" text-anchor="middle" font-size="12.5">tokless — install</text>
+  <g filter="url(#shadow)">
+    <rect x="10" y="10" width="940" height="482" rx="12" fill="url(#surface)" stroke="#30363d"/>
+    <rect x="10" y="10" width="940" height="38" rx="12" fill="url(#titlebar)"/>
+    <rect x="10" y="34" width="940" height="14" fill="url(#titlebar)"/>
   </g>
+  <rect x="11" y="49" width="938" height="442" rx="0 0 11 11" fill="url(#grain)"/>
+  <circle cx="33" cy="29" r="6" fill="#ff5f56"/><circle cx="53" cy="29" r="6" fill="#ffbd2e"/><circle cx="73" cy="29" r="6" fill="#27c93f"/>
+  <text x="480" y="34" text-anchor="middle" class="mono muted" font-size="12">tokless — setup</text>
 
-  <g font-size="14" xml:space="preserve">
-    <text x="32" y="74"><tspan fill="#3fb950">$ </tspan><tspan fill="#c9d1d9">curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash</tspan></text>
-    <text x="32" y="98"><tspan fill="#3fb950">↓ </tspan><tspan fill="#8b949e">Downloading </tspan><tspan fill="#c9d1d9">tokless</tspan><tspan fill="#8b949e">…</tspan></text>
-    <text x="32" y="118"><tspan fill="#3fb950">✔ </tspan><tspan fill="#c9d1d9">installed </tspan><tspan fill="#c9d1d9" font-weight="bold">tokless v1.2.3</tspan><tspan fill="#8b949e"> → </tspan><tspan fill="#c9d1d9">~/.local/bin/tokless</tspan></text>
-  </g>
+  <g class="mono" font-size="14">
+    <text x="34" y="78"><tspan class="green">$ </tspan><tspan class="text">tokless</tspan></text>
+    <text x="34" y="108"><tspan class="dim">┌─ </tspan><tspan class="purple strong">Tools</tspan></text>
+    <text x="34" y="136" class="dim">│</text><text x="59" y="136" class="green">✔</text><text x="84" y="136" class="text">RTK</text><text x="228" y="136" class="dim">[</text><text x="237" y="136" class="green">████████████████</text><text x="372" y="136" class="dim">]</text><text x="381" y="136" class="dim">100%</text><text x="430" y="136" class="muted">v1.2.3</text>
+    <text x="34" y="160" class="dim">│</text><text x="59" y="160" class="green">✔</text><text x="84" y="160" class="text">CodeGraph</text><text x="228" y="160" class="dim">[</text><text x="237" y="160" class="green">████████████████</text><text x="372" y="160" class="dim">]</text><text x="381" y="160" class="dim">100%</text><text x="430" y="160" class="muted">v1.2.3</text>
+    <text x="34" y="184" class="dim">│</text><text x="59" y="184" class="green">✔</text><text x="84" y="184" class="text">Context-Mode</text><text x="228" y="184" class="dim">[</text><text x="237" y="184" class="green">████████████████</text><text x="372" y="184" class="dim">]</text><text x="381" y="184" class="dim">100%</text><text x="430" y="184" class="muted">v1.2.3</text>
+    <text x="34" y="208" class="dim">│</text>
+    <text x="34" y="238"><tspan class="purple strong">● Select agents to install tokless</tspan></text>
 
-  <line x1="32" y1="140" x2="788" y2="140" stroke="#21262d" stroke-width="1"/>
-
-  <!-- Interactive picker — matches prompt.go MultiSelect render() lines 284–335 -->
-  <!-- No font-weight:bold — SVG bold glyphs are wider, breaking monospace alignment -->
-  <!-- Terminal bold = increased brightness/color, not glyph width change -->
-
-  <g font-size="13" xml:space="preserve">
-    <text x="32" y="168">
-      <tspan fill="#a371f7">●</tspan>
-      <tspan fill="#a371f7"> Select agents to install tokless</tspan>
-    </text>
-
-    <!-- Claude Code (pad=1, selected+active): pad+gap = 1+2 = 3 spaces before tag arrow -->
-    <text x="32" y="196">
-      <tspan fill="#6e7681">│   </tspan>
-      <tspan fill="#56b6c2">❯ </tspan>
-      <tspan fill="#3fb950">◉  </tspan>
-      <tspan fill="#56b6c2">Claude Code</tspan>
-      <tspan fill="#c9d1d9">   </tspan>
-      <tspan fill="#3fb950">✓ </tspan>
-      <tspan fill="#3fb950">[READY]</tspan>
-      <tspan fill="#c9d1d9">  </tspan>
-    </text>
-
-    <!-- OpenCode (pad=3, unselected): pad+gap+tagPad = 3+2+2 = 7 before bracket -->
-    <text x="32" y="218">
-      <tspan fill="#6e7681">│     </tspan>
-      <tspan fill="#8b949e">◯  </tspan>
-      <tspan fill="#c9d1d9">OpenCode</tspan>
-      <tspan fill="#c9d1d9">       </tspan>
-      <tspan fill="#3fb950">[READY]</tspan>
-      <tspan fill="#c9d1d9">  </tspan>
-    </text>
-
-    <!-- Codex (pad=6): 6+2+2 = 10 before bracket -->
-    <text x="32" y="240">
-      <tspan fill="#6e7681">│     </tspan>
-      <tspan fill="#8b949e">◯  </tspan>
-      <tspan fill="#c9d1d9">Codex</tspan>
-      <tspan fill="#c9d1d9">          </tspan>
-      <tspan fill="#3fb950">[READY]</tspan>
-      <tspan fill="#c9d1d9">  </tspan>
-    </text>
-
-    <!-- Antigravity (pad=0): 0+2+2 = 4 before bracket -->
-    <text x="32" y="262">
-      <tspan fill="#6e7681">│     </tspan>
-      <tspan fill="#8b949e">◯  </tspan>
-      <tspan fill="#c9d1d9">Antigravity</tspan>
-      <tspan fill="#c9d1d9">    </tspan>
-      <tspan fill="#3fb950">[READY]</tspan>
-      <tspan fill="#c9d1d9">  </tspan>
-    </text>
-
-    <line x1="32" y1="282" x2="788" y2="282" stroke="#21262d" stroke-width="1"/>
-
-    <!-- Key hint — matches prompt.go:278–282 -->
-    <text x="32" y="306" font-size="12" xml:space="preserve">
-      <tspan fill="#d75f00">↑/↓</tspan><tspan fill="#6e7681"> move · </tspan>
-      <tspan fill="#d75f00">&lt;space&gt;</tspan><tspan fill="#6e7681"> select · </tspan>
-      <tspan fill="#d75f00">&lt;a&gt;</tspan><tspan fill="#6e7681"> all · </tspan>
-      <tspan fill="#d75f00">&lt;enter&gt;</tspan><tspan fill="#6e7681"> confirm</tspan>
-    </text>
-  </g>
-
-  <line x1="32" y1="330" x2="788" y2="330" stroke="#21262d" stroke-width="1"/>
-
-  <g font-size="13" xml:space="preserve">
-    <text x="32" y="356">
-      <tspan fill="#a371f7">●</tspan>
-      <tspan fill="#a371f7"> Wiring 5 tools into 4 agents</tspan>
-    </text>
-    <text x="32" y="378"><tspan fill="#8b949e">  rtk · caveman · ponytail · codegraph · context-mode</tspan></text>
-    <text x="32" y="400">
-      <tspan fill="#3fb950">✔ </tspan>
-      <tspan fill="#c9d1d9">done in </tspan>
-      <tspan fill="#c9d1d9" font-weight="bold">12s</tspan>
-      <tspan fill="#8b949e"> — restart your agent and enjoy</tspan>
-    </text>
+    <text x="34" y="268" class="dim">│</text><text x="68" y="268" class="cyan strong">❯</text><text x="85" y="268" class="green">◉</text><text x="110" y="268" class="cyan strong">Claude Code</text><text x="245" y="268" class="green strong">✓</text><text x="262" y="268" class="green">[READY]</text>
+    <text x="34" y="292" class="dim">│</text><text x="85" y="292" class="dim">◯</text><text x="110" y="292" class="text">OpenCode</text><text x="262" y="292" class="green">[READY]</text>
+    <text x="34" y="316" class="dim">│</text><text x="85" y="316" class="dim">◯</text><text x="110" y="316" class="text">Codex</text><text x="262" y="316" class="green">[READY]</text>
+    <text x="34" y="340" class="dim">│</text><text x="85" y="340" class="dim">◯</text><text x="110" y="340" class="text">Antigravity</text><text x="262" y="340" class="green">[READY]</text>
+    <text x="34" y="364" class="dim">│</text><text x="85" y="364" class="dim">◯</text><text x="110" y="364" class="text">GitHub Copilot</text><text x="262" y="364" class="green">[READY]</text>
+    <text x="34" y="388" class="dim">│</text><text x="85" y="388" class="dim">◯</text><text x="110" y="388" class="text">Factory Droid</text><text x="262" y="388" class="green">[READY]</text>
+    <text x="34" y="412" class="dim">│</text><text x="85" y="412" class="dim">◯</text><text x="110" y="412" class="text">Pi</text><text x="262" y="412" class="green">[READY]</text>
+    <text x="34" y="438"><tspan class="dim">  ────────────────────────────────────────────────────────────</tspan></text>
+    <text x="34" y="464" font-size="12"><tspan class="orange">↑/↓</tspan><tspan class="dim"> move · </tspan><tspan class="orange">&lt;space&gt;</tspan><tspan class="dim"> select · </tspan><tspan class="orange">&lt;a&gt;</tspan><tspan class="dim"> all · </tspan><tspan class="orange">&lt;enter&gt;</tspan><tspan class="dim"> confirm</tspan></text>
   </g>
 </svg>
