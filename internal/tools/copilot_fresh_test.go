@@ -13,6 +13,8 @@ import (
 func copilotTestHome(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
+	t.Setenv("COPILOT_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	util.SetHomeOverride(tmp)
 	agents.SetIdeProjectRoot(tmp)
 	return tmp

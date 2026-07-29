@@ -56,11 +56,15 @@ func ToklessAbs() string {
 	if strings.ContainsAny(exe, " \t") {
 		return whichToklessOrBare()
 	}
-	base := filepath.Base(exe)
-	if strings.HasSuffix(base, ".test") || strings.Contains(exe, string(filepath.Separator)+"go-build") {
+	if isGoTestExecutable(exe) {
 		return whichToklessOrBare()
 	}
 	return exe
+}
+
+func isGoTestExecutable(exe string) bool {
+	base := strings.ToLower(filepath.Base(exe))
+	return strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe") || strings.Contains(exe, string(filepath.Separator)+"go-build")
 }
 
 func whichToklessOrBare() string {

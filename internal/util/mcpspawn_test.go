@@ -116,6 +116,18 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	}
 }
 
+func TestToklessRunMcpCommandAvoidsTestBinary(t *testing.T) {
+	if got := toklessRunMcpCommand(); isGoTestExecutable(got) {
+		t.Fatalf("run-mcp outer command must not be test binary: %q", got)
+	}
+}
+
+func TestGoTestExecutableWindowsSuffix(t *testing.T) {
+	if !isGoTestExecutable(`C:\\Temp\\go-build123\\tools.test.exe`) {
+		t.Fatal("Windows .test.exe must be detected as Go test binary")
+	}
+}
+
 func TestPickMcpSpawnIsWinFalse(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix-semantics emulation not runnable on windows")
