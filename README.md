@@ -24,7 +24,7 @@
   <tr><td>✅</td><td><b>One place</b> — install, update, and manage all tools across every configured agent</td></tr>
 </table>
 
-<p align="center"><sub><b>AGENTS</b></sub></p>
+<p align="center"><b>AGENTS</b></p>
 
 <div align="center">
   <table>
