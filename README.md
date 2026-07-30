@@ -15,64 +15,36 @@
 
 ## Introduction
 
-> *Many great packages make coding agents more **effective and efficient** — but discovering, installing, updating, and unifying them is painful, especially for non-technical users. The best tools exist; the **wiring is the real cost**.*
-
-**tokless** — the lazy one-command solution.
+> *Many packages help coding agents work more effectively and efficiently. **The best tools already exist; wiring them well is the real work.** Tokless brings together [specialized tools](#tools), each with a distinct purpose, and manages them with minimal setup.*
 
 <table>
-<tr><td>✔️</td><td><b>Best packages, unified</b> — picks the most effective, efficient <a href="#tools">tools</a> and wires them without conflicts</td></tr>
-<tr><td>✔️</td><td><b>One command, done</b> — pick your agent, restart, go</td></tr>
-<tr><td>✔️</td><td><b>All platforms</b> — macOS, Linux, Windows</td></tr>
-<tr><td>✔️</td><td><b>Zero config</b> — everything wired, no manual edits</td></tr>
-<tr><td>✔️</td><td><b>Simple updates</b> — <code>tokless update</code> upgrades everything in one shot</td></tr>
-<tr><td>✔️</td><td><b>Non-tech friendly</b> — under 30 seconds, anyone can do it</td></tr>
+  <tr><td>✅</td><td><b>Clear purpose</b> — best tool for each job, wired without conflict</td></tr>
+  <tr><td>✅</td><td><b>No overload</b> — minimal MCP tools with clear, unified instructions</td></tr>
+  <tr><td>✅</td><td><b>Zero config</b> — works as soon as installed, in under 30 seconds</td></tr>
+  <tr><td>✅</td><td><b>One place</b> — install, update, and manage all tools across every configured agent</td></tr>
 </table>
 
-### Installation (Manual)
-
-<img src="assets/install.svg" width="100%" alt="install" />
-
-Supported platforms: macOS/Linux x64 or arm64; Windows x64.
-
-macOS / Linux:
-```bash
-curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash
-```
-
-Windows (PowerShell):
-```powershell
-irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
-```
-
-### Installation (Agent)
-
-Let your coding agent install tokless, choose what to configure, and verify the result:
-
-```text
-https://raw.githubusercontent.com/HoangP8/tokless/main/docs/installation.md
-```
-
-### Agents
+<p align="center"><sub><b>AGENTS</b></sub></p>
 
 <div align="center">
   <table>
     <tr>
-      <td align="center" width="140"><a href="https://github.com/anthropics/claude-code"><img src="assets/agents/claude.jpg" width="48" height="48" alt="Claude Code" /></a><br/><b>Claude Code</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
-      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
-      <td align="center" width="140"><a href="https://github.com/openai/codex"><img src="assets/agents/codex.jpg" width="48" height="48" alt="Codex" /></a><br/><b>Codex</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
-      <td align="center" width="140"><a href="https://antigravity.google"><img src="assets/agents/antigravity.png" width="48" height="48" alt="Antigravity" /></a><br/><b>Antigravity</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
-      <td align="center" width="140"><a href="https://github.com/github/copilot-cli"><img src="assets/agents/copilot.jpg" width="48" height="48" alt="GitHub Copilot" /></a><br/><b>GitHub Copilot</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
+      <td align="center" width="140"><a href="https://github.com/anthropics/claude-code"><img src="assets/agents/claude.jpg" width="48" height="48" alt="Claude Code" /></a><br/><b>Claude Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://github.com/openai/codex"><img src="assets/agents/codex.jpg" width="48" height="48" alt="Codex" /></a><br/><b>Codex</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://antigravity.google"><img src="assets/agents/antigravity.png" width="48" height="48" alt="Antigravity" /></a><br/><b>Antigravity</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://github.com/github/copilot-cli"><img src="assets/agents/copilot.jpg" width="48" height="48" alt="GitHub Copilot" /></a><br/><b>GitHub Copilot</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
     </tr>
     <tr>
-      <td align="center" width="140"><a href="https://factory.ai"><img src="assets/agents/factory.png" width="48" height="48" alt="Factory Droid" /></a><br/><b>Factory Droid</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
-      <td align="center" width="140"><a href="https://pi.dev"><img src="assets/agents/pi.png" width="48" height="48" alt="Pi" /></a><br/><b>Pi</b><br/><sub><b style="color:#3fb950">✓ Supported</b></sub></td>
-      <td align="center" width="140"><a href="https://cursor.com"><img src="assets/agents/cursor.jpg" width="48" height="48" alt="Cursor" /></a><br/><b>Cursor</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
-      <td align="center" width="140"><a href="https://x.ai/cli"><picture><source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png" /><source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" /><img src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="48" height="48" alt="Grok Build" /></picture></a><br/><b>Grok Build</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
-      <td align="center" width="140"><a href="https://kilo.ai/cli"><img src="https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-kilocode.png" width="48" height="48" alt="Kilo Code" /></a><br/><b>Kilo Code</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+      <td align="center" width="140"><a href="https://factory.ai"><img src="assets/agents/factory.png" width="48" height="48" alt="Factory Droid" /></a><br/><b>Factory Droid</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://pi.dev"><img src="assets/agents/pi.png" width="48" height="48" alt="Pi" /></a><br/><b>Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://cursor.com"><img src="assets/agents/cursor.jpg" width="36" height="36" alt="Cursor" /></a><br/>Cursor<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
+      <td align="center" width="140"><a href="https://x.ai/cli"><picture><source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png" /><source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" /><img src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="36" height="36" alt="Grok Build" /></picture></a><br/>Grok Build<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
+      <td align="center" width="140"><a href="https://kilo.ai/cli"><img src="https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-kilocode.png" width="36" height="36" alt="Kilo Code" /></a><br/>Kilo Code<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
     </tr>
     <tr>
-      <td align="center" width="140"><a href="https://omp.sh/"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="48" height="48" alt="Oh My Pi" /></a><br/><b>Oh My Pi (OMP)</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
-      <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="48" height="48" alt="Cline" /></a><br/><b>Cline</b><br/><sub><b style="color:#d29922">In progress</b></sub></td>
+      <td align="center" width="140"><a href="https://omp.sh/"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="36" height="36" alt="Oh My Pi" /></a><br/>Oh My Pi<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
+      <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="36" height="36" alt="Cline" /></a><br/>Cline<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
@@ -80,15 +52,40 @@ https://raw.githubusercontent.com/HoangP8/tokless/main/docs/installation.md
   </table>
 </div>
 
+## Installation
+
+### Manual
+
+<img src="assets/install.svg" width="100%" alt="install" />
+
+**macOS / Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
+```
+
 Interactive install detects installed supported agents; choose one, some, or all:
+
 ```bash
 tokless                              # interactive: pick agents
 tokless --agents claude,opencode     # wire just these
 ```
 
-## Included Tools
+### Copy this for your agent
 
-tokless combines focused agent rules with installed tools, exposing only the core MCP surface by default.
+```text
+https://raw.githubusercontent.com/HoangP8/tokless/main/docs/installation.md
+```
+
+## Tools
+
+Popular packages with distinct roles, wired without conflicts.
 
 | Package | ⭐ | Purpose |
 | :--- | :---: | :--- |
@@ -99,13 +96,11 @@ tokless combines focused agent rules with installed tools, exposing only the cor
 | [codegraph](https://github.com/colbymchenry/codegraph) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=) | Indexed code graph for source, call paths, and impact. |
 | [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | Sandboxed context tools with session memory and focused analysis. |
 
-### Callable MCP surface
-
 ```text
-Tools
-├── CodeGraph · 1/1 tool
+MCP Tools
+├── CodeGraph · 1/1
 │   └── codegraph_explore
-└── Context-Mode · 6/11 upstream tools
+└── Context Mode · 6/11
     ├── ctx_execute
     ├── ctx_batch_execute
     ├── ctx_execute_file
@@ -116,17 +111,31 @@ Tools
 
 ## Configuration
 
-tokless manages agent config and instruction blocks; not every item uses native config.
+How each tool connects to each agent:
 
-> **Instruction** means tokless-owned static rules. `tokless update` refreshes them.
+> **Instruction** means Tokless-managed static rules refreshed by `tokless update`.
 
-| Tool | Claude | OpenCode | Codex | Antigravity | Copilot | Droid | Pi |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **rtk** | Hook + Allow | Plugin | Hook | Hook + Allow | Hook + Allow | Hook | Extension |
-| **caveman** | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction |
-| **ponytail** | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction | Instruction |
-| **codegraph** | MCP + Allow + Instruction | MCP + Instruction | MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | Hook + MCP + Instruction | MCP + Extension + Instruction |
-| **context-mode** | MCP + Allow + Instruction | MCP + Instruction | Hook + MCP + Instruction | MCP + Instruction | MCP + Hook + Instruction | MCP + Instruction | MCP + Extension + Instruction |
+<table width="1500">
+  <thead>
+    <tr>
+      <th width="130" nowrap>Tool</th>
+      <th width="185" nowrap>Claude</th>
+      <th width="185" nowrap>OpenCode</th>
+      <th width="185" nowrap>Codex</th>
+      <th width="220" nowrap>Antigravity</th>
+      <th width="220" nowrap>Copilot</th>
+      <th width="220" nowrap>Droid</th>
+      <th width="225" nowrap>Pi</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td nowrap><b>rtk</b></td><td nowrap>Hook + Allow</td><td nowrap>Plugin</td><td nowrap>Hook</td><td nowrap>Hook + Allow</td><td nowrap>Hook + Allow</td><td nowrap>Hook</td><td nowrap>Extension</td></tr>
+    <tr><td nowrap><b>caveman</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
+    <tr><td nowrap><b>ponytail</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
+    <tr><td nowrap><b>codegraph</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td></tr>
+    <tr><td nowrap><b>context-mode</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Hook + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td></tr>
+  </tbody>
+</table>
 
 ## Usage
 
