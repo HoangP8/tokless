@@ -36,10 +36,13 @@ func TestCodegraphPiWireUnwire(t *testing.T) {
 		t.Fatal("adapter missing")
 	}
 	ext, _ := util.ReadFileSafe(piCodegraphIndexPath())
-	for _, w := range []string{"session_start", "tool_result", "sync", "init"} {
+	for _, w := range []string{"session_start", "tool_result", "TOKLESS", "index", "--auto", "await index()", "indexInFlight", "indexPending", "syncTimer = undefined"} {
 		if !strings.Contains(ext, w) {
 			t.Errorf("index missing %q", w)
 		}
+	}
+	if strings.Contains(ext, "codegraph sync") {
+		t.Fatal("extension must use shared tokless index")
 	}
 	// keep second mcp so adapter survives
 	agents.ConfigurePiMcp("context-mode")

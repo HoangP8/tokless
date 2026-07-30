@@ -27,12 +27,15 @@ func RunMcp(argv []string) int {
 	if strings.Contains(argv[0], string(filepath.Separator)) {
 		util.PrependProcessPath(filepath.Dir(argv[0]))
 	}
-	if isCodegraphCommand(argv[0]) && !strings.Contains(argv[0], string(filepath.Separator)) && !util.CodegraphBinaryHealthy(argv[0]) {
+	codegraphPath := codegraphMcpCommand(argv)
+	if codegraphPath != "" && codegraphPath == argv[0] && !strings.Contains(argv[0], string(filepath.Separator)) && !util.CodegraphBinaryHealthy(argv[0]) {
 		if p := util.ResolveCodegraphBin(); p != "" {
 			argv[0] = p
 		}
 	}
-	RunIndex(InitOptions{Agent: agent}, true)
+	if codegraphPath != "" {
+		_ = RunCodegraphAutoIndex()
+	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		path = argv[0]
@@ -40,7 +43,22 @@ func RunMcp(argv []string) int {
 	return runMcpProxy(agent, path, argv, os.Environ(), contextMode)
 }
 
+// codegraphMcpCommand returns CodeGraph executable for direct and cmd /c forms.
+func codegraphMcpCommand(argv []string) string {
+	if len(argv) > 0 && isCodegraphCommand(argv[0]) {
+		return argv[0]
+	}
+	if len(argv) < 3 {
+		return ""
+	}
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(argv[0], "\\", "/")))
+	if (base == "cmd" || base == "cmd.exe") && strings.EqualFold(argv[1], "/c") && isCodegraphCommand(argv[2]) {
+		return argv[2]
+	}
+	return ""
+}
+
 func isCodegraphCommand(p string) bool {
-	base := strings.ToLower(filepath.Base(p))
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(p, "\\", "/")))
 	return base == "codegraph" || base == "codegraph.cmd" || base == "codegraph.exe" || base == "codegraph.bat"
 }

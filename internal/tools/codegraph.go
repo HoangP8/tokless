@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
+
+const codegraphIndexTimeout = 60 * time.Second
 
 func codegraphEnsureInstalled(opts core.RunOpts) (bool, error) {
 	if isTest() {
@@ -150,57 +153,101 @@ func codegraphVerify(agent string) bool {
 }
 
 func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
+	return RunCodegraphIndex(dir, opts)
+}
+
+// RunCodegraphIndex initializes or synchronizes CodeGraph before returning.
+func RunCodegraphIndex(dir string, opts core.RunOpts) (bool, error) {
 	if isTest() {
 		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
 		return true, nil
 	}
 	bin := util.ResolveCodegraphBin()
 	if bin == "" {
-		return false, nil
+		return false, fmt.Errorf("codegraph executable not found")
 	}
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would run codegraph in " + dir)
 		return true, nil
 	}
-	go codegraphSyncBackground(bin, dir)
+	return codegraphSync(bin, dir)
+}
+
+func codegraphSync(bin, dir string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), codegraphIndexTimeout)
+	defer cancel()
+	run := func(args ...string) util.ExecResult {
+		command, commandArgs := codegraphRunCommand(bin, args...)
+		return util.Run(command, commandArgs, util.RunOptions{Cwd: dir, Capture: true, Ctx: ctx})
+	}
+	if util.Exists(filepath.Join(dir, ".codegraph")) {
+		if result := run("sync"); result.Code != 0 {
+			return false, fmt.Errorf("codegraph sync failed%s", codegraphFailure(result.Stderr))
+		}
+		return true, nil
+	}
+	if result := run("init", "-i"); result.Code == 0 {
+		return true, nil
+	}
+	if ctx.Err() != nil {
+		return false, fmt.Errorf("codegraph init failed: timed out")
+	}
+	if result := run("init"); result.Code != 0 {
+		return false, fmt.Errorf("codegraph init failed%s", codegraphFailure(result.Stderr))
+	}
 	return true, nil
 }
 
-func codegraphSyncBackground(bin, dir string) {
-	if util.Exists(filepath.Join(dir, ".codegraph")) {
-		_ = util.Run(bin, []string{"sync"}, util.RunOptions{Cwd: dir, Quiet: true})
-		return
+func codegraphRunCommand(bin string, args ...string) (string, []string) {
+	if util.IsWin {
+		ext := strings.ToLower(filepath.Ext(bin))
+		if ext == ".cmd" || ext == ".bat" {
+			return "cmd", append([]string{"/c", bin}, args...)
+		}
 	}
-	if util.Run(bin, []string{"init", "-i"}, util.RunOptions{Cwd: dir, Quiet: true}).Code != 0 {
-		_ = util.Run(bin, []string{"init"}, util.RunOptions{Cwd: dir, Quiet: true})
-	}
+	return bin, args
 }
 
-// Pi auto-index: session_start init/sync + debounced sync after edit/write/bash.
-const piCodegraphIndexTs = `import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent"
-import { stat } from "node:fs/promises"
+func codegraphFailure(stderr string) string {
+	if stderr = clip(stderr); stderr != "" {
+		return ": " + stderr
+	}
+	return ""
+}
 
+// Pi auto-index: session_start init/sync + debounced index after edit/write/bash.
+var piCodegraphIndexTs = `import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent"
 const SYNC_TOOLS = new Set(["edit", "write", "bash"])
+const TOKLESS = %q
 let syncTimer: ReturnType<typeof setTimeout> | undefined
+let indexInFlight: Promise<void> | undefined
+let indexPending = false
 
 export default function (pi: ExtensionAPI) {
-  pi.on("session_start", async () => {
-    try {
-      await stat(".codegraph")
-      pi.exec("codegraph", ["sync"], { timeout: 60_000 }).catch(() => {})
-    } catch {
-      pi.exec("codegraph", ["init", "-i"], { timeout: 60_000 })
-        .then((r) => { if (r.code !== 0) pi.exec("codegraph", ["init"], { timeout: 60_000 }) })
-        .catch(() => {})
+  function index(): Promise<void> {
+    if (!indexInFlight) {
+      indexInFlight = (async () => {
+        do {
+          indexPending = false
+          await pi.exec(TOKLESS, ["index", "--auto"], { timeout: 60_000 }).catch(() => {})
+        } while (indexPending)
+      })().finally(() => { indexInFlight = undefined })
+    } else {
+      indexPending = true
     }
+    return indexInFlight
+  }
+
+  pi.on("session_start", async () => {
+    await index()
   })
 
   pi.on("tool_result", async (event: ToolResultEvent) => {
     if (!SYNC_TOOLS.has(event.toolName)) return
     if (syncTimer) clearTimeout(syncTimer)
-    syncTimer = setTimeout(() => {
-      pi.exec("codegraph", ["sync"], { timeout: 60_000 }).catch(() => {})
+    syncTimer = setTimeout(async () => {
       syncTimer = undefined
+      await index()
     }, 2_000)
   })
 }
@@ -212,7 +259,7 @@ func piCodegraphIndexPath() string {
 
 func writePiCodegraphIndexExtension() {
 	_ = os.MkdirAll(filepath.Dir(piCodegraphIndexPath()), 0o755)
-	_ = util.WriteFile(piCodegraphIndexPath(), piCodegraphIndexTs)
+	_ = util.WriteFile(piCodegraphIndexPath(), fmt.Sprintf(piCodegraphIndexTs, util.ToklessAbs()))
 }
 
 func piCodegraphIndexExtensionPresent() bool {

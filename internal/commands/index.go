@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
+	"github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -41,8 +42,9 @@ func findProjectDir(dir string) string {
 func RunIndex(opts InitOptions, auto bool) int {
 	dir, err := os.Getwd()
 	if err != nil {
-		if !auto {
-			util.L.Err("cannot resolve current directory: " + err.Error())
+		util.L.Err("cannot resolve current directory: " + err.Error())
+		if auto {
+			return 0
 		}
 		return 1
 	}
@@ -79,14 +81,23 @@ func RunIndex(opts InitOptions, auto bool) int {
 	failed := 0
 	for _, t := range indexable {
 		if t.IndexReady != nil && !t.IndexReady() {
-			if !auto {
+			if auto {
+				util.L.Err(t.Label + " index: not installed")
+			} else {
 				util.L.Raw("  " + util.C.Gray("• ") + t.Label + util.C.Gray("  not installed — run tokless first"))
-				failed++
 			}
+			failed++
 			continue
 		}
 		ok, ierr := t.IndexProject(dir, ro)
 		if auto {
+			if ierr != nil {
+				util.L.Err(t.Label + " index: " + ierr.Error())
+				failed++
+			} else if !ok {
+				util.L.Err(t.Label + " index: could not index")
+				failed++
+			}
 			continue
 		}
 		switch {
@@ -118,6 +129,29 @@ func RunIndex(opts InitOptions, auto bool) int {
 	return 0
 }
 
+// RunCodegraphAutoIndex indexes only CodeGraph for MCP startup.
+func RunCodegraphAutoIndex() int {
+	dir, err := os.Getwd()
+	if err != nil {
+		util.L.Err("cannot resolve current directory: " + err.Error())
+		return 1
+	}
+	dir = findProjectDir(dir)
+	if !looksLikeProject(dir) {
+		return 0
+	}
+	ok, err := tools.RunCodegraphIndex(dir, core.RunOpts{})
+	if err != nil {
+		util.L.Err("CodeGraph index: " + err.Error())
+		return 1
+	}
+	if !ok {
+		util.L.Err("CodeGraph index: could not index")
+		return 1
+	}
+	return 0
+}
+
 // RunCodegraphIndexHook handles `tokless agy-hook codegraph-index`.
 func RunCodegraphIndexHook() int {
 	input, _ := io.ReadAll(os.Stdin)
@@ -126,20 +160,46 @@ func RunCodegraphIndexHook() int {
 		return 0
 	}
 	if util.Exists(filepath.Join(dir, ".codegraph")) {
-		if bin := resolveCodegraphBin(); bin != "" {
-			cmd := exec.Command(bin, "sync")
-			cmd.Dir = dir
-			_ = cmd.Start()
-		}
+		spawnCodegraphSync(dir)
 		return 0
 	}
-	bin := resolveCodegraphBin()
+	return syncCodegraphIndex(dir)
+}
+
+func spawnCodegraphSync(dir string) {
+	bin := util.ResolveCodegraphBin()
 	if bin == "" {
+		util.L.Err("CodeGraph index: codegraph executable not found")
+		return
+	}
+	command, args := codegraphCommand(bin, "sync")
+	cmd := exec.Command(command, args...)
+	cmd.Dir = dir
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	backgroundSpawn(cmd)
+}
+
+func codegraphCommand(bin string, args ...string) (string, []string) {
+	if util.IsWin {
+		ext := strings.ToLower(filepath.Ext(bin))
+		if ext == ".cmd" || ext == ".bat" {
+			return "cmd", append([]string{"/c", bin}, args...)
+		}
+	}
+	return bin, args
+}
+
+func syncCodegraphIndex(dir string) int {
+	ok, err := tools.RunCodegraphIndex(dir, core.RunOpts{})
+	if err != nil {
+		util.L.Err("CodeGraph index: " + err.Error())
 		return 0
 	}
-	cmd := exec.Command(bin, "init")
-	cmd.Dir = dir
-	_ = cmd.Start()
+	if !ok {
+		util.L.Err("CodeGraph index: could not index")
+		return 0
+	}
 	return 0
 }
 
@@ -163,20 +223,4 @@ func resolveHookProjectDirFromInput(input []byte) string {
 		return ""
 	}
 	return findProjectDir(dir)
-}
-
-func resolveCodegraphBin() string {
-	if p := util.ResolveCodegraphBin(); p != "" {
-		return p
-	}
-	if matches, _ := filepath.Glob(filepath.Join(util.Home(), ".nvm", "versions", "node", "*", "bin")); len(matches) > 0 {
-		sep := ":"
-		if util.IsWin {
-			sep = ";"
-		}
-		cur := os.Getenv("PATH")
-		prefix := strings.Join(matches, sep)
-		os.Setenv("PATH", prefix+sep+cur)
-	}
-	return util.ResolveCodegraphBin()
 }
