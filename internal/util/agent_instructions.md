@@ -123,18 +123,16 @@ Prebuilt code index. `codegraph_explore` gives source, call path, and blast radi
 
 ```
 .codegraph/ index exists?
-├─ YES → codegraph_explore FIRST. Always. Source + blast radius + call path
-│        in ONE call.
-│        ├─ Use for: how does X work, flow A→B, architecture, who calls Y,
-│        │   blast radius, subsystem structure, where is X, reading a file.
-│        ├─ grep/search/read ONLY for non-code codegraph doesn't index
-│        │   (configs, docs, .env) — AFTER codegraph narrows it down,
-│        │   never as the first move.
-│        └─ Trust results — full AST parse, safe to edit from. NO re-grep,
-│           NO re-search, NO re-read of what codegraph returned. Spilled?
-│           grep the spill for the symbol you NEED — do NOT Read/View whole.
-│           ONE call beats dozens of grep+search+Read.
-└─ NO  → work normal (read / grep / ast_grep). Don't call codegraph.
+├─ YES → Use CodeGraph FIRST.
+│  ├─ Use for → how X works, flows, architecture, callers, blast radius, symbols.
+│  ├─ Trust results — no re-read/re-grep. Stale banner? Read only listed files.
+│  ├─ Result spilled? Grep the spill for needed symbol; never read whole spill.
+│  └─ Configs/docs/.env/non-indexed → Use normal tools.
+└─ NO  → `git ls-files | wc -l`.
+   ├─ ≤5 files or no git → Use normal tools.
+   └─ Otherwise → Run `tokless index` once.
+      ├─ Ready → Use CodeGraph.
+      └─ Fails/CLI missing → Use normal tools; do not retry.
 ```
 
 Examples:
