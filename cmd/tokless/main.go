@@ -112,6 +112,8 @@ func run() int {
 			return commands.RunRtkHookCopilot()
 		case "droid":
 			return commands.RunRtkHookDroid()
+		case "grok":
+			return commands.RunRtkHookGrok()
 		}
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "codex-perm" && os.Args[2] == "codex" {

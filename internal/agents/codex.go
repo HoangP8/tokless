@@ -804,4 +804,5 @@ func Register() {
 	core.RegisterAgent(codex)
 	core.RegisterAgent(antigravity)
 	core.RegisterAgent(copilot)
+	core.RegisterAgent(grok)
 }
