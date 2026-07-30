@@ -15,8 +15,8 @@ func TestRunMcpInitializesCodegraphBeforeProxy(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
 		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
-		"if [ \"$1\" = init ]; then mkdir -p .codegraph; exit 0; fi\n" +
-		"[ -d .codegraph ] || exit 1\n"
+		"if [ \"$1\" = init ]; then mkdir -p .codegraph; touch .codegraph/codegraph.db; exit 0; fi\n" +
+		"[ -f .codegraph/codegraph.db ] || exit 1\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

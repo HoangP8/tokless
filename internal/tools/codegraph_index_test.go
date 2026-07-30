@@ -29,7 +29,7 @@ func writeCodegraphIndexScript(t *testing.T, body string) (string, string) {
 }
 
 func TestRunCodegraphIndexInitializesBeforeReturn(t *testing.T) {
-	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] || exit 1\nmkdir -p .codegraph")
+	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] || exit 1\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db")
 	project := t.TempDir()
 
 	ok, err := RunCodegraphIndex(project, core.RunOpts{})
@@ -47,6 +47,9 @@ func TestRunCodegraphIndexSyncsExistingIndex(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(project, ".codegraph", "codegraph.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ok, err := RunCodegraphIndex(project, core.RunOpts{})
 	if err != nil || !ok {
@@ -58,7 +61,7 @@ func TestRunCodegraphIndexSyncsExistingIndex(t *testing.T) {
 }
 
 func TestRunCodegraphIndexFallsBackToPlainInit(t *testing.T) {
-	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] && [ \"$2\" != -i ] || exit 1\nmkdir -p .codegraph")
+	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] && [ \"$2\" != -i ] || exit 1\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db")
 
 	ok, err := RunCodegraphIndex(t.TempDir(), core.RunOpts{})
 	if err != nil || !ok {
@@ -66,6 +69,54 @@ func TestRunCodegraphIndexFallsBackToPlainInit(t *testing.T) {
 	}
 	if got := readCodegraphLog(t, log); got != "init -i\ninit\n" {
 		t.Fatalf("calls = %q, want init fallback", got)
+	}
+}
+
+func TestRunCodegraphIndexInitializesEmptyIndexDir(t *testing.T) {
+	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] || exit 1\ntouch .codegraph/codegraph.db")
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := RunCodegraphIndex(project, core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
+	}
+	if got := readCodegraphLog(t, log); got != "init -i\n" {
+		t.Fatalf("calls = %q, want init only", got)
+	}
+}
+
+func TestHasCodegraphIndexHonorsOverride(t *testing.T) {
+	project := t.TempDir()
+	indexDir := filepath.Join(project, ".custom-codegraph")
+	if err := os.Mkdir(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(indexDir, "codegraph.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEGRAPH_DIR", ".custom-codegraph")
+	if !HasCodegraphIndex(project) {
+		t.Fatal("CODEGRAPH_DIR index not detected")
+	}
+}
+
+func TestHasCodegraphIndexIgnoresInvalidOverride(t *testing.T) {
+	project := t.TempDir()
+	indexDir := filepath.Join(project, ".codegraph")
+	if err := os.Mkdir(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(indexDir, "codegraph.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{".", "..", ".codegraph..old", "nested/index", `nested\index`, "/absolute"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CODEGRAPH_DIR", value)
+			if !HasCodegraphIndex(project) {
+				t.Fatalf("invalid CODEGRAPH_DIR %q did not fall back", value)
+			}
+		})
 	}
 }
 

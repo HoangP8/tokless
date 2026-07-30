@@ -36,13 +36,18 @@ func TestCodegraphPiWireUnwire(t *testing.T) {
 		t.Fatal("adapter missing")
 	}
 	ext, _ := util.ReadFileSafe(piCodegraphIndexPath())
-	for _, w := range []string{"session_start", "tool_result", "TOKLESS", "index", "--auto", "await index()", "indexInFlight", "indexPending", "syncTimer = undefined"} {
+	for _, w := range []string{"session_start", "TOKLESS", "void pi.exec", "index", "--auto", ".catch(() => {})"} {
 		if !strings.Contains(ext, w) {
 			t.Errorf("index missing %q", w)
 		}
 	}
-	if strings.Contains(ext, "codegraph sync") {
-		t.Fatal("extension must use shared tokless index")
+	if strings.Contains(ext, `pi.on("session_start", async`) || strings.Contains(ext, "await index()") {
+		t.Fatal("session startup must not wait for indexing")
+	}
+	for _, forbidden := range []string{"tool_result", "session_shutdown", "syncTimer", "indexInFlight", "indexPending", "AbortController", "codegraph sync"} {
+		if strings.Contains(ext, forbidden) {
+			t.Fatalf("extension must not contain %q", forbidden)
+		}
 	}
 	// keep second mcp so adapter survives
 	agents.ConfigurePiMcp("context-mode")
@@ -54,6 +59,16 @@ func TestCodegraphPiWireUnwire(t *testing.T) {
 	}
 	if !agents.PiSourceHas(agents.PiSrcMcpAdapter) {
 		t.Fatal("adapter should stay with other MCP")
+	}
+}
+
+func TestPiCodegraphIndexSourceEscapesToklessPath(t *testing.T) {
+	ext := piCodegraphIndexSource("C:\\tokless \"quoted\"\ntokless.exe")
+	if !strings.Contains(ext, `const TOKLESS = "C:\\tokless \"quoted\"\ntokless.exe"`) {
+		t.Fatalf("TOKLESS is not JSON-safe: %q", ext)
+	}
+	if strings.Contains(ext, "%q") {
+		t.Fatal("Go quote verb leaked into TypeScript template")
 	}
 }
 

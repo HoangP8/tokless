@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestRunCodegraphIndexHookUsesSharedBlockingIndex(t *testing.T) {
@@ -16,7 +15,7 @@ func TestRunCodegraphIndexHookUsesSharedBlockingIndex(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
 		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
-		"[ \"$1\" = init ] || exit 1\nmkdir -p .codegraph\n"
+		"[ \"$1\" = init ] || exit 1\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +50,11 @@ func TestRunCodegraphIndexHookUsesSharedBlockingIndex(t *testing.T) {
 	}
 }
 
-func TestRunCodegraphIndexHookSpawnsExistingSync(t *testing.T) {
+func TestRunCodegraphIndexHookSkipsExistingIndex(t *testing.T) {
 	binDir := t.TempDir()
 	project := t.TempDir()
 	log := filepath.Join(binDir, "calls")
-	script := "#!/bin/sh\n" +
-		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
-		"[ \"$1\" = sync ] || exit 1\nsleep 0.05\necho sync >> \"$CODEGRAPH_LOG\"\n"
+	script := "#!/bin/sh\nexit 1\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +62,9 @@ func TestRunCodegraphIndexHookSpawnsExistingSync(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".codegraph", "codegraph.db"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -82,15 +82,9 @@ func TestRunCodegraphIndexHookSpawnsExistingSync(t *testing.T) {
 	if code := RunCodegraphIndexHook(); code != 0 {
 		t.Fatalf("RunCodegraphIndexHook = %d", code)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if got, _ := os.ReadFile(log); string(got) == "sync\n" {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatalf("existing index ran CodeGraph: %v", err)
 	}
-	got, _ := os.ReadFile(log)
-	t.Fatalf("detached sync did not complete: %q", got)
 }
 
 func TestRunCodegraphIndexHookFailsOpen(t *testing.T) {

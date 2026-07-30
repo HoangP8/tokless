@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -156,6 +157,15 @@ func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
 	return RunCodegraphIndex(dir, opts)
 }
 
+// HasCodegraphIndex reports whether CodeGraph has an initialized project database.
+func HasCodegraphIndex(dir string) bool {
+	indexDir := strings.TrimSpace(os.Getenv("CODEGRAPH_DIR"))
+	if indexDir == "" || indexDir == "." || strings.Contains(indexDir, "..") || strings.ContainsAny(indexDir, `/\`) {
+		indexDir = ".codegraph"
+	}
+	return util.Exists(filepath.Join(dir, indexDir, "codegraph.db"))
+}
+
 // RunCodegraphIndex initializes or synchronizes CodeGraph before returning.
 func RunCodegraphIndex(dir string, opts core.RunOpts) (bool, error) {
 	if isTest() {
@@ -180,7 +190,7 @@ func codegraphSync(bin, dir string) (bool, error) {
 		command, commandArgs := codegraphRunCommand(bin, args...)
 		return util.Run(command, commandArgs, util.RunOptions{Cwd: dir, Capture: true, Ctx: ctx})
 	}
-	if util.Exists(filepath.Join(dir, ".codegraph")) {
+	if HasCodegraphIndex(dir) {
 		if result := run("sync"); result.Code != 0 {
 			return false, fmt.Errorf("codegraph sync failed%s", codegraphFailure(result.Stderr))
 		}
@@ -215,40 +225,13 @@ func codegraphFailure(stderr string) string {
 	return ""
 }
 
-// Pi auto-index: session_start init/sync + debounced index after edit/write/bash.
-var piCodegraphIndexTs = `import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent"
-const SYNC_TOOLS = new Set(["edit", "write", "bash"])
-const TOKLESS = %q
-let syncTimer: ReturnType<typeof setTimeout> | undefined
-let indexInFlight: Promise<void> | undefined
-let indexPending = false
+// Pi auto-indexes once at session start without delaying the session.
+var piCodegraphIndexTs = `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+const TOKLESS = %s
 
 export default function (pi: ExtensionAPI) {
-  function index(): Promise<void> {
-    if (!indexInFlight) {
-      indexInFlight = (async () => {
-        do {
-          indexPending = false
-          await pi.exec(TOKLESS, ["index", "--auto"], { timeout: 60_000 }).catch(() => {})
-        } while (indexPending)
-      })().finally(() => { indexInFlight = undefined })
-    } else {
-      indexPending = true
-    }
-    return indexInFlight
-  }
-
-  pi.on("session_start", async () => {
-    await index()
-  })
-
-  pi.on("tool_result", async (event: ToolResultEvent) => {
-    if (!SYNC_TOOLS.has(event.toolName)) return
-    if (syncTimer) clearTimeout(syncTimer)
-    syncTimer = setTimeout(async () => {
-      syncTimer = undefined
-      await index()
-    }, 2_000)
+  pi.on("session_start", () => {
+    void pi.exec(TOKLESS, ["index", "--auto"], { timeout: 60_000 }).catch(() => {})
   })
 }
 `
@@ -259,7 +242,12 @@ func piCodegraphIndexPath() string {
 
 func writePiCodegraphIndexExtension() {
 	_ = os.MkdirAll(filepath.Dir(piCodegraphIndexPath()), 0o755)
-	_ = util.WriteFile(piCodegraphIndexPath(), fmt.Sprintf(piCodegraphIndexTs, util.ToklessAbs()))
+	_ = util.WriteFile(piCodegraphIndexPath(), piCodegraphIndexSource(util.ToklessAbs()))
+}
+
+func piCodegraphIndexSource(tokless string) string {
+	encoded, _ := json.Marshal(tokless)
+	return fmt.Sprintf(piCodegraphIndexTs, encoded)
 }
 
 func piCodegraphIndexExtensionPresent() bool {

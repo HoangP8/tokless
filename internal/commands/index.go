@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/tools"
@@ -80,6 +78,10 @@ func RunIndex(opts InitOptions, auto bool) int {
 	ro := core.RunOpts{DryRun: opts.DryRun, Agent: opts.Agent}
 	failed := 0
 	for _, t := range indexable {
+		if auto && t.ID == "codegraph" {
+			runCodegraphAutoIndex(dir)
+			continue
+		}
 		if t.IndexReady != nil && !t.IndexReady() {
 			if auto {
 				util.L.Err(t.Label + " index: not installed")
@@ -140,14 +142,21 @@ func RunCodegraphAutoIndex() int {
 	if !looksLikeProject(dir) {
 		return 0
 	}
+	return runCodegraphAutoIndex(dir)
+}
+
+func runCodegraphAutoIndex(dir string) int {
+	if tools.HasCodegraphIndex(dir) {
+		return 0
+	}
 	ok, err := tools.RunCodegraphIndex(dir, core.RunOpts{})
 	if err != nil {
 		util.L.Err("CodeGraph index: " + err.Error())
-		return 1
+		return 0
 	}
 	if !ok {
 		util.L.Err("CodeGraph index: could not index")
-		return 1
+		return 0
 	}
 	return 0
 }
@@ -159,48 +168,7 @@ func RunCodegraphIndexHook() int {
 	if dir == "" {
 		return 0
 	}
-	if util.Exists(filepath.Join(dir, ".codegraph")) {
-		spawnCodegraphSync(dir)
-		return 0
-	}
-	return syncCodegraphIndex(dir)
-}
-
-func spawnCodegraphSync(dir string) {
-	bin := util.ResolveCodegraphBin()
-	if bin == "" {
-		util.L.Err("CodeGraph index: codegraph executable not found")
-		return
-	}
-	command, args := codegraphCommand(bin, "sync")
-	cmd := exec.Command(command, args...)
-	cmd.Dir = dir
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	backgroundSpawn(cmd)
-}
-
-func codegraphCommand(bin string, args ...string) (string, []string) {
-	if util.IsWin {
-		ext := strings.ToLower(filepath.Ext(bin))
-		if ext == ".cmd" || ext == ".bat" {
-			return "cmd", append([]string{"/c", bin}, args...)
-		}
-	}
-	return bin, args
-}
-
-func syncCodegraphIndex(dir string) int {
-	ok, err := tools.RunCodegraphIndex(dir, core.RunOpts{})
-	if err != nil {
-		util.L.Err("CodeGraph index: " + err.Error())
-		return 0
-	}
-	if !ok {
-		util.L.Err("CodeGraph index: could not index")
-		return 0
-	}
-	return 0
+	return runCodegraphAutoIndex(dir)
 }
 
 func resolveHookProjectDirFromInput(input []byte) string {
