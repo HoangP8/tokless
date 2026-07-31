@@ -117,7 +117,14 @@ func grokCodegraphArgs(args []string) bool {
 
 func grokContextModeArgs(args []string) bool {
 	command, tail, ok := grokMcpCommand(args, []string{"run-mcp", "--context-mode"})
-	return ok && len(tail) == 0 && grokCommandName(command, "context-mode")
+	if !ok {
+		return false
+	}
+	if len(tail) == 0 {
+		return grokCommandName(command, "context-mode")
+	}
+	return len(tail) == 2 && grokCommandName(command, "npx") &&
+		tail[0] == "--no-install" && tail[1] == "context-mode"
 }
 
 // grokMcpCommand accepts direct commands or Tokless's Windows cmd /c wrapper.

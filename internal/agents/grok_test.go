@@ -168,4 +168,10 @@ func TestGrokMcpArgsAcceptWindowsCmdWrapper(t *testing.T) {
 	if !grokContextModeArgs([]string{"run-mcp", "--context-mode", "cmd", "/c", `C:\\bin\\context-mode.CMD`}) {
 		t.Fatal("wrapped Context Mode args did not validate")
 	}
+	if !grokContextModeArgs([]string{"run-mcp", "--context-mode", "/opt/node/bin/npx", "--no-install", "context-mode"}) {
+		t.Fatal("npx Context Mode args did not validate")
+	}
+	if !grokContextModeArgs([]string{"run-mcp", "--context-mode", "cmd", "/c", `C:\\node\\npx.CMD`, "--no-install", "context-mode"}) {
+		t.Fatal("wrapped npx Context Mode args did not validate")
+	}
 }
