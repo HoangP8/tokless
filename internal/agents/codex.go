@@ -20,12 +20,7 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	_ = util.EnsureDir(p.Dir)
 	raw, _ := util.ReadFileSafe(p.Config)
 	raw = sweepStaleHookStateEntries(raw)
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("codex", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-	} else {
-		spawn = util.PickMcpSpawn(toolID)
-	}
+	spawn := util.SpawnForTool("codex", toolID)
 	block := util.NewTomlBlock("mcp_servers." + toolID)
 	block.Set("command", spawn.Command)
 	block.Set("args", spawn.Args)
@@ -797,11 +792,14 @@ var codex = &core.AgentManifest{
 	},
 }
 
-// Register wires all agents into the core registry.
+// Register wires all agents into the core registry. Order is what the user
+// sees in the agent picker, so keep the common ones first.
 func Register() {
 	core.RegisterAgent(claude)
 	core.RegisterAgent(opencode)
 	core.RegisterAgent(codex)
 	core.RegisterAgent(antigravity)
 	core.RegisterAgent(copilot)
+	core.RegisterAgent(droid)
+	core.RegisterAgent(pi)
 }

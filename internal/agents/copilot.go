@@ -21,18 +21,38 @@ func ideRoot() string {
 	if ideProjectRoot != "" {
 		return ideProjectRoot
 	}
+	// "." is the package dir under go test, so a test that wires copilot would
+	// drop .github and .vscode files into the repo. Tests that mean to exercise
+	// the IDE side call SetIdeProjectRoot first.
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return ""
+	}
 	return "."
 }
 
 // IDE (VS Code) paths — project-scoped, written relative to cwd.
 
-func copilotIdeHooksDir() string { return filepath.Join(ideRoot(), ".github", "hooks") }
-func copilotIdeHooksFile(name string) string {
-	return filepath.Join(copilotIdeHooksDir(), name)
+// An empty root means "no IDE project here" — the path helpers return "" and
+// every read and write on it fails harmlessly.
+func idePath(parts ...string) string {
+	root := ideRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(append([]string{root}, parts...)...)
 }
-func copilotIdeMcpFile() string { return filepath.Join(ideRoot(), ".vscode", "mcp.json") }
+
+func copilotIdeHooksDir() string { return idePath(".github", "hooks") }
+func copilotIdeHooksFile(name string) string {
+	dir := copilotIdeHooksDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, name)
+}
+func copilotIdeMcpFile() string { return idePath(".vscode", "mcp.json") }
 func copilotIdeInstructionsFile() string {
-	return filepath.Join(ideRoot(), ".github", "copilot-instructions.md")
+	return idePath(".github", "copilot-instructions.md")
 }
 
 // InstallCopilotContextModeHook writes the context-mode hook file.
@@ -298,12 +318,7 @@ func ConfigureCopilotMcp(toolID string) (changed bool, file string) {
 	}
 	servers := getOrCreateMap(cfg, "mcpServers")
 
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
-	} else {
-		spawn = util.PickMcpSpawn(toolID)
-	}
+	spawn := util.SpawnForTool("", toolID)
 	desired := util.NewOrderedMap()
 	desired.Set("type", "local")
 	desired.Set("command", spawn.Command)
@@ -326,49 +341,12 @@ func ConfigureCopilotMcp(toolID string) (changed bool, file string) {
 
 // RemoveCopilotMcp deletes a tool entry from ~/.copilot/mcp-config.json.
 func RemoveCopilotMcp(toolID string) bool {
-	p := util.CopilotPathsResolved()
-	raw, ok := util.ReadFileSafe(p.McpConfig)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	servers, ok := cfg.Get("mcpServers")
-	if !ok {
-		return false
-	}
-	sm, ok := servers.(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	if _, has := sm.Get(toolID); !has {
-		return false
-	}
-	sm.Delete(toolID)
-	_ = util.WriteFile(p.McpConfig, util.StringifyJSON(cfg))
-	return true
+	return util.RemoveMcpEntry(util.CopilotPathsResolved().McpConfig, "mcpServers", toolID)
 }
 
 // CopilotMcpHas reports whether toolID is registered in copilot's MCP config.
 func CopilotMcpHas(toolID string) bool {
-	p := util.CopilotPathsResolved()
-	raw, ok := util.ReadFileSafe(p.McpConfig)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if s, ok := cfg.Get("mcpServers"); ok {
-		if sm, ok := s.(*util.OrderedMap); ok {
-			_, has := sm.Get(toolID)
-			return has
-		}
-	}
-	return false
+	return util.McpEntryHas(util.CopilotPathsResolved().McpConfig, "mcpServers", toolID)
 }
 
 // --- IDE (VS Code) MCP: .vscode/mcp.json ---
@@ -383,12 +361,7 @@ func ConfigureCopilotIdeMcp(toolID string) (changed bool, file string) {
 	}
 	servers := getOrCreateMap(cfg, "servers")
 
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
-	} else {
-		spawn = util.PickMcpSpawn(toolID)
-	}
+	spawn := util.SpawnForTool("", toolID)
 	desired := util.NewOrderedMap()
 	desired.Set("type", "stdio")
 	desired.Set("command", spawn.Command)
@@ -409,47 +382,11 @@ func ConfigureCopilotIdeMcp(toolID string) (changed bool, file string) {
 }
 
 func RemoveCopilotIdeMcp(toolID string) bool {
-	path := copilotIdeMcpFile()
-	raw, ok := util.ReadFileSafe(path)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	servers, ok := cfg.Get("servers")
-	if !ok {
-		return false
-	}
-	sm, ok := servers.(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	if _, has := sm.Get(toolID); !has {
-		return false
-	}
-	sm.Delete(toolID)
-	_ = util.WriteFile(path, util.StringifyJSON(cfg))
-	return true
+	return util.RemoveMcpEntry(copilotIdeMcpFile(), "servers", toolID)
 }
 
 func CopilotIdeMcpHas(toolID string) bool {
-	raw, ok := util.ReadFileSafe(copilotIdeMcpFile())
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if s, ok := cfg.Get("servers"); ok {
-		if sm, ok := s.(*util.OrderedMap); ok {
-			_, has := sm.Get(toolID)
-			return has
-		}
-	}
-	return false
+	return util.McpEntryHas(copilotIdeMcpFile(), "servers", toolID)
 }
 
 // SyncCopilotIdeInstructions copies the CLI merged instruction body to the IDE file.

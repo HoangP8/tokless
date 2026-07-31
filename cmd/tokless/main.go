@@ -49,14 +49,28 @@ func helpText() string {
 		"  " + cy("tokless update") + "       Update the tokless CLI, then show version diff and upgrade tools\n" +
 		"  " + cy("tokless doctor") + "       Show what's wired up; warn about anything broken\n" +
 		"  " + cy("tokless info") + "         Show how tokless was installed, plus paths and config locations\n" +
-		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
-		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n\n" +
+		"  " + cy("tokless index") + "        Build per-project indexes (codegraph, projectmem) in the current dir\n" +
+		"  " + cy("tokless headroom-proxy on|off|status") + "\n" +
+		"                      Compress every request an agent sends, not just the ones it hands over\n" +
+		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched, including the CLI itself\n\n" +
 		util.C.Bold("Flags:") + "\n" +
 		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,pi\n" +
-		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode\n" +
+		"  --tools <list>      Limit to a subset: rtk,principles,caveman,ponytail,codegraph,context-mode,headroom,projectmem\n" +
+		"  --headroom-proxy    Turn the compression proxy on without asking\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
 		"  --verbose           Show every step\n\n" +
 		util.C.Gray("Docs: https://github.com/HoangP8/tokless")
+}
+
+// headroomProxyMode reads the word after the command; parseArgs only keeps the
+// first positional.
+func headroomProxyMode(argv []string) string {
+	for _, a := range argv {
+		if !strings.HasPrefix(a, "-") {
+			return strings.ToLower(a)
+		}
+	}
+	return "status"
 }
 
 func parseList(raw string, ok bool, allowed []string) ([]string, error) {
@@ -157,12 +171,13 @@ func run() int {
 	}
 
 	opts := commands.InitOptions{
-		Agents:  agentList,
-		Tools:   toolList,
-		Agent:   strings.ToLower(strings.TrimSpace(p.flags["agent"])),
-		Yes:     p.bools["yes"],
-		DryRun:  p.bools["dry-run"] || p.bools["dryrun"],
-		Verbose: p.bools["verbose"],
+		Agents:        agentList,
+		Tools:         toolList,
+		Agent:         strings.ToLower(strings.TrimSpace(p.flags["agent"])),
+		Yes:           p.bools["yes"],
+		DryRun:        p.bools["dry-run"] || p.bools["dryrun"],
+		Verbose:       p.bools["verbose"],
+		HeadroomProxy: p.bools["headroom-proxy"],
 	}
 
 	var code int
@@ -177,6 +192,8 @@ func run() int {
 		code = commands.RunInfo()
 	case "index":
 		code = commands.RunIndex(opts, p.bools["auto"])
+	case "headroom-proxy":
+		code = commands.RunHeadroomProxy(headroomProxyMode(os.Args[2:]))
 	case "disable":
 		code = commands.RunDisable(opts)
 	case "uninstall":

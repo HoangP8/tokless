@@ -62,10 +62,6 @@ func droidDesktopPaths() []string {
 
 // --- agent manifest ---
 
-func init() {
-	core.RegisterAgent(droid)
-}
-
 var droid = &core.AgentManifest{
 	ID:        "droid",
 	Label:     "Factory Droid",
@@ -85,12 +81,7 @@ var droidEnabledTools = map[string][]string{
 }
 
 func ConfigureDroidMcp(toolID string) (changed bool, file string) {
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
-	} else {
-		spawn = util.PickMcpSpawn(toolID)
-	}
+	spawn := util.SpawnForTool("", toolID)
 
 	f := droidMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
@@ -158,48 +149,12 @@ func enabledToolsEq(have any, want []string) bool {
 
 // RemoveDroidMcp deletes mcpServers.<toolID> from ~/.factory/mcp.json.
 func RemoveDroidMcp(toolID string) bool {
-	f := droidMcpFile()
-	raw, ok := util.ReadFileSafe(f)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	servers, ok := cfg.Get("mcpServers")
-	if !ok {
-		return false
-	}
-	sm, ok := servers.(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	if _, ok := sm.Get(toolID); !ok {
-		return false
-	}
-	sm.Delete(toolID)
-	_ = util.WriteFile(f, util.StringifyJSON(cfg))
-	return true
+	return util.RemoveMcpEntry(droidMcpFile(), "mcpServers", toolID)
 }
 
 // DroidMcpHas reports whether ~/.factory/mcp.json registers the tool.
 func DroidMcpHas(toolID string) bool {
-	raw, ok := util.ReadFileSafe(droidMcpFile())
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if s, ok := cfg.Get("mcpServers"); ok {
-		if sm, ok := s.(*util.OrderedMap); ok {
-			_, found := sm.Get(toolID)
-			return found
-		}
-	}
-	return false
+	return util.McpEntryHas(droidMcpFile(), "mcpServers", toolID)
 }
 
 // Known MCP tool names per server, used to pre-populate persistentPermissions.

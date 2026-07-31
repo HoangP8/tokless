@@ -23,12 +23,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	}
 	servers := getOrCreateMap(cfg, "mcpServers")
 
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-	} else {
-		spawn = util.PickMcpSpawn("context-mode")
-	}
+	spawn := util.SpawnForTool("claude", toolID)
 	desired := util.NewOrderedMap()
 	desired.Set("type", "stdio")
 	desired.Set("command", spawn.Command)
@@ -68,11 +63,23 @@ func claudeMcpToolNames(toolID string) []string {
 		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
 	case "codegraph":
 		return []string{"codegraph_explore"}
+	case "headroom":
+		return []string{"headroom_compress", "headroom_retrieve", "headroom_stats"}
+	case "projectmem":
+		return []string{
+			"get_instructions", "get_summary", "get_project_map", "get_plan", "precheck_file",
+			"get_issue", "search_events", "get_context", "get_score", "get_global_gotchas",
+			"log_issue", "record_attempt", "record_fix", "add_decision", "add_note",
+		}
 	}
 	return nil
 }
 
 func allowClaudeProjectLocalEntries(entries ...string) {
+	// Writes into the current project, not a sandboxed home — would litter the repo under test.
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return
@@ -222,6 +229,11 @@ func DisallowClaudeMcpTool(toolID string) {
 
 // AllowClaudeBashPatternProjectLocal adds a Bash(specifier) entry to project-local settings.
 func AllowClaudeBashPatternProjectLocal(pattern string) {
+	// Same reason as allowClaudeProjectLocalEntries: writes into the current
+	// project, so under test it would litter the repo.
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return
@@ -251,6 +263,57 @@ func AllowClaudeBashPatternProjectLocal(pattern string) {
 	perms.Set("allow", allow)
 	cfg.Set("permissions", perms)
 	_ = util.WriteFile(settingsFile, util.StringifyJSON(cfg))
+}
+
+// SetClaudeEnv sets one env var Claude Code passes to its sessions. Empty
+// value removes it. Returns false when nothing changed.
+func SetClaudeEnv(key, value string) bool {
+	p := util.ClaudeCodePaths()
+	raw, _ := util.ReadFileSafe(p.Settings)
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+	env := getOrCreateMap(cfg, "env")
+	cur, had := env.Get(key)
+	switch {
+	case value == "":
+		if !had {
+			return false
+		}
+		env.Delete(key)
+	default:
+		if s, ok := cur.(string); had && ok && s == value {
+			return false
+		}
+		env.Set(key, value)
+	}
+	cfg.Set("env", env)
+	_ = util.EnsureDir(p.Dir)
+	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
+	return true
+}
+
+func ClaudeEnv(key string) string {
+	raw, ok := util.ReadFileSafe(util.ClaudeCodePaths().Settings)
+	if !ok {
+		return ""
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return ""
+	}
+	v, ok := cfg.Get("env")
+	if !ok {
+		return ""
+	}
+	env, ok := v.(*util.OrderedMap)
+	if !ok {
+		return ""
+	}
+	s, _ := env.Get(key)
+	out, _ := s.(string)
+	return out
 }
 
 // AllowClaudeBashPattern adds a Bash(specifier) entry to permissions.allow.
@@ -323,21 +386,7 @@ func DisallowClaudeBashPattern(pattern string) {
 }
 
 func RemoveClaudeMcp(toolID string) bool {
-	p := util.ClaudeCodePaths()
-	removed := false
-	if raw, ok := util.ReadFileSafe(p.GlobalJSON); ok {
-		if cfg := util.TryParseJsonc(raw); cfg != nil {
-			if servers, ok := cfg.Get("mcpServers"); ok {
-				if sm, ok := servers.(*util.OrderedMap); ok {
-					if _, has := sm.Get(toolID); has {
-						sm.Delete(toolID)
-						_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
-						removed = true
-					}
-				}
-			}
-		}
-	}
+	removed := util.RemoveMcpEntry(util.ClaudeCodePaths().GlobalJSON, "mcpServers", toolID)
 	DisallowClaudeMcpTool(toolID)
 	return removed
 }

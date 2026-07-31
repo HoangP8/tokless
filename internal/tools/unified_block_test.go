@@ -21,7 +21,7 @@ func TestUnifiedBody_WiresAllOwnersAcrossAllAgents(t *testing.T) {
 	setupHome(t)
 
 	agentsList := []string{"claude", "opencode", "codex", "antigravity"}
-	wireOrder := []string{"caveman", "codegraph", "context-mode", "ponytail"}
+	wireOrder := []string{"caveman", "codegraph", "context-mode", "ponytail", "principles"}
 	expectedOrder := []string{
 		util.SectionsByOwner["principles"],
 		util.SectionsByOwner["caveman"],
@@ -50,10 +50,10 @@ func TestUnifiedBody_WiresAllOwnersAcrossAllAgents(t *testing.T) {
 				t.Fatalf("read: %v", err)
 			}
 			body := string(raw)
-			if !strings.Contains(body, "# Agent Instructions") {
+			if !strings.Contains(body, "# Agent Skills & Tools") {
 				t.Errorf("overview heading missing:\n%s", body)
 			}
-			if strings.Count(body, "# Agent Instructions") != 1 {
+			if strings.Count(body, "# Agent Skills & Tools") != 1 {
 				t.Errorf("overview heading duplicated:\n%s", body)
 			}
 			prev := -1
@@ -92,7 +92,7 @@ func TestUnifiedBody_PerToolUnwire(t *testing.T) {
 	setupHome(t)
 
 	agentsList := []string{"claude", "opencode", "codex", "antigravity"}
-	wireOrder := []string{"caveman", "codegraph", "context-mode", "ponytail"}
+	wireOrder := []string{"caveman", "codegraph", "context-mode", "ponytail", "principles"}
 
 	for _, agent := range agentsList {
 		t.Run(agent, func(t *testing.T) {

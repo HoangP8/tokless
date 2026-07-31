@@ -22,12 +22,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	}
 	mcp := getOrCreateMap(cfg, "mcp")
 
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-	} else {
-		spawn = util.PickMcpSpawn("context-mode")
-	}
+	spawn := util.SpawnForTool("opencode", toolID)
 	command := append([]string{spawn.Command}, spawn.Args...)
 	desired := util.NewOrderedMap()
 	desired.Set("type", "local")
@@ -48,29 +43,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 }
 
 func RemoveOpenCodeMcp(toolID string) bool {
-	p := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(p.Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	mcpV, ok := cfg.Get("mcp")
-	if !ok {
-		return false
-	}
-	mcp, ok := mcpV.(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	if _, ok := mcp.Get(toolID); !ok {
-		return false
-	}
-	mcp.Delete(toolID)
-	_ = util.WriteFile(p.Config, util.StringifyJSON(cfg))
-	return true
+	return util.RemoveMcpEntry(util.OpenCodePathsResolved().Config, "mcp", toolID)
 }
 
 func notDisabled(m *util.OrderedMap) bool {

@@ -191,6 +191,41 @@ func TestCodegraphProbeSupportsFramedMcp(t *testing.T) {
 	}
 }
 
+// projectmem's server needs the project path, which one global config entry
+// can't know — so it launches through tokless, which fills it in.
+func TestWrapProjectmemRoutesThroughTokless(t *testing.T) {
+	got := WrapProjectmem()
+	if got.Command == "" {
+		t.Fatal("empty command")
+	}
+	if len(got.Args) < 4 || got.Args[0] != "run-mcp" || got.Args[1] != "--root-cwd" {
+		t.Fatalf("args = %v, want run-mcp --root-cwd <python> -m projectmem.mcp_server", got.Args)
+	}
+	tail := got.Args[len(got.Args)-2:]
+	if tail[0] != "-m" || tail[1] != "projectmem.mcp_server" {
+		t.Errorf("server module args = %v", tail)
+	}
+}
+
+func TestHeadroomSpawnFallsBackToUvx(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH emulation is unix-only here")
+	}
+	SetHomeOverride(t.TempDir())
+	defer SetHomeOverride("")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("XDG_BIN_HOME", "")
+
+	got := HeadroomSpawn()
+	if filepath.Base(got.Command) != "uvx" {
+		t.Fatalf("command = %q, want uvx when headroom isn't installed", got.Command)
+	}
+	// Must name the same extra tokless installs, or the two run different code.
+	if len(got.Args) < 2 || got.Args[0] != "--from" || got.Args[1] != "headroom-ai[mcp]" {
+		t.Errorf("args = %v, want --from headroom-ai[mcp] …", got.Args)
+	}
+}
+
 func TestWrapAutoIndexUsesToklessRunMcpCommand(t *testing.T) {
 	got := WrapAutoIndex("codex", McpSpawn{Command: "codegraph", Args: []string{"serve", "--mcp"}})
 	if got.Command == "" {

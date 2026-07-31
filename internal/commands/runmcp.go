@@ -9,19 +9,36 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func RunMcp(argv []string) int {
-	agent := ""
+// parseRunMcpArgv splits our flags from the command to launch. Doctor shares
+// it, so what it accepts and what runs can't drift apart. --root-cwd fills in
+// the project path from the working dir the agent starts us in.
+func parseRunMcpArgv(argv []string) (agent string, contextMode, rootCwd bool, rest []string, ok bool) {
 	if len(argv) >= 2 && argv[0] == "--agent" {
-		agent = argv[1]
-		argv = argv[2:]
+		agent, argv = argv[1], argv[2:]
 	}
-	contextMode := false
 	if len(argv) > 0 && argv[0] == "--context-mode" {
-		contextMode = true
-		argv = argv[1:]
+		contextMode, argv = true, argv[1:]
 	}
-	if len(argv) == 0 {
+	if len(argv) > 0 && argv[0] == "--root-cwd" {
+		rootCwd, argv = true, argv[1:]
+	}
+	// What's left has to be a command. A leftover flag means the entry was
+	// written wrong — running it would just exec the flag.
+	if len(argv) == 0 || strings.HasPrefix(argv[0], "--") {
+		return "", false, false, nil, false
+	}
+	return agent, contextMode, rootCwd, argv, true
+}
+
+func RunMcp(argv []string) int {
+	agent, contextMode, rootCwd, argv, ok := parseRunMcpArgv(argv)
+	if !ok {
 		return 1
+	}
+	if rootCwd {
+		if wd, err := os.Getwd(); err == nil && wd != "" {
+			argv = append(argv, "--root", wd)
+		}
 	}
 	util.EnsureProcessPath()
 	if strings.Contains(argv[0], string(filepath.Separator)) {

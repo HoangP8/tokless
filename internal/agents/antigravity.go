@@ -659,13 +659,10 @@ func RemoveAntigravityEntry(entry string) {
 // ConfigureAntigravityMcp upserts mcpServers.<tool> into agy's shared and
 // CLI-specific configs.
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
-	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
 		RemoveAntigravityCodegraphToolDefs()
-	} else {
-		spawn = util.PickMcpSpawn(toolID)
 	}
+	spawn := util.SpawnForTool("", toolID)
 	allConfigured := true
 	for _, f := range antigravityMcpConfigFiles() {
 		raw, exists := util.ReadFileSafe(f)

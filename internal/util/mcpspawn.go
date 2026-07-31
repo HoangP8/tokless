@@ -26,6 +26,61 @@ var pkgForBin = map[string]string{
 	"codegraph":    "@colbymchenry/codegraph",
 }
 
+// SpawnForTool builds a tool's MCP launch command, already wrapped however
+// that tool needs. One place instead of the same branch in seven agent files.
+// Pass agent "" to skip the auto-index wrapper (agents with their own hook).
+func SpawnForTool(agent, toolID string) McpSpawn {
+	switch toolID {
+	case "codegraph":
+		s := PickMcpSpawn("codegraph", "serve", "--mcp")
+		if agent == "" {
+			return s
+		}
+		return WrapAutoIndex(agent, s)
+	case "context-mode":
+		return PickMcpSpawn("context-mode")
+	case "headroom":
+		return HeadroomSpawn()
+	case "projectmem":
+		return WrapProjectmem()
+	}
+	return PickMcpSpawn(toolID)
+}
+
+// HeadroomSpawn launches headroom's MCP server. Absolute path, because MCP
+// clients often don't inherit the shell PATH.
+// Shape: `headroom mcp serve`, uvx fallback per the server.json runtime hint —
+// https://github.com/headroomlabs-ai/headroom · https://docs.headroomlabs.ai/docs
+func HeadroomSpawn() McpSpawn {
+	if p := ResolvePyBin("headroom"); p != "" {
+		return wrapCmdShim(McpSpawn{Command: p, Args: []string{"mcp", "serve"}})
+	}
+	// Not installed yet: let uvx fetch it on demand.
+	if uvx := ResolvePyBin("uvx"); uvx != "" {
+		return wrapCmdShim(McpSpawn{Command: uvx, Args: []string{"--from", "headroom-ai[mcp]", "headroom", "mcp", "serve"}})
+	}
+	return wrapCmdShim(McpSpawn{Command: "uvx", Args: []string{"--from", "headroom-ai[mcp]", "headroom", "mcp", "serve"}})
+}
+
+// ProjectmemServerCommand finds the python that owns projectmem.
+// Shape: `python -m projectmem.mcp_server --root <abs path>` —
+// https://github.com/riponcm/projectmem
+func ProjectmemServerCommand() (string, []string) {
+	args := []string{"-m", "projectmem.mcp_server"}
+	if py := PyToolPython("pjm", "projectmem"); py != "" {
+		return py, args
+	}
+	return pythonBinName(), args
+}
+
+// WrapProjectmem runs the server through tokless so --root gets filled in with
+// the project path at launch. One config entry then works everywhere.
+func WrapProjectmem() McpSpawn {
+	self := toklessRunMcpCommand()
+	py, args := ProjectmemServerCommand()
+	return McpSpawn{Command: self, Args: append([]string{"run-mcp", "--root-cwd", py}, args...)}
+}
+
 // PickMcpSpawn prefers a real binary on PATH, else falls back to npx --no-install.
 func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 	if extraArgs == nil {

@@ -620,6 +620,8 @@ var contextMode = &core.ToolManifest{
 	Homepage:     "https://github.com/mksglu/context-mode",
 	InstallHint:  "npm i -g context-mode",
 	Channel:      core.ChannelNpm,
+	Pkg:          "context-mode",
+	Bin:          "context-mode",
 	MinNodeMajor: contextModeMinNode,
 	Install:      ctxEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
@@ -677,10 +679,13 @@ var contextMode = &core.ToolManifest{
 // MD-block write order follows this sequence.
 func Register() {
 	core.RegisterTool(rtk)
+	core.RegisterTool(principles)
 	core.RegisterTool(caveman)
+	core.RegisterTool(ponytail)
 	core.RegisterTool(codegraph)
 	core.RegisterTool(contextMode)
-	core.RegisterTool(ponytail)
+	core.RegisterTool(headroom)
+	core.RegisterTool(projectmem)
 }
 
 // helpers shared in tools package

@@ -52,8 +52,6 @@ func piKnownBinDirs() []string {
 	return dirs
 }
 
-func init() { core.RegisterAgent(pi) }
-
 var pi = &core.AgentManifest{
 	ID:        "pi",
 	Label:     "Pi",
@@ -406,7 +404,7 @@ func PiUpdatePackages() {
 // --- MCP (~/.pi/agent/mcp.json) ---
 
 func ConfigurePiMcp(toolID string) (changed bool, file string) {
-	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
+	spawn := util.SpawnForTool("", toolID)
 	f := piMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
@@ -445,46 +443,11 @@ func ConfigurePiMcp(toolID string) (changed bool, file string) {
 }
 
 func RemovePiMcp(toolID string) bool {
-	raw, ok := util.ReadFileSafe(piMcpFile())
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	servers, ok := cfg.Get("mcpServers")
-	if !ok {
-		return false
-	}
-	sm, ok := servers.(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	if _, ok := sm.Get(toolID); !ok {
-		return false
-	}
-	sm.Delete(toolID)
-	_ = util.WriteFile(piMcpFile(), util.StringifyJSON(cfg))
-	return true
+	return util.RemoveMcpEntry(piMcpFile(), "mcpServers", toolID)
 }
 
 func PiMcpHas(toolID string) bool {
-	raw, ok := util.ReadFileSafe(piMcpFile())
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if s, ok := cfg.Get("mcpServers"); ok {
-		if sm, ok := s.(*util.OrderedMap); ok {
-			_, found := sm.Get(toolID)
-			return found
-		}
-	}
-	return false
+	return util.McpEntryHas(piMcpFile(), "mcpServers", toolID)
 }
 
 func PiMcpHasAny() bool {

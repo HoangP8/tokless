@@ -155,17 +155,38 @@ func probeMcpSpawn(command string, args []string) string {
 	if looksLikeCodegraph(exe, normArgs) {
 		return liveCodegraphVersion(exe, normArgs)
 	}
-	return ""
+	return probePythonModule(exe, normArgs)
 }
+
+// A present interpreter isn't enough: the package can be uninstalled from
+// under it.
+func probePythonModule(exe string, args []string) string {
+	if len(args) < 2 || args[0] != "-m" {
+		return ""
+	}
+	module := args[1]
+	if v, ok := moduleProbeCache[exe+" "+module]; ok {
+		return v
+	}
+	detail := ""
+	if !util.PyImportOK(exe, module) {
+		detail = "mcp server can't start: " + module + " not importable — re-run tokless"
+	}
+	moduleProbeCache[exe+" "+module] = detail
+	return detail
+}
+
+var moduleProbeCache = map[string]string{}
 
 func unwrapRunMcp(command string, args []string) (string, []string) {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(command, "\\", "/")))
 	if base != "tokless" && base != "tokless.exe" {
 		return command, args
 	}
-	// run-mcp --agent <id> <cmd> [args...]
-	if len(args) >= 4 && args[0] == "run-mcp" && args[1] == "--agent" {
-		return args[3], append([]string(nil), args[4:]...)
+	if len(args) > 0 && args[0] == "run-mcp" {
+		if _, _, _, rest, ok := parseRunMcpArgv(args[1:]); ok {
+			return rest[0], append([]string(nil), rest[1:]...)
+		}
 	}
 	return command, args
 }
@@ -372,24 +393,28 @@ func ideRootForDoctor() string {
 	return cwd
 }
 
+// probedMcpTools are the MCP servers doctor health-checks.
+var probedMcpTools = []string{"codegraph", "headroom", "projectmem"}
+
 func managedMcpSpawns(agentID string) []util.McpSpawn {
 	var out []util.McpSpawn
-	switch agentID {
-	case "claude":
-		out = append(out, mcpFromCommandArgsFile(util.ClaudeCodePaths().GlobalJSON, "mcpServers", "codegraph")...)
-	case "opencode":
-		out = append(out, mcpFromCommandArrayFile(util.OpenCodePathsResolved().Config, "mcp", "codegraph")...)
-	case "codex":
-		out = append(out, mcpFromCodexToml("codegraph")...)
-	case "antigravity":
-		out = append(out, mcpFromCommandArgsFile(util.AntigravityPathsResolved().McpConfigCLI, "mcpServers", "codegraph")...)
-	case "copilot":
-		p := util.CopilotPathsResolved()
-		out = append(out, mcpFromCommandArgsFile(p.McpConfig, "mcpServers", "codegraph")...)
-	case "droid":
-		out = append(out, mcpFromCommandArgsFile(filepath.Join(util.Home(), ".factory", "mcp.json"), "mcpServers", "codegraph")...)
-	case "pi":
-		out = append(out, mcpFromCommandArgsFile(filepath.Join(agents.PiAgentDirResolved(), "mcp.json"), "mcpServers", "codegraph")...)
+	for _, toolID := range probedMcpTools {
+		switch agentID {
+		case "claude":
+			out = append(out, mcpFromCommandArgsFile(util.ClaudeCodePaths().GlobalJSON, "mcpServers", toolID)...)
+		case "opencode":
+			out = append(out, mcpFromCommandArrayFile(util.OpenCodePathsResolved().Config, "mcp", toolID)...)
+		case "codex":
+			out = append(out, mcpFromCodexToml(toolID)...)
+		case "antigravity":
+			out = append(out, mcpFromCommandArgsFile(util.AntigravityPathsResolved().McpConfigCLI, "mcpServers", toolID)...)
+		case "copilot":
+			out = append(out, mcpFromCommandArgsFile(util.CopilotPathsResolved().McpConfig, "mcpServers", toolID)...)
+		case "droid":
+			out = append(out, mcpFromCommandArgsFile(filepath.Join(util.Home(), ".factory", "mcp.json"), "mcpServers", toolID)...)
+		case "pi":
+			out = append(out, mcpFromCommandArgsFile(filepath.Join(agents.PiAgentDirResolved(), "mcp.json"), "mcpServers", toolID)...)
+		}
 	}
 	return out
 }

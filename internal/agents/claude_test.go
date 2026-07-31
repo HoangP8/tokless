@@ -5,7 +5,57 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/HoangP8/tokless/internal/util"
 )
+
+// headroom's own installer rewrote this file and dropped keys it didn't
+// recognise. Ours must only ever touch the one variable.
+func TestSetClaudeEnvKeepsEverythingElse(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"effortLevel":"max","env":{"KEEP_ME":"1"},"permissions":{"allow":["WebSearch"]}}`
+	if err := os.WriteFile(settings, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !SetClaudeEnv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8787") {
+		t.Fatal("expected a change")
+	}
+	raw, _ := os.ReadFile(settings)
+	body := string(raw)
+	for _, want := range []string{`"effortLevel"`, `"max"`, `"KEEP_ME"`, `"WebSearch"`, "http://127.0.0.1:8787"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("lost %s from settings:\n%s", want, body)
+		}
+	}
+	if SetClaudeEnv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8787") {
+		t.Error("writing the same value twice should be a no-op")
+	}
+	if got := ClaudeEnv("ANTHROPIC_BASE_URL"); got != "http://127.0.0.1:8787" {
+		t.Errorf("ClaudeEnv = %q", got)
+	}
+
+	if !SetClaudeEnv("ANTHROPIC_BASE_URL", "") {
+		t.Fatal("expected removal to change the file")
+	}
+	raw, _ = os.ReadFile(settings)
+	body = string(raw)
+	if strings.Contains(body, "ANTHROPIC_BASE_URL") {
+		t.Errorf("variable survived removal:\n%s", body)
+	}
+	for _, want := range []string{`"effortLevel"`, `"KEEP_ME"`, `"WebSearch"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("removal lost %s:\n%s", want, body)
+		}
+	}
+}
 
 func TestAllowClaudeMcpToolProjectLocalPreservesAndAppends(t *testing.T) {
 	proj := t.TempDir()
