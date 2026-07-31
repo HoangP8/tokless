@@ -1,12 +1,6 @@
-# Agent Instructions
+# Agent Skills & Tools
 
-Apply on every coding task:
-
-- **Principles** — think, simplify, edit surgically, verify.
-- **Response Style (caveman)** — terse prose, full technical accuracy.
-- **Build Discipline (ponytail)** — reuse first, write only what must exist.
-- **Code Index (codegraph)** — one call for structure, flows, dependencies.
-- **Context Tools (context-mode)** — keep raw bytes out, derive answers in-sandbox.
+Two kinds. Skills change how you write; tools are MCP functions you must actually call.
 
 ## Principles
 
@@ -193,3 +187,38 @@ ctx_search(queries:["auth endpoint","rate limits"], source:"api-docs")
 Shell stays for git, mkdir, rm, mv, installs, tests. Write/Edit for file changes; ctx subprocess writes aren't host edits.
 
 Windows: `pwsh -NoProfile -Command`, absolute paths, `X:\` maps to `/x/`, quote spaces.
+
+## Context Compression (headroom)
+
+Last rung. Compress only what must enter context anyway.
+
+```
+Payload heading into context?
+├─ Shell output → rtk already filtered. Don't re-compress.
+├─ Source code → codegraph. Don't compress what you never needed.
+├─ Big file / log / URL → ctx_execute_file. Derive in sandbox.
+└─ Must enter anyway (API JSON, RAG chunks, long history) → headroom_compress
+```
+
+| Tool | Role |
+|------|------|
+| `headroom_compress` | Shrink a payload, keep the answers in it. |
+| `headroom_retrieve` | Pull back detail an earlier compression dropped. |
+| `headroom_stats` | Measure savings when tuning. |
+
+Skip: payloads under ~1KB, code you must edit verbatim, already-compressed data.
+
+## Project Memory (projectmem)
+
+Local memory of what already broke and what fixed it. No `.projectmem/`? Run `tokless index` once.
+
+Before coding:
+- `get_context` — what happened in this area before.
+- `precheck_file` — before editing a file with history.
+- `get_global_gotchas` — known traps for a library, across projects.
+
+After:
+- `log_issue` on a new bug, `record_attempt` per failed fix, `record_fix` on success.
+- `add_decision` when choosing an approach worth remembering.
+
+Never re-debug what memory already answers.

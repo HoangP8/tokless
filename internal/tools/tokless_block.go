@@ -352,16 +352,30 @@ func removeOwnerInPath(path, cur, owner string) {
 func stripIndexPreamble(head []string) []string {
 	for i, line := range head {
 		trimmed := strings.TrimSpace(line)
-		if (trimmed == "# Agent Instructions" || trimmed == "# Agent Operating System" || trimmed == "## Index" || trimmed == "## Index →") && isToklessIndexPreamble(head[i:]) {
+		if isToklessIndexTitle(trimmed) && isToklessIndexPreamble(head[i:]) {
 			return head[:i]
 		}
 	}
 	return head
 }
 
+// isToklessIndexTitle covers old heading names too, so upgrades replace them.
+func isToklessIndexTitle(line string) bool {
+	switch line {
+	case "# Agent Skills & Tools", "# Agent Instructions", "# Agent Operating System", "## Index", "## Index →":
+		return true
+	}
+	return false
+}
+
 func isToklessIndexPreamble(lines []string) bool {
 	body := strings.Join(lines, "\n")
-	return strings.Contains(body, "- **Principles**") || strings.Contains(body, "- **Response Style") || strings.Contains(body, "- **Code Index")
+	for _, bullet := range util.InstructionIndexBullets() {
+		if strings.Contains(body, bullet) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeOwnerAtPath(path, owner string) {
@@ -397,11 +411,8 @@ func hasOwnerInRaw(raw, owner string) bool {
 }
 
 func ownersFromBlocks(blocks []managedSection) []string {
-	var out []string
+	out := make([]string, 0, len(blocks))
 	for _, b := range blocks {
-		if b.owner == "principles" {
-			continue
-		}
 		out = append(out, b.owner)
 	}
 	return out
