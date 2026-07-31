@@ -560,6 +560,8 @@ var rtk = &core.ToolManifest{
 	Homepage:    "https://github.com/rtk-ai/rtk",
 	InstallHint: "Prebuilt binary from GitHub releases (no Rust required).",
 	Channel:     core.ChannelGitHub,
+	Repo:        "rtk-ai/rtk",
+	Bin:         "rtk",
 	Install:     rtkEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
 		"claude":      rtkWire("claude"),

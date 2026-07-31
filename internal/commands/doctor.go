@@ -72,7 +72,7 @@ func RunDoctor(offline bool) int {
 		} else {
 			util.L.Raw(statusLine)
 		}
-		v := util.GatherVersions()
+		v := util.GatherVersions(versionSpecs())
 		outdated = util.CountOutdated(v)
 		if stdoutTTY() {
 			fmt.Print(util.EraseStyledLine(statusLine))
@@ -168,42 +168,40 @@ func doctorSummaryLine(r agentReport) string {
 }
 
 func toolVersionOutdated(tool *core.ToolManifest, info util.VersionInfo) bool {
-	if tool.InstructionOnly || tool.NotTrackable {
+	if tool.NotTrackable {
 		return false
 	}
-	return info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0
+	return util.VersionOutdated(info.Installed, info.Latest)
 }
 
 func toolVersionDisplayLine(tool *core.ToolManifest, info util.VersionInfo) string {
 	name := paintName(padEnd(tool.ID, 14))
 	switch {
-	case tool.InstructionOnly:
-		return ""
 	case tool.NotTrackable && info.Installed != nil:
-		return util.C.Green(util.Sym.Check) + " " + name + paintVer("v"+*info.Installed)
+		return util.C.Green(util.Sym.Check) + " " + name + paintVer(displayVer(*info.Installed))
 	case tool.NotTrackable && info.Present:
 		return util.C.Green(util.Sym.Check) + " " + name + util.C.Green("installed")
 	case tool.NotTrackable:
 		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(tool.ID, 14)) + util.C.Gray("not installed")
 	case toolVersionOutdated(tool, info):
-		return util.C.Yellow("↑") + " " + name + paintVer(padEnd("v"+*info.Installed, 10)) + paintArrow() + " " + util.C.Bold(util.C.Green("v"+*info.Latest))
+		return util.C.Yellow("↑") + " " + name + paintVer(padEnd(displayVer(*info.Installed), 10)) + paintArrow() + " " + util.C.Bold(util.C.Green(displayVer(*info.Latest)))
 	case info.Installed != nil:
-		row := name + paintVer(padEnd("v"+*info.Installed, 10))
+		row := name + paintVer(padEnd(displayVer(*info.Installed), 10))
 		if info.Latest != nil {
-			row += paintArrow() + " " + paintVer("v"+*info.Latest)
+			row += paintArrow() + " " + paintVer(displayVer(*info.Latest))
+		}
+		if tool.Skill != nil && util.SkillUsingFallback(tool.ID) {
+			row += util.C.Yellow(" (built-in copy — upstream over size budget)")
 		}
 		return util.C.Green(util.Sym.Check) + " " + row
 	default:
-		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(tool.ID, 14)) + util.C.Gray("not installed")
+		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(tool.ID, 14)) + util.C.Gray(notInstalledLabel(tool))
 	}
 }
 
 // listToolVersions prints one row per tool.
 func listToolVersions(tools []*core.ToolManifest, v map[string]util.VersionInfo, tree bool) {
 	for _, tool := range tools {
-		if tool.InstructionOnly {
-			continue
-		}
 		line := toolVersionDisplayLine(tool, v[tool.ID])
 		if line == "" {
 			continue

@@ -101,44 +101,8 @@ func codegraphConfigureMcp(agent string) bool {
 
 func codegraphVerify(agent string) bool {
 	switch agent {
-	case "claude":
-		cp := util.ClaudeCodePaths()
-		raw, ok := util.ReadFileSafe(cp.GlobalJSON)
-		if !ok {
-			return false
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			return false
-		}
-		if s, ok := cfg.Get("mcpServers"); ok {
-			if sm, ok := s.(*util.OrderedMap); ok {
-				_, has := sm.Get("codegraph")
-				return has
-			}
-		}
-		return false
-	case "opencode":
-		op := util.OpenCodePathsResolved()
-		raw, ok := util.ReadFileSafe(op.Config)
-		if !ok {
-			return false
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			return false
-		}
-		if m, ok := cfg.Get("mcp"); ok {
-			if mm, ok := m.(*util.OrderedMap); ok {
-				_, has := mm.Get("codegraph")
-				return has
-			}
-		}
-		return false
-	case "codex":
-		cx := util.CodexPathsResolved()
-		raw, _ := util.ReadFileSafe(cx.Config)
-		return strings.Contains(raw, "[mcp_servers.codegraph]")
+	case "claude", "opencode", "codex":
+		return mcpEntryPresent(agent, "codegraph")
 	case "antigravity":
 		agents.CleanupDeadIdeHooks()
 		return agents.AntigravityMcpHas("codegraph") && agents.HasAntigravityCodegraphIndexHook()
@@ -327,6 +291,8 @@ var codegraph = &core.ToolManifest{
 	Homepage:     "https://github.com/colbymchenry/codegraph",
 	InstallHint:  "npm i -g @colbymchenry/codegraph",
 	Channel:      core.ChannelNpm,
+	Pkg:          "@colbymchenry/codegraph",
+	Bin:          "codegraph",
 	Install:      codegraphEnsureInstalled,
 	IndexProject: codegraphIndexProject,
 	IndexReady:   func() bool { return isTest() || util.ResolveCodegraphBin() != "" },

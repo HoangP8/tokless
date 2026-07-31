@@ -11,9 +11,52 @@ var nodeAgeChecked bool
 
 func NodeAgeAlreadyChecked() bool { return nodeAgeChecked }
 
+// DepNeeds is the union of runtime requirements across the selected tools.
+type DepNeeds struct {
+	Node    bool
+	Git     bool
+	Python  bool
+	MinNode int
+	MinPy   int
+}
+
+// DepStatus reports which runtimes ended up usable.
+type DepStatus struct {
+	Node   bool
+	Git    bool
+	Python bool
+}
+
 // EnsureDeps detects missing deps up front and offers one combined install.
-// minNode prompts y/n upgrade when installed Node is too old for native packages.
-func EnsureDeps(needNode, needGit bool, minNode int) (nodeOK, gitOK bool) {
+// MinNode prompts y/n upgrade when installed Node is too old for native packages.
+func EnsureDeps(n DepNeeds) DepStatus {
+	nodeOK, gitOK := ensureNodeGit(n.Node, n.Git, n.MinNode)
+	pyOK := !n.Python || ensurePython(n.MinPy)
+	return DepStatus{Node: nodeOK, Git: gitOK, Python: pyOK}
+}
+
+// ensurePython prefers uv, which ships its own Python — so no system python3 is fine.
+func ensurePython(minMinor int) bool {
+	if PythonReady(minMinor) {
+		return true
+	}
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return true
+	}
+	L.Warn("Missing: Python 3." + strconv.Itoa(minMinor) + "+ (or uv)")
+	if !Confirm("Install uv now? (it bundles its own Python)", true) {
+		L.Info("Skipping. uv: https://docs.astral.sh/uv/getting-started/installation/")
+		return false
+	}
+	if EnsureUv() {
+		L.Ok("uv installed.")
+		return true
+	}
+	L.Err("uv install didn't complete. Manual: https://docs.astral.sh/uv/getting-started/installation/")
+	return false
+}
+
+func ensureNodeGit(needNode, needGit bool, minNode int) (nodeOK, gitOK bool) {
 	nodeOK = !needNode || nodeToolsReady()
 	gitOK = !needGit || Which("git") != ""
 	if nodeOK && gitOK {

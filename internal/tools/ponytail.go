@@ -1,89 +1,28 @@
 package tools
 
 import (
-	"github.com/HoangP8/tokless/internal/agents"
 	core "github.com/HoangP8/tokless/internal/core"
 )
 
-func ponytailWireFor(agent string) core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			return true, nil
-		}
-		ok := WriteOwner(agent, "ponytail")
-		return ok, nil
-	}
-}
-
-func ponytailWireCopilot() core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			return true, nil
-		}
-		ok := WriteOwner("copilot", "ponytail")
-		if ok {
-			agents.SyncCopilotIdeInstructions()
-		}
-		return ok, nil
-	}
-}
-
-func ponytailUnwireFor(agent string) core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			return true, nil
-		}
-		RemoveOwner(agent, "ponytail")
-		return true, nil
-	}
-}
-
-func ponytailVerifyFor(agent string) core.VerifyFn {
-	return func() *bool {
-		v := HasOwner(agent, "ponytail")
-		return &v
-	}
-}
+var ponytailWireFor, ponytailUnwireFor, ponytailVerifyFor = skillAgentMaps("ponytail")
 
 var ponytail = &core.ToolManifest{
 	ID:              "ponytail",
 	Label:           "Ponytail",
 	Description:     "Minimal, lazy code generation (YAGNI).",
 	Homepage:        "https://github.com/DietrichGebert/ponytail",
-	InstallHint:     "Instruction-only — no install needed.",
-	Channel:         core.ChannelGitHub,
-	NotTrackable:    true,
+	InstallHint:     "Instruction-only — synced from the upstream repo.",
+	Channel:         core.ChannelSkill,
 	InstructionOnly: true,
-	NeedsNode:       false,
-	NeedsGit:        false,
-	WireFor: map[string]core.AgentFn{
-		"claude":      ponytailWireFor("claude"),
-		"opencode":    ponytailWireFor("opencode"),
-		"codex":       ponytailWireFor("codex"),
-		"antigravity": ponytailWireFor("antigravity"),
-		"copilot":     ponytailWireCopilot(),
-		"droid":       ponytailWireFor("droid"),
-		"pi":          ponytailWireFor("pi"),
+	// AGENTS.md is the short version; skills/ponytail/SKILL.md says the same in 2.5x the space.
+	Skill: &core.SkillSource{
+		Repo:     "DietrichGebert/ponytail",
+		Path:     "AGENTS.md",
+		UseTag:   true,
+		MaxBytes: skillMaxBytes,
 	},
-	UnwireFor: map[string]core.AgentFn{
-		"claude":      ponytailUnwireFor("claude"),
-		"opencode":    ponytailUnwireFor("opencode"),
-		"codex":       ponytailUnwireFor("codex"),
-		"antigravity": ponytailUnwireFor("antigravity"),
-		"copilot":     ponytailUnwireFor("copilot"),
-		"droid":       ponytailUnwireFor("droid"),
-		"pi":          ponytailUnwireFor("pi"),
-	},
-	VerifyFor: map[string]core.VerifyFn{
-		"claude":      ponytailVerifyFor("claude"),
-		"opencode":    ponytailVerifyFor("opencode"),
-		"codex":       ponytailVerifyFor("codex"),
-		"antigravity": ponytailVerifyFor("antigravity"),
-		"copilot":     ponytailVerifyFor("copilot"),
-		"droid":       ponytailVerifyFor("droid"),
-		"pi":          ponytailVerifyFor("pi"),
-	},
-	Install: func(opts core.RunOpts) (bool, error) {
-		return true, nil
-	},
+	Install:   skillInstall("ponytail"),
+	WireFor:   ponytailWireFor,
+	UnwireFor: ponytailUnwireFor,
+	VerifyFor: ponytailVerifyFor,
 }

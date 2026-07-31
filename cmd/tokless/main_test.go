@@ -1,24 +1,31 @@
 package main
 
 import (
-	"github.com/HoangP8/tokless/internal/util"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/HoangP8/tokless/internal/agents"
+	"github.com/HoangP8/tokless/internal/core"
+	"github.com/HoangP8/tokless/internal/tools"
+	"github.com/HoangP8/tokless/internal/util"
 )
 
-func TestHelpListsPonytailTool(t *testing.T) {
+// --tools accepts any registered tool id, so help must list them all.
+func TestHelpListsEveryRegisteredTool(t *testing.T) {
+	agents.Register()
+	tools.Register()
+
 	help := helpText()
-	if !strings.Contains(help, "ponytail") {
-		t.Fatalf("help missing ponytail:\n%s", help)
+	for _, id := range core.ToolIDs() {
+		if !strings.Contains(help, id) {
+			t.Errorf("help missing tool %q:\n%s", id, help)
+		}
 	}
 	if strings.Contains(help, "upgrade the 4 tools") {
 		t.Fatalf("help still says 4 tools:\n%s", help)
-	}
-	if strings.Contains(help, "principles") {
-		t.Fatalf("help still lists principles:\n%s", help)
 	}
 }
 

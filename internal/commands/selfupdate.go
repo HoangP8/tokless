@@ -261,6 +261,11 @@ func fetchLatestReleaseTag() string {
 		return ""
 	}
 	defer resp.Body.Close()
+	// Without this a rate-limit reply decodes to an empty tag and reads as
+	// "already up to date".
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
 	var j struct {
 		TagName string `json:"tag_name"`
 	}

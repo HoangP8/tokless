@@ -17,6 +17,8 @@ type InitOptions struct {
 	Yes     bool
 	Verbose bool
 	Upgrade bool
+	// HeadroomProxy enables the compression proxy without asking.
+	HeadroomProxy bool
 }
 
 func contains(ss []string, s string) bool {
@@ -49,33 +51,21 @@ func RunInit(opts InitOptions) int {
 		tools = allTools
 	}
 
-	needNode, needGit := false, false
-	minNode := 0
-	for _, t := range tools {
-		needNode = needNode || toolNeedsNode(t)
-		needGit = needGit || t.NeedsGit
-		if t.MinNodeMajor > minNode {
-			minNode = t.MinNodeMajor
-		}
-	}
-	nodeOK, gitOK := true, true
+	deps := util.DepStatus{Node: true, Git: true, Python: true}
 	if !opts.DryRun {
-		nodeOK, gitOK = util.EnsureDeps(needNode, needGit, minNode)
+		deps = util.EnsureDeps(depNeedsFor(tools))
 	}
+	nodeOK, gitOK, pyOK := deps.Node, deps.Git, deps.Python
 
-	var installTools []*core.ToolManifest
-	for _, tool := range tools {
-		if !tool.InstructionOnly {
-			installTools = append(installTools, tool)
-		}
-	}
+	// Skills download prose here too, so every tool gets a row.
+	installTools := tools
 	toolBar := util.NewRootSectionProgress("Tools")
 	toolBar.Start(len(installTools))
 	installLogs := map[string]string{}
 	for _, tool := range installTools {
 		toolBar.Begin(tool.Label)
-		if toolNeedsNode(tool) && !nodeOK {
-			toolBar.Fail("needs Node.js — https://nodejs.org/en/download")
+		if missing := toolRuntimeMissing(tool, nodeOK, gitOK, pyOK); missing != "" {
+			toolBar.Fail(missing)
 			continue
 		}
 		report := func(phase string, frac float64) { toolBar.Step(phase, frac) }
@@ -155,27 +145,10 @@ func RunInit(opts InitOptions) int {
 		requested = util.MultiSelect("Select agents to install tokless", optsList)
 	}
 
-	var wireIDs, skipped []string
-	for _, id := range requested {
-		if installedIDs[id] {
-			wireIDs = append(wireIDs, id)
-		} else {
-			wireIDs = append(wireIDs, id)
-		}
-	}
-	for _, id := range skipped {
-		a := core.GetAgent(id)
-		if a == nil {
-			continue
-		}
-		util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " " + a.Label + " not installed — install it first: " + util.C.Cyan(a.Homepage))
-	}
-
+	wireIDs := requested
 	if len(wireIDs) == 0 {
 		util.SetQuiet(false)
-		if len(skipped) == 0 {
-			util.L.Raw("  " + util.C.Gray("Nothing selected. Tools are installed; re-run to wire an agent."))
-		}
+		util.L.Raw("  " + util.C.Gray("Nothing selected. Tools are installed; re-run to wire an agent."))
 		util.L.Raw("")
 		return 0
 	}
@@ -195,13 +168,8 @@ func RunInit(opts InitOptions) int {
 					continue
 				}
 				wireBar.Step("installing "+tool.Label, float64(ti+1)/float64(len(tools)))
-				if toolNeedsNode(tool) && !nodeOK {
-					util.L.Err(tool.Label + " needs Node.js/npm — https://nodejs.org/en/download")
-					failed = append(failed, tool.Label)
-					continue
-				}
-				if tool.NeedsGit && !gitOK {
-					util.L.Err(tool.Label + " needs git — https://git-scm.com/downloads")
+				if missing := toolRuntimeMissing(tool, nodeOK, gitOK, pyOK); missing != "" {
+					util.L.Err(tool.Label + " " + missing)
 					failed = append(failed, tool.Label)
 					continue
 				}
@@ -239,7 +207,8 @@ func RunInit(opts InitOptions) int {
 			fullyOK = append(fullyOK, id)
 		}
 	}
-	v := util.GatherVersions()
+
+	v := util.GatherVersions(versionSpecs())
 	printEquippedAgentTree(fullyOK, tools, v)
 	for id, failed := range failures {
 		util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + core.GetAgent(id).Label + ": " +

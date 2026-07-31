@@ -26,7 +26,7 @@ func RunUpdate(opts InitOptions) int {
 	} else {
 		util.L.Raw(probingLine)
 	}
-	versions := util.GatherVersionsForce()
+	versions := util.GatherVersionsForce(versionSpecs())
 	if stdoutTTY() {
 		fmt.Print(util.EraseStyledLine(probingLine))
 	} else {
@@ -35,37 +35,32 @@ func RunUpdate(opts InitOptions) int {
 
 	var changed []string
 	util.TreeTop("Versions")
-	for _, t := range core.ListTools() {
-		if t.InstructionOnly {
-			continue
-		}
+	for _, t := range selectedTools(opts) {
 		info, has := versions[t.ID]
 		name := paintName(padEnd(t.ID, 14))
 
-		installed := util.C.Dim("not on PATH")
+		installed := util.C.Dim(padEnd(notInstalledLabel(t), 10))
 		if has && info.Installed != nil {
-			installed = paintVer(padEnd("v"+*info.Installed, 10))
-		} else {
-			installed = util.C.Dim(padEnd("not on PATH", 10))
+			installed = paintVer(padEnd(displayVer(*info.Installed), 10))
 		}
 
 		latest := util.C.Dim(padEnd("?", 10))
 		if has && info.Latest != nil {
-			latest = paintVer(padEnd("v"+*info.Latest, 10))
+			latest = paintVer(padEnd(displayVer(*info.Latest), 10))
 		}
 
 		mark := util.C.Gray(util.Sym.Bullet)
 		suffix := util.C.Dim(" (latest unknown)")
 
 		switch {
-		case has && info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
+		case has && util.VersionOutdated(info.Installed, info.Latest):
 			mark = util.C.Yellow("↑")
-			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
+			latest = util.C.Bold(util.C.Green(padEnd(displayVer(*info.Latest), 10)))
 			suffix = util.C.Yellow(" → upgrade")
 			changed = append(changed, t.ID)
 		case has && info.Installed == nil && info.Latest != nil:
 			mark = util.C.Yellow("+")
-			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
+			latest = util.C.Bold(util.C.Green(padEnd(displayVer(*info.Latest), 10)))
 			suffix = util.C.Yellow(" → install")
 			changed = append(changed, t.ID)
 		case has && info.Installed != nil && info.Latest != nil:
@@ -100,18 +95,18 @@ func RunUpdate(opts InitOptions) int {
 	}
 	if !opts.Yes && util.IsInteractive() {
 		var pick []util.MultiSelectOption
-		for _, t := range core.ListTools() {
+		for _, t := range selectedTools(opts) {
 			if !contains(changed, t.ID) {
 				continue
 			}
 			info := versions[t.ID]
-			installed := "not on PATH"
+			installed := notInstalledLabel(t)
 			if info.Installed != nil {
-				installed = "v" + *info.Installed
+				installed = displayVer(*info.Installed)
 			}
 			latest := "?"
 			if info.Latest != nil {
-				latest = "v" + *info.Latest
+				latest = displayVer(*info.Latest)
 			}
 			hint := "install"
 			if info.Installed != nil {
@@ -129,31 +124,20 @@ func RunUpdate(opts InitOptions) int {
 	}
 
 	if !opts.DryRun {
-		needNode, needGit, minNode := false, false, 0
-		for _, t := range core.ListTools() {
+		var selected []*core.ToolManifest
+		for _, t := range selectedTools(opts) {
 			if contains(changed, t.ID) {
-				needNode = needNode || toolNeedsNode(t)
-				needGit = needGit || t.NeedsGit
-				if t.MinNodeMajor > minNode {
-					minNode = t.MinNodeMajor
-				}
+				selected = append(selected, t)
 			}
 		}
-		nodeOK, gitOK := util.EnsureDeps(needNode, needGit, minNode)
-		if !nodeOK || !gitOK {
+		deps := util.EnsureDeps(depNeedsFor(selected))
+		if !deps.Node || !deps.Git || !deps.Python {
 			var keep []string
-			for _, id := range changed {
-				tool := core.GetTool(id)
-				if tool == nil {
+			for _, tool := range selected {
+				if toolRuntimeMissing(tool, deps.Node, deps.Git, deps.Python) != "" {
 					continue
 				}
-				if toolNeedsNode(tool) && !nodeOK {
-					continue
-				}
-				if tool.NeedsGit && !gitOK {
-					continue
-				}
-				keep = append(keep, id)
+				keep = append(keep, tool.ID)
 			}
 			changed = keep
 		}
@@ -164,7 +148,7 @@ func RunUpdate(opts InitOptions) int {
 			return 1
 		}
 	}
-	allTools := core.ListTools()
+	allTools := selectedTools(opts)
 	var tools []*core.ToolManifest
 	for _, t := range allTools {
 		if contains(changed, t.ID) {

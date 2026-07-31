@@ -11,19 +11,72 @@ import (
 const repoURL = "https://github.com/HoangP8/tokless"
 const issuesURL = repoURL + "/issues"
 
+// util can't import core, so the identity is copied across.
+func versionSpec(t *core.ToolManifest) util.VersionSpec {
+	s := util.VersionSpec{
+		ID:      t.ID,
+		Channel: string(t.Channel),
+		Pkg:     t.Pkg,
+		Repo:    t.Repo,
+		Bin:     t.Bin,
+	}
+	if t.Skill != nil {
+		s.Channel = string(core.ChannelSkill)
+		s.Repo = t.Skill.Repo
+		s.SkillDoc = t.Skill.Path
+		s.UseTag = t.Skill.UseTag
+		s.MaxBytes = t.Skill.MaxBytes
+	}
+	if t.ID == "rtk" {
+		s.Resolve = util.ResolveRtkBin
+	}
+	if t.ID == "codegraph" {
+		s.Resolve = util.ResolveCodegraphBin
+	}
+	return s
+}
+
+// versionSpecs covers every registered tool. tokless's own version comes from
+// its GitHub releases, handled by MaybeSelfUpdate.
+func versionSpecs() []util.VersionSpec {
+	tools := core.ListTools()
+	specs := make([]util.VersionSpec, 0, len(tools))
+	for _, t := range tools {
+		specs = append(specs, versionSpec(t))
+	}
+	return specs
+}
+
+// notInstalledLabel: skills are cached files, not PATH entries.
+func notInstalledLabel(t *core.ToolManifest) string {
+	if t.Skill != nil {
+		return "not cached"
+	}
+	return "not on PATH"
+}
+
+// displayVer prefixes semver with "v"; commit SHAs are shown bare.
+func displayVer(v string) string {
+	if util.IsSemver(v) {
+		return "v" + v
+	}
+	return v
+}
+
 func toolVersionNote(tool *core.ToolManifest) string {
+	spec := versionSpec(tool)
 	if tool.NotTrackable {
-		if v := util.LatestVersionFor(tool.ID); v != nil {
-			return "v" + *v
+		if v := util.LatestVersionFor(versionSpecs(), tool.ID); v != nil {
+			return displayVer(*v)
 		}
 		return ""
 	}
-	if v := util.InstalledVersionFor(tool.ID); v != nil {
-		return "v" + *v
+	if v := util.InstalledVersion(spec); v != nil {
+		return displayVer(*v)
 	}
-	if tool.Channel == core.ChannelNpm {
-		if v := util.LatestVersionFor(tool.ID); v != nil {
-			return "v" + *v
+	if tool.Channel == core.ChannelNpm || tool.Channel == core.ChannelPyPI || tool.Skill != nil {
+		if v := util.LatestVersionFor(versionSpecs(), tool.ID); v != nil {
+			return displayVer(*v)
 		}
 	}
 	return ""
@@ -34,6 +87,54 @@ func toolNeedsNode(tool *core.ToolManifest) bool {
 		return false
 	}
 	return tool.NeedsNode || tool.Channel == core.ChannelNpm || tool.MinNodeMajor > 0
+}
+
+func toolNeedsPython(tool *core.ToolManifest) bool {
+	return tool.NeedsPython || tool.Channel == core.ChannelPyPI || tool.MinPythonMinor > 0
+}
+
+// selectedTools honours --tools, or every registered tool when unset.
+func selectedTools(opts InitOptions) []*core.ToolManifest {
+	all := core.ListTools()
+	if opts.Tools == nil {
+		return all
+	}
+	var out []*core.ToolManifest
+	for _, t := range all {
+		if contains(opts.Tools, t.ID) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func depNeedsFor(tools []*core.ToolManifest) util.DepNeeds {
+	var n util.DepNeeds
+	for _, t := range tools {
+		n.Node = n.Node || toolNeedsNode(t)
+		n.Git = n.Git || t.NeedsGit
+		n.Python = n.Python || toolNeedsPython(t)
+		if t.MinNodeMajor > n.MinNode {
+			n.MinNode = t.MinNodeMajor
+		}
+		if t.MinPythonMinor > n.MinPy {
+			n.MinPy = t.MinPythonMinor
+		}
+	}
+	return n
+}
+
+// toolRuntimeMissing names the missing runtime, or "".
+func toolRuntimeMissing(t *core.ToolManifest, nodeOK, gitOK, pyOK bool) string {
+	switch {
+	case toolNeedsNode(t) && !nodeOK:
+		return "needs Node.js — https://nodejs.org/en/download"
+	case toolNeedsPython(t) && !pyOK:
+		return "needs Python 3.10+ or uv — https://docs.astral.sh/uv/getting-started/installation/"
+	case t.NeedsGit && !gitOK:
+		return "needs git — https://git-scm.com/downloads"
+	}
+	return ""
 }
 
 func firstLine(s string) string {

@@ -16,7 +16,7 @@ func TestEnsureGitForTools(t *testing.T) {
 
 	t.Setenv("PATH", temp+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	if _, gitOK := EnsureDeps(false, true, 0); !gitOK {
-		t.Errorf("EnsureDeps(false, true) gitOK = false, want true when git is in PATH")
+	if got := EnsureDeps(DepNeeds{Git: true}); !got.Git {
+		t.Errorf("EnsureDeps(DepNeeds{Git:true}).Git = false, want true when git is in PATH")
 	}
 }

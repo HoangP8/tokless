@@ -1,89 +1,28 @@
 package tools
 
 import (
-	"github.com/HoangP8/tokless/internal/agents"
 	core "github.com/HoangP8/tokless/internal/core"
 )
 
-func cavemanWireFor(agent string) core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			return true, nil
-		}
-		ok := WriteOwner(agent, "caveman")
-		return ok, nil
-	}
-}
-
-func cavemanWireCopilot() core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			return true, nil
-		}
-		ok := WriteOwner("copilot", "caveman")
-		if ok {
-			agents.SyncCopilotIdeInstructions()
-		}
-		return ok, nil
-	}
-}
-
-func cavemanUnwireFor(agent string) core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			return true, nil
-		}
-		RemoveOwner(agent, "caveman")
-		return true, nil
-	}
-}
-
-func cavemanVerifyFor(agent string) core.VerifyFn {
-	return func() *bool {
-		v := HasOwner(agent, "caveman")
-		return &v
-	}
-}
+var cavemanWireFor, cavemanUnwireFor, cavemanVerifyFor = skillAgentMaps("caveman")
 
 var caveman = &core.ToolManifest{
 	ID:              "caveman",
 	Label:           "Caveman",
 	Description:     "Compressed agent prompts through primitive English.",
 	Homepage:        "https://github.com/JuliusBrussee/caveman",
-	InstallHint:     "Instruction-only — no install needed.",
-	Channel:         core.ChannelGitHub,
-	NotTrackable:    true,
+	InstallHint:     "Instruction-only — synced from the upstream repo.",
+	Channel:         core.ChannelSkill,
 	InstructionOnly: true,
-	NeedsNode:       false,
-	NeedsGit:        false,
-	WireFor: map[string]core.AgentFn{
-		"claude":      cavemanWireFor("claude"),
-		"opencode":    cavemanWireFor("opencode"),
-		"codex":       cavemanWireFor("codex"),
-		"antigravity": cavemanWireFor("antigravity"),
-		"copilot":     cavemanWireCopilot(),
-		"droid":       cavemanWireFor("droid"),
-		"pi":          cavemanWireFor("pi"),
+	// Root CLAUDE.md is 24 KB of docs about the repo itself — wrong file.
+	Skill: &core.SkillSource{
+		Repo:     "JuliusBrussee/caveman",
+		Path:     "skills/caveman/SKILL.md",
+		UseTag:   true,
+		MaxBytes: skillMaxBytes,
 	},
-	UnwireFor: map[string]core.AgentFn{
-		"claude":      cavemanUnwireFor("claude"),
-		"opencode":    cavemanUnwireFor("opencode"),
-		"codex":       cavemanUnwireFor("codex"),
-		"antigravity": cavemanUnwireFor("antigravity"),
-		"copilot":     cavemanUnwireFor("copilot"),
-		"droid":       cavemanUnwireFor("droid"),
-		"pi":          cavemanUnwireFor("pi"),
-	},
-	VerifyFor: map[string]core.VerifyFn{
-		"claude":      cavemanVerifyFor("claude"),
-		"opencode":    cavemanVerifyFor("opencode"),
-		"codex":       cavemanVerifyFor("codex"),
-		"antigravity": cavemanVerifyFor("antigravity"),
-		"copilot":     cavemanVerifyFor("copilot"),
-		"droid":       cavemanVerifyFor("droid"),
-		"pi":          cavemanVerifyFor("pi"),
-	},
-	Install: func(opts core.RunOpts) (bool, error) {
-		return true, nil
-	},
+	Install:   skillInstall("caveman"),
+	WireFor:   cavemanWireFor,
+	UnwireFor: cavemanUnwireFor,
+	VerifyFor: cavemanVerifyFor,
 }

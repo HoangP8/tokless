@@ -22,7 +22,17 @@ const (
 	ChannelGitHub Channel = "github"
 	ChannelCargo  Channel = "cargo"
 	ChannelBinary Channel = "binary"
+	ChannelPyPI   Channel = "pypi"
+	ChannelSkill  Channel = "skill"
 )
+
+// SkillSource points at instruction text tokless downloads and versions.
+type SkillSource struct {
+	Repo     string // "JuliusBrussee/caveman"
+	Path     string // "skills/caveman/SKILL.md"
+	UseTag   bool   // true: releases/latest tag; false: default-branch commit SHA
+	MaxBytes int    // over budget the bundled copy is kept instead
+}
 
 // Detection is the result of probing whether an agent is present.
 type Detection struct {
@@ -54,11 +64,17 @@ type ToolManifest struct {
 	Homepage        string
 	InstallHint     string
 	Channel         Channel
+	Pkg             string       // npm/pypi package name ("" = not a package)
+	Repo            string       // github owner/repo for release tracking
+	Bin             string       // CLI probed with --version to read the installed version
+	Skill           *SkillSource // non-nil: instruction prose fetched from upstream
 	NotTrackable    bool
 	InstructionOnly bool
 	NeedsNode       bool
 	NeedsGit        bool
+	NeedsPython     bool
 	MinNodeMajor    int
+	MinPythonMinor  int
 	Install         func(opts RunOpts) (bool, error)
 	WireFor         map[string]AgentFn
 	UnwireFor       map[string]AgentFn

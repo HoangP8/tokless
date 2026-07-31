@@ -24,6 +24,20 @@ type VersionInfo struct {
 	Present   bool    `json:"present"`
 }
 
+// VersionSpec is a tool's version identity, copied out of core.ToolManifest so
+// util doesn't have to import core.
+type VersionSpec struct {
+	ID       string
+	Channel  string // "npm" | "github" | "pypi" | "skill" | "binary"
+	Pkg      string
+	Repo     string
+	Bin      string
+	UseTag   bool
+	MaxBytes int
+	SkillDoc string        // upstream path for skill channel
+	Resolve  func() string // optional binary resolver override
+}
+
 type cacheShape struct {
 	Ts  int64                  `json:"ts"`
 	Map map[string]VersionInfo `json:"map"`
@@ -69,14 +83,26 @@ func saveCache(m map[string]VersionInfo) {
 	_ = os.WriteFile(p, b, 0o644)
 }
 
+const (
+	httpTimeout      = 10 * time.Second
+	maxSkillDownload = 1 << 20 // 1 MiB ceiling on a fetched skill doc
+)
+
 func fetchJSON(u string, out any) bool {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: httpTimeout}
 	req, err := http.NewRequest(http.MethodGet, u, nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("User-Agent", "tokless")
 	req.Header.Set("Accept", "application/json")
+	// Anonymous GitHub allows 60 calls an hour per IP, which a shared office
+	// network or CI runner burns through fast.
+	if strings.HasPrefix(u, "https://api.github.com/") {
+		if tok := os.Getenv("GITHUB_TOKEN"); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false
@@ -155,10 +181,55 @@ func githubLatestRelease(repo string) *string {
 	return strp(strings.TrimPrefix(tag, "v"))
 }
 
+// githubHeadSHA is the fallback version for repos with no releases or tags.
+func githubHeadSHA(repo string) *string {
+	var data []struct {
+		Sha string `json:"sha"`
+	}
+	if !fetchJSON("https://api.github.com/repos/"+repo+"/commits?per_page=1", &data) {
+		return nil
+	}
+	if len(data) == 0 || len(data[0].Sha) < 7 {
+		return nil
+	}
+	return strp(data[0].Sha[:7])
+}
+
+// pypiLatest resolves a PyPI package's latest published version.
+func pypiLatest(pkg string) *string {
+	var data struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+	}
+	if !fetchJSON("https://pypi.org/pypi/"+url.PathEscape(pypiBaseName(pkg))+"/json", &data) {
+		return nil
+	}
+	if data.Info.Version == "" {
+		return nil
+	}
+	return strp(data.Info.Version)
+}
+
+// pypiBaseName strips an extras suffix: `headroom-ai[all]` -> `headroom-ai`.
+func pypiBaseName(pkg string) string {
+	if i := strings.IndexByte(pkg, '['); i > 0 {
+		return pkg[:i]
+	}
+	return pkg
+}
+
 var reSemver = regexp.MustCompile(`(\d+\.\d+\.\d+)`)
 
-func rtkInstalledVersion() *string {
-	p := ResolveRtkBin()
+// binVersion reads a version out of `<tool> --version`.
+func binVersion(s VersionSpec) *string {
+	p := ""
+	if s.Resolve != nil {
+		p = s.Resolve()
+	}
+	if p == "" && s.Bin != "" {
+		p = Which(s.Bin)
+	}
 	if p == "" {
 		return nil
 	}
@@ -233,61 +304,95 @@ func readPkgVersion(pj string) *string {
 	return strp(p.Version)
 }
 
-// GatherVersions returns version info for all tools, cached for 6h.
-func GatherVersions() map[string]VersionInfo { return gatherVersions(false) }
+// GatherVersions returns version info for the given specs, latest cached for 6h.
+func GatherVersions(specs []VersionSpec) map[string]VersionInfo {
+	return gatherVersions(specs, false)
+}
 
-func GatherVersionsForce() map[string]VersionInfo { return gatherVersions(true) }
+func GatherVersionsForce(specs []VersionSpec) map[string]VersionInfo {
+	return gatherVersions(specs, true)
+}
 
-func gatherVersions(force bool) map[string]VersionInfo {
+// testVersionFixture keeps versions fixed under TOKLESS_TEST=1.
+var testVersionFixture = map[string]VersionInfo{
+	"rtk":          {Installed: strp("0.43.0"), Latest: strp("0.43.0"), Channel: "github"},
+	"codegraph":    {Installed: nil, Latest: strp("1.1.6"), Channel: "npm"},
+	"context-mode": {Installed: nil, Latest: strp("1.0.169"), Channel: "npm"},
+	"principles":   {Installed: strp("2c60614"), Latest: strp("2c60614"), Channel: "skill"},
+	"caveman":      {Installed: strp("1.9.1"), Latest: strp("1.9.1"), Channel: "skill"},
+	"ponytail":     {Installed: strp("4.8.4"), Latest: strp("4.8.4"), Channel: "skill"},
+	"headroom":     {Installed: nil, Latest: strp("0.33.0"), Channel: "pypi"},
+	"projectmem":   {Installed: nil, Latest: strp("0.2.0"), Channel: "pypi"},
+}
+
+func gatherVersions(specs []VersionSpec, force bool) map[string]VersionInfo {
 	if os.Getenv("TOKLESS_TEST") == "1" {
-		return map[string]VersionInfo{
-			"rtk":          {Installed: strp("0.43.0"), Latest: strp("0.43.0"), Channel: "github", Present: false},
-			"codegraph":    {Installed: nil, Latest: strp("1.1.6"), Channel: "npm", Present: false},
-			"context-mode": {Installed: nil, Latest: strp("1.0.169"), Channel: "npm", Present: false},
-			"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm", Present: false},
+		out := map[string]VersionInfo{}
+		for _, s := range specs {
+			if v, ok := testVersionFixture[s.ID]; ok {
+				out[s.ID] = v
+			}
 		}
+		return out
 	}
 	// Latest (slow, network) is cached; installed (fast, local) is always live.
-	latest := cachedLatest(force)
-	out := map[string]VersionInfo{}
-	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github", Present: rtkInstalledVersion() != nil}
-	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm", Present: npmInstalledVersion("@colbymchenry/codegraph") != nil}
-	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm", Present: npmInstalledVersion("context-mode") != nil}
-	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm", Present: npmInstalledVersion("tokless") != nil}
+	latest := cachedLatest(specs, force)
+	out := make(map[string]VersionInfo, len(specs))
+	for _, s := range specs {
+		installed := InstalledVersion(s)
+		out[s.ID] = VersionInfo{
+			Installed: installed,
+			Latest:    latest[s.ID],
+			Channel:   s.Channel,
+			Present:   installed != nil,
+		}
+	}
 	return out
 }
 
 // LatestVersionFor returns one tool's latest available version (cached).
-func LatestVersionFor(id string) *string {
-	return cachedLatest(false)[id]
+func LatestVersionFor(specs []VersionSpec, id string) *string {
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return testVersionFixture[id].Latest
+	}
+	return cachedLatest(specs, false)[id]
 }
 
-// InstalledVersionFor reads one tool's live installed version (nil if absent).
-func InstalledVersionFor(id string) *string {
-	switch id {
-	case "rtk":
-		return rtkInstalledVersion()
-	case "codegraph":
-		return npmInstalledVersion("@colbymchenry/codegraph")
-	case "context-mode":
-		return npmInstalledVersion("context-mode")
-	case "tokless":
-		return npmInstalledVersion("tokless")
+// InstalledVersion reads one tool's live installed version (nil if absent).
+func InstalledVersion(s VersionSpec) *string {
+	switch s.Channel {
+	case "npm":
+		return npmInstalledVersion(s.Pkg)
+	case "skill":
+		return SkillInstalledVersion(s.ID)
+	case "pypi":
+		// Not every Python CLI has --version; fall back to package metadata.
+		if v := binVersion(s); v != nil {
+			return v
+		}
+		return PyPackageVersion(s.Bin, s.Pkg)
+	case "github", "binary":
+		return binVersion(s)
 	}
 	return nil
 }
 
-// InstalledPathFor returns a tool's on-disk path, or "" if missing.
-func InstalledPathFor(id string) string {
-	switch id {
-	case "rtk":
-		return ResolveRtkBin()
-	case "codegraph":
-		return npmPkgDir("@colbymchenry/codegraph")
-	case "context-mode":
-		return npmPkgDir("context-mode")
-	case "tokless":
-		return npmPkgDir("tokless")
+// InstalledPath returns a tool's on-disk path, or "" if missing.
+func InstalledPath(s VersionSpec) string {
+	switch s.Channel {
+	case "npm":
+		return npmPkgDir(s.Pkg)
+	case "skill":
+		return SkillDir(s.ID)
+	case "pypi", "github", "binary":
+		if s.Resolve != nil {
+			if p := s.Resolve(); p != "" {
+				return p
+			}
+		}
+		if s.Bin != "" {
+			return Which(s.Bin)
+		}
 	}
 	return ""
 }
@@ -314,32 +419,29 @@ func npmPkgDir(pkg string) string {
 	return ""
 }
 
-
-var toolIDs = []string{"rtk", "codegraph", "context-mode", "tokless"}
-
 var latestFetcher = fetchLatestFor
 
 // fetchLatestFor resolves one tool's latest upstream version (nil on failure).
-func fetchLatestFor(id string) *string {
-	switch id {
-	case "rtk":
-		return githubLatestRelease("rtk-ai/rtk")
-	case "codegraph":
-		return npmLatest("@colbymchenry/codegraph")
-	case "context-mode":
-		return npmLatest("context-mode")
-	case "tokless":
-		return npmLatest("tokless")
+func fetchLatestFor(s VersionSpec) *string {
+	switch s.Channel {
+	case "npm":
+		return npmLatest(s.Pkg)
+	case "github":
+		return githubLatestRelease(s.Repo)
+	case "pypi":
+		return pypiLatest(s.Pkg)
+	case "skill":
+		return SkillLatest(s)
 	}
 	return nil
 }
 
 // cachedLatest returns the latest-version lookups, cached to disk (6h TTL).
-func cachedLatest(force bool) map[string]*string {
+func cachedLatest(specs []VersionSpec, force bool) map[string]*string {
 	if os.Getenv("TOKLESS_TEST") == "1" {
 		m := map[string]*string{}
-		for k, v := range GatherVersions() {
-			m[k] = v.Latest
+		for _, s := range specs {
+			m[s.ID] = testVersionFixture[s.ID].Latest
 		}
 		return m
 	}
@@ -356,28 +458,28 @@ func cachedLatest(force bool) map[string]*string {
 
 	// Fetch needed ids in parallel; npm CLI spawn is heavy, so pay it once in
 	// wall-clock time rather than once per tool.
-	var todo []string
-	for _, id := range toolIDs {
-		if result[id] != nil && fresh && !force {
+	var todo []VersionSpec
+	for _, s := range specs {
+		if result[s.ID] != nil && fresh && !force {
 			continue
 		}
-		todo = append(todo, id)
+		todo = append(todo, s)
 	}
 	fetched := false
 	if len(todo) > 0 {
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		got := make(map[string]*string, len(todo))
-		for _, id := range todo {
+		for _, s := range todo {
 			wg.Add(1)
-			go func(id string) {
+			go func(s VersionSpec) {
 				defer wg.Done()
-				if v := latestFetcher(id); v != nil {
+				if v := latestFetcher(s); v != nil {
 					mu.Lock()
-					got[id] = v
+					got[s.ID] = v
 					mu.Unlock()
 				}
-			}(id)
+			}(s)
 		}
 		wg.Wait()
 		for id, v := range got {
@@ -446,10 +548,29 @@ func SemverCompare(a, b *string) int {
 
 func SemverGte(a, b string) bool { return SemverCompare(&a, &b) >= 0 }
 
+var reSemverFull = regexp.MustCompile(`^v?\d+\.\d+`)
+
+// IsSemver reports whether a version string is orderable as a semver.
+// Commit SHAs (the only version signal for repos without releases) are not.
+func IsSemver(v string) bool { return reSemverFull.MatchString(v) }
+
+// VersionOutdated compares semver when both sides parse as semver, and falls
+// back to plain inequality otherwise — SemverCompare reads every SHA as 0.0.0
+// and would call each one equal to the next.
+func VersionOutdated(installed, latest *string) bool {
+	if installed == nil || latest == nil {
+		return false
+	}
+	if IsSemver(*installed) && IsSemver(*latest) {
+		return SemverCompare(installed, latest) < 0
+	}
+	return *installed != *latest
+}
+
 func CountOutdated(m map[string]VersionInfo) int {
 	n := 0
 	for _, v := range m {
-		if v.Installed != nil && v.Latest != nil && SemverCompare(v.Installed, v.Latest) < 0 {
+		if VersionOutdated(v.Installed, v.Latest) {
 			n++
 		}
 	}
@@ -459,4 +580,3 @@ func CountOutdated(m map[string]VersionInfo) int {
 func BustVersionCache() {
 	_ = os.Remove(cachePath())
 }
-

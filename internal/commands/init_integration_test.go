@@ -378,21 +378,34 @@ func TestInitIdempotent(t *testing.T) {
 	}
 }
 
-func TestCavemanNotTrackable(t *testing.T) {
+// Instruction-only tools now sync from upstream, so each needs a Skill
+// source or an explicit NotTrackable.
+func TestInstructionOnlyToolsAreVersioned(t *testing.T) {
 	caveman := core.GetTool("caveman")
 	if caveman == nil {
 		t.Fatalf("expected tool 'caveman' to be registered, but it was nil")
 	}
-	if !caveman.NotTrackable {
-		t.Errorf("expected tool 'caveman' to have NotTrackable set to true, but got false")
-	}
 	if !caveman.InstructionOnly {
 		t.Errorf("expected tool 'caveman' to have InstructionOnly set to true, but got false")
 	}
+	if caveman.Skill == nil {
+		t.Errorf("expected tool 'caveman' to declare a Skill source")
+	}
+	if caveman.NotTrackable {
+		t.Errorf("caveman syncs from upstream, so NotTrackable must be false")
+	}
 
 	for _, tool := range core.ListTools() {
-		if tool.InstructionOnly && !tool.NotTrackable {
-			t.Errorf("instruction-only tool %q must have NotTrackable=true", tool.ID)
+		if tool.InstructionOnly && tool.Skill == nil && !tool.NotTrackable {
+			t.Errorf("instruction-only tool %q needs a Skill source or NotTrackable=true", tool.ID)
+		}
+		if tool.Skill != nil {
+			if tool.Skill.Repo == "" || tool.Skill.Path == "" {
+				t.Errorf("skill tool %q must set both Repo and Path", tool.ID)
+			}
+			if util.SectionsByOwner[tool.ID] == "" {
+				t.Errorf("skill tool %q has no canonical section heading", tool.ID)
+			}
 		}
 	}
 }

@@ -46,12 +46,10 @@ func RunInfo() int {
 
 	util.TreeCorner("Tools")
 	for _, tool := range core.ListTools() {
-		if tool.InstructionOnly {
-			continue
-		}
-		if v := util.InstalledVersionFor(tool.ID); v != nil {
-			row := paintName(padEnd(tool.ID, 14)) + paintVer(padEnd("v"+*v, 10))
-			if p := util.InstalledPathFor(tool.ID); p != "" {
+		spec := versionSpec(tool)
+		if v := util.InstalledVersion(spec); v != nil {
+			row := paintName(padEnd(tool.ID, 14)) + paintVer(padEnd(displayVer(*v), 10))
+			if p := util.InstalledPath(spec); p != "" {
 				row += paintPath(tildePath(p))
 			}
 			util.TreeLeaf(util.C.Green(util.Sym.Check) + " " + row)
