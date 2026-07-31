@@ -104,18 +104,37 @@ func grokToklessCommand(command string) bool {
 }
 
 func grokCodegraphArgs(args []string) bool {
-	if len(args) == 6 {
-		return args[0] == "run-mcp" && args[1] == "--agent" && args[2] == "grok" &&
-			grokCommandName(args[3], "codegraph") && args[4] == "serve" && args[5] == "--mcp"
+	command, tail, ok := grokMcpCommand(args, []string{"run-mcp", "--agent", "grok"})
+	if !ok {
+		return false
 	}
-	return len(args) == 8 && args[0] == "run-mcp" && args[1] == "--agent" && args[2] == "grok" &&
-		grokCommandName(args[3], "npx") && args[4] == "--no-install" &&
-		args[5] == "@colbymchenry/codegraph" && args[6] == "serve" && args[7] == "--mcp"
+	if len(tail) == 2 {
+		return grokCommandName(command, "codegraph") && tail[0] == "serve" && tail[1] == "--mcp"
+	}
+	return len(tail) == 4 && grokCommandName(command, "npx") && tail[0] == "--no-install" &&
+		tail[1] == "@colbymchenry/codegraph" && tail[2] == "serve" && tail[3] == "--mcp"
 }
 
 func grokContextModeArgs(args []string) bool {
-	return len(args) >= 3 && args[0] == "run-mcp" && args[1] == "--context-mode" &&
-		grokCommandName(args[2], "context-mode")
+	command, tail, ok := grokMcpCommand(args, []string{"run-mcp", "--context-mode"})
+	return ok && len(tail) == 0 && grokCommandName(command, "context-mode")
+}
+
+// grokMcpCommand accepts direct commands or Tokless's Windows cmd /c wrapper.
+func grokMcpCommand(args, prefix []string) (string, []string, bool) {
+	if len(args) <= len(prefix) {
+		return "", nil, false
+	}
+	for i, want := range prefix {
+		if args[i] != want {
+			return "", nil, false
+		}
+	}
+	command, tail := args[len(prefix)], args[len(prefix)+1:]
+	if command == "cmd" && len(tail) >= 2 && tail[0] == "/c" {
+		return tail[1], tail[2:], true
+	}
+	return command, tail, true
 }
 
 func grokCommandName(command, name string) bool {

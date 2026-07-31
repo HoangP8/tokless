@@ -157,3 +157,15 @@ enabled = true
 		t.Fatal("npx CodeGraph fallback did not validate")
 	}
 }
+
+func TestGrokMcpArgsAcceptWindowsCmdWrapper(t *testing.T) {
+	if !grokCodegraphArgs([]string{"run-mcp", "--agent", "grok", "cmd", "/c", `C:\\node\\npx.CMD`, "--no-install", "@colbymchenry/codegraph", "serve", "--mcp"}) {
+		t.Fatal("wrapped npx CodeGraph args did not validate")
+	}
+	if !grokCodegraphArgs([]string{"run-mcp", "--agent", "grok", "cmd", "/c", `C:\\bin\\codegraph.cmd`, "serve", "--mcp"}) {
+		t.Fatal("wrapped direct CodeGraph args did not validate")
+	}
+	if !grokContextModeArgs([]string{"run-mcp", "--context-mode", "cmd", "/c", `C:\\bin\\context-mode.CMD`}) {
+		t.Fatal("wrapped Context Mode args did not validate")
+	}
+}
