@@ -104,9 +104,13 @@ func grokToklessCommand(command string) bool {
 }
 
 func grokCodegraphArgs(args []string) bool {
-	return len(args) == 6 && args[0] == "run-mcp" && args[1] == "--agent" &&
-		args[2] == "grok" && grokCommandName(args[3], "codegraph") &&
-		args[4] == "serve" && args[5] == "--mcp"
+	if len(args) == 6 {
+		return args[0] == "run-mcp" && args[1] == "--agent" && args[2] == "grok" &&
+			grokCommandName(args[3], "codegraph") && args[4] == "serve" && args[5] == "--mcp"
+	}
+	return len(args) == 8 && args[0] == "run-mcp" && args[1] == "--agent" && args[2] == "grok" &&
+		grokCommandName(args[3], "npx") && args[4] == "--no-install" &&
+		args[5] == "@colbymchenry/codegraph" && args[6] == "serve" && args[7] == "--mcp"
 }
 
 func grokContextModeArgs(args []string) bool {

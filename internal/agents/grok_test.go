@@ -140,3 +140,20 @@ enabled = true
 		t.Fatal("multiline Grok args did not validate")
 	}
 }
+
+func TestGrokMcpHasAcceptsCodegraphNpxFallback(t *testing.T) {
+	setGrokTestHome(t)
+	if err := os.MkdirAll(filepath.Dir(grokConfigFile()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grokConfigFile(), []byte(`[mcp_servers.codegraph]
+command = "tokless"
+args = ["run-mcp", "--agent", "grok", "/opt/node/bin/npx", "--no-install", "@colbymchenry/codegraph", "serve", "--mcp"]
+enabled = true
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !GrokMcpHas("codegraph") {
+		t.Fatal("npx CodeGraph fallback did not validate")
+	}
+}
