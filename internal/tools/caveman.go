@@ -65,6 +65,7 @@ var caveman = &core.ToolManifest{
 		"droid":       cavemanWireFor("droid"),
 		"grok":        cavemanWireFor("grok"),
 		"pi":          cavemanWireFor("pi"),
+		"omp":         cavemanWireFor("omp"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      cavemanUnwireFor("claude"),
@@ -75,6 +76,7 @@ var caveman = &core.ToolManifest{
 		"droid":       cavemanUnwireFor("droid"),
 		"grok":        cavemanUnwireFor("grok"),
 		"pi":          cavemanUnwireFor("pi"),
+		"omp":         cavemanUnwireFor("omp"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      cavemanVerifyFor("claude"),
@@ -85,6 +87,7 @@ var caveman = &core.ToolManifest{
 		"droid":       cavemanVerifyFor("droid"),
 		"grok":        cavemanVerifyFor("grok"),
 		"pi":          cavemanVerifyFor("pi"),
+		"omp":         cavemanVerifyFor("omp"),
 	},
 	Install: func(opts core.RunOpts) (bool, error) {
 		return true, nil

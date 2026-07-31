@@ -24,6 +24,8 @@ func EnsureInstructionSeparators(agentIDs []string) {
 			path = util.CopilotPathsResolved().Instructions
 		case "pi":
 			path = filepath.Join(agents.PiAgentDirResolved(), "AGENTS.md")
+		case "omp":
+			path = filepath.Join(agents.OmpAgentDirResolved(), "AGENTS.md")
 		default:
 			continue
 		}

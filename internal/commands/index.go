@@ -146,9 +146,6 @@ func RunCodegraphAutoIndex() int {
 }
 
 func runCodegraphAutoIndex(dir string) int {
-	if tools.HasCodegraphIndex(dir) {
-		return 0
-	}
 	ok, err := tools.RunCodegraphIndex(dir, core.RunOpts{})
 	if err != nil {
 		util.L.Err("CodeGraph index: " + err.Error())

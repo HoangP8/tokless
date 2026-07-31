@@ -676,6 +676,18 @@ var contextMode = &core.ToolManifest{
 			WriteOwner("pi", "context-mode")
 			return ctxVerifyPi(), nil
 		},
+		"omp": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would add Context-Mode MCP to ~/.omp/agent/mcp.json")
+				return true, nil
+			}
+			agents.ConfigureOmpMcp("context-mode")
+			if !agents.OmpMcpHas("context-mode") {
+				return false, nil
+			}
+			WriteOwner("omp", "context-mode")
+			return HasOwner("omp", "context-mode"), nil
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ctxUnwireClaude,
@@ -694,6 +706,13 @@ var contextMode = &core.ToolManifest{
 			RemoveOwner("pi", "context-mode")
 			return true, nil
 		},
+		"omp": func(core.RunOpts) (bool, error) {
+			if !agents.RemoveOmpMcp("context-mode") {
+				return false, nil
+			}
+			RemoveOwner("omp", "context-mode")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
@@ -706,6 +725,7 @@ var contextMode = &core.ToolManifest{
 		"droid": func() *bool { return core.BoolPtr(ctxVerifyDroid()) },
 		"grok":  func() *bool { return core.BoolPtr(ctxVerifyGrok()) },
 		"pi":    func() *bool { return core.BoolPtr(ctxVerifyPi()) },
+		"omp":   func() *bool { return core.BoolPtr(agents.OmpMcpHas("context-mode") && HasOwner("omp", "context-mode")) },
 	},
 }
 

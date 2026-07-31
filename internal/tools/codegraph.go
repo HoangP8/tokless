@@ -95,6 +95,9 @@ func codegraphConfigureMcp(agent string) bool {
 		agents.ConfigureDroidMcp("codegraph")
 	case "pi":
 		agents.ConfigurePiMcp("codegraph")
+	case "omp":
+		changed, _ := agents.ConfigureOmpMcp("codegraph")
+		return changed || agents.OmpMcpHas("codegraph")
 	case "grok":
 		_, _, err := agents.ConfigureGrokMcp("codegraph")
 		return err == nil
@@ -152,6 +155,8 @@ func codegraphVerify(agent string) bool {
 		return agents.DroidMcpHas("codegraph") && agents.HasDroidCodegraphIndexHook()
 	case "pi":
 		return agents.PiMcpHas("codegraph") && piCodegraphIndexExtensionPresent()
+	case "omp":
+		return agents.OmpMcpHas("codegraph") && HasOwner("omp", "codegraph")
 	case "grok":
 		return agents.GrokMcpHas("codegraph") && HasOwner("grok", "codegraph")
 	}
@@ -262,7 +267,9 @@ func piCodegraphIndexExtensionPresent() bool {
 func codegraphWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if isTest() {
-			codegraphConfigureMcp(agent)
+			if !codegraphConfigureMcp(agent) {
+				return false, nil
+			}
 			WriteOwner(agent, "codegraph")
 			if agent == "grok" && !HasOwner(agent, "codegraph") {
 				_, _ = agents.RemoveGrokMcp("codegraph")
@@ -284,6 +291,13 @@ func codegraphWire(agent string) core.AgentFn {
 		}
 		if opts.DryRun {
 			return codegraphRealInstall(opts, agent), nil
+		}
+		if agent == "omp" {
+			if !codegraphConfigureMcp(agent) {
+				return false, nil
+			}
+			writeCodegraphBlock(agent)
+			return codegraphVerify(agent), nil
 		}
 		if ran := codegraphRealInstall(opts, agent); !ran {
 			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
@@ -371,6 +385,7 @@ var codegraph = &core.ToolManifest{
 			WriteOwner("pi", "codegraph")
 			return codegraphVerify("pi"), nil
 		},
+		"omp": codegraphWire("omp"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -438,6 +453,13 @@ var codegraph = &core.ToolManifest{
 			RemoveOwner("pi", "codegraph")
 			return true, nil
 		},
+		"omp": func(core.RunOpts) (bool, error) {
+			if !agents.RemoveOmpMcp("codegraph") {
+				return false, nil
+			}
+			RemoveOwner("omp", "codegraph")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
@@ -448,5 +470,6 @@ var codegraph = &core.ToolManifest{
 		"droid":       func() *bool { return core.BoolPtr(codegraphVerify("droid")) },
 		"grok":        func() *bool { return core.BoolPtr(codegraphVerify("grok")) },
 		"pi":          func() *bool { return core.BoolPtr(codegraphVerify("pi")) },
+		"omp":         func() *bool { return core.BoolPtr(codegraphVerify("omp")) },
 	},
 }

@@ -2,9 +2,11 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -174,6 +176,49 @@ func rtkTestShim(agent string) {
 		dir := filepath.Join(agents.PiAgentDirResolved(), "extensions")
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk pi shim (tokless test)\n")
+	case "omp":
+		writeOmpRtkExtension()
+	}
+}
+
+const ompRtkExtension = `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+const TOKLESS = %s
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event: any) => {
+    if (event?.toolName !== "bash" || typeof event?.input?.command !== "string") return
+    const payload = { tool_name: "Bash", tool_input: { command: event.input.command } }
+    const result = await pi.exec(TOKLESS, ["rtk-hook", "omp"], { input: JSON.stringify(payload) })
+    if (!result.stdout) return
+    let rewritten
+    try {
+      rewritten = JSON.parse(result.stdout)?.hookSpecificOutput?.updatedInput?.command
+    } catch {
+      return
+    }
+    if (typeof rewritten !== "string") return
+    return { input: { ...event.input, command: rewritten } }
+  })
+}
+`
+
+func ompRtkExtensionPath() string {
+	return filepath.Join(agents.OmpAgentDirResolved(), "extensions", "tokless-rtk.ts")
+}
+
+func writeOmpRtkExtension() {
+	_ = util.EnsureDir(filepath.Dir(ompRtkExtensionPath()))
+	_ = util.WriteFile(ompRtkExtensionPath(), fmt.Sprintf(ompRtkExtension, strconv.Quote(util.ToklessAbs())))
+}
+
+func rtkWireOmp() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install OMP tool_call RTK extension")
+			return true, nil
+		}
+		writeOmpRtkExtension()
+		return agents.HasOmpRtkExtension(), nil
 	}
 }
 
@@ -569,6 +614,7 @@ var rtk = &core.ToolManifest{
 		"copilot":     rtkWireCopilot(),
 		"droid":       rtkWireDroid(),
 		"pi":          rtkWirePi(),
+		"omp":         rtkWireOmp(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -623,6 +669,13 @@ var rtk = &core.ToolManifest{
 			RemoveOwner("pi", "rtk")
 			return true, nil
 		},
+		"omp": func(core.RunOpts) (bool, error) {
+			if !agents.HasOmpRtkExtension() {
+				return false, nil
+			}
+			_ = os.Remove(ompRtkExtensionPath())
+			return !agents.HasOmpRtkExtension(), nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -646,5 +699,6 @@ var rtk = &core.ToolManifest{
 		"pi": func() *bool {
 			return core.BoolPtr(agents.HasPiRtkExtension())
 		},
+		"omp": func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
 	},
 }

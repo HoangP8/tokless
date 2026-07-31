@@ -24,7 +24,7 @@ Install and configure tokless for this user.
    tokless --agents <comma-separated-agent-ids> --yes
    ```
 
-   Valid IDs: `claude`, `opencode`, `codex`, `antigravity`, `copilot`, `droid`, `pi`.
+   Valid IDs: `claude`, `opencode`, `codex`, `antigravity`, `copilot`, `droid`, `grok`, `pi`, `omp`.
 
 5. Run `tokless doctor`. Report installed version, configured agents, and any warnings.
 

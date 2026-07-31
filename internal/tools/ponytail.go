@@ -65,6 +65,7 @@ var ponytail = &core.ToolManifest{
 		"droid":       ponytailWireFor("droid"),
 		"grok":        ponytailWireFor("grok"),
 		"pi":          ponytailWireFor("pi"),
+		"omp":         ponytailWireFor("omp"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireFor("claude"),
@@ -75,6 +76,7 @@ var ponytail = &core.ToolManifest{
 		"droid":       ponytailUnwireFor("droid"),
 		"grok":        ponytailUnwireFor("grok"),
 		"pi":          ponytailUnwireFor("pi"),
+		"omp":         ponytailUnwireFor("omp"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      ponytailVerifyFor("claude"),
@@ -85,6 +87,7 @@ var ponytail = &core.ToolManifest{
 		"droid":       ponytailVerifyFor("droid"),
 		"grok":        ponytailVerifyFor("grok"),
 		"pi":          ponytailVerifyFor("pi"),
+		"omp":         ponytailVerifyFor("omp"),
 	},
 	Install: func(opts core.RunOpts) (bool, error) {
 		return true, nil

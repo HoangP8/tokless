@@ -390,6 +390,8 @@ func managedMcpSpawns(agentID string) []util.McpSpawn {
 		out = append(out, mcpFromCommandArgsFile(filepath.Join(util.Home(), ".factory", "mcp.json"), "mcpServers", "codegraph")...)
 	case "pi":
 		out = append(out, mcpFromCommandArgsFile(filepath.Join(agents.PiAgentDirResolved(), "mcp.json"), "mcpServers", "codegraph")...)
+	case "omp":
+		out = append(out, mcpFromCommandArgsFile(filepath.Join(agents.OmpAgentDirResolved(), "mcp.json"), "mcpServers", "codegraph")...)
 	}
 	return out
 }

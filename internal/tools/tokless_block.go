@@ -27,6 +27,8 @@ func instructionPath(agent string) string {
 		return filepath.Join(util.Home(), ".factory", "AGENTS.md")
 	case "pi":
 		return filepath.Join(agents.PiAgentDirResolved(), "AGENTS.md")
+	case "omp":
+		return filepath.Join(agents.OmpAgentDirResolved(), "AGENTS.md")
 	case "grok":
 		return agents.GrokInstructionsFile()
 	}

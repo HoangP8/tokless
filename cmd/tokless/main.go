@@ -43,7 +43,7 @@ func parseArgs(argv []string) parsedArgs {
 
 func helpText() string {
 	cy := util.C.Cyan
-	return util.C.Bold(util.C.Cyan("tokless")) + " — token-saving for AI coding agents (Claude Code, OpenCode, Codex, Antigravity, GitHub Copilot, Factory Droid, Grok, Pi)\n\n" +
+	return util.C.Bold(util.C.Cyan("tokless")) + " — token-saving for AI coding agents (Claude Code, OpenCode, Codex, Antigravity, GitHub Copilot, Factory Droid, Grok, Pi, Oh My Pi)\n\n" +
 		util.C.Bold("Usage:") + "\n" +
 		"  " + cy("tokless") + "              Install + wire everything (default; safe to re-run)\n" +
 		"  " + cy("tokless update") + "       Update the tokless CLI, then show version diff and upgrade tools\n" +
@@ -52,7 +52,7 @@ func helpText() string {
 		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
 		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi\n" +
+		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp\n" +
 		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
 		"  --verbose           Show every step\n\n" +
@@ -106,7 +106,7 @@ func run() int {
 		switch os.Args[2] {
 		case "agy":
 			return commands.RunRtkHook()
-		case "codex", "claude":
+		case "codex", "claude", "omp":
 			return commands.RunRtkHookCodex()
 		case "copilot":
 			return commands.RunRtkHookCopilot()

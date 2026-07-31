@@ -352,7 +352,7 @@ func RunRtkHookCodex() int {
 	if err := json.Unmarshal(input, &req); err != nil {
 		return 0
 	}
-	if req.ToolName != "Bash" {
+	if req.ToolName != "Bash" && req.ToolName != "bash" {
 		return 0
 	}
 

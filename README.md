@@ -43,7 +43,7 @@
       <td align="center" width="140"><a href="https://kilo.ai/cli"><img src="https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-kilocode.png" width="36" height="36" alt="Kilo Code" /></a><br/>Kilo Code<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
     </tr>
     <tr>
-      <td align="center" width="140"><a href="https://omp.sh/"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="36" height="36" alt="Oh My Pi" /></a><br/>Oh My Pi<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
+      <td align="center" width="140"><a href="https://github.com/can1357/oh-my-pi"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="36" height="36" alt="Oh My Pi" /></a><br/><b>Oh My Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
       <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="36" height="36" alt="Cline" /></a><br/>Cline<br/><img src="https://img.shields.io/badge/-In%20progress-8c959f" alt="In progress" /></td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
@@ -155,7 +155,7 @@ tokless --help       Show all commands and flags
 
 Flags:
 ```
---agents <list>   Subset: claude,opencode,codex,antigravity,copilot,droid,pi,grok
+--agents <list>   Subset: claude,opencode,codex,antigravity,copilot,droid,pi,grok,omp
 --tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode
 --dry-run         Preview, no writes
 --verbose         Every step
