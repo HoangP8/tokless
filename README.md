@@ -70,6 +70,10 @@ curl -fsSL https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/instal
 irm https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1 | iex
 ```
 
+Nothing to install first. Node and Python are only needed by some tools, and
+tokless installs whatever is missing (Python arrives via `uv`, which brings its
+own).
+
 Interactive install detects installed supported agents; choose one, some, or all:
 
 ```bash
@@ -95,19 +99,34 @@ Popular packages with distinct roles, wired without conflicts.
 | [rtk](https://github.com/rtk-ai/rtk) | ![](https://img.shields.io/github/stars/rtk-ai/rtk?style=flat-square&label=) | Filters command output before it reaches the agent. |
 | [codegraph](https://github.com/colbymchenry/codegraph) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=) | Indexed code graph for source, call paths, and impact. |
 | [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | Sandboxed context tools with session memory and focused analysis. |
+| [headroom](https://github.com/headroomlabs-ai/headroom) | ![](https://img.shields.io/github/stars/headroomlabs-ai/headroom?style=flat-square&label=) | Compresses payloads that have to enter context anyway. |
+| [projectmem](https://github.com/riponcm/projectmem) | ![](https://img.shields.io/github/stars/riponcm/projectmem?style=flat-square&label=) | Local memory of past issues, fixes, and decisions. |
 
 ```text
 MCP Tools
 ├── CodeGraph · 1/1
 │   └── codegraph_explore
-└── Context Mode · 6/11
-    ├── ctx_execute
-    ├── ctx_batch_execute
-    ├── ctx_execute_file
-    ├── ctx_index
-    ├── ctx_search
-    └── ctx_fetch_and_index
+├── Context Mode · 6/11
+│   ├── ctx_execute
+│   ├── ctx_batch_execute
+│   ├── ctx_execute_file
+│   ├── ctx_index
+│   ├── ctx_search
+│   └── ctx_fetch_and_index
+├── Headroom · 3/3
+│   ├── headroom_compress
+│   ├── headroom_retrieve
+│   └── headroom_stats
+└── ProjectMem · 15/15
+    ├── get_context · precheck_file · get_global_gotchas
+    ├── get_instructions · get_summary · get_project_map
+    ├── get_plan · get_issue · search_events · get_score
+    └── log_issue · record_attempt · record_fix · add_decision · add_note
 ```
+
+Skill prose (principles, caveman, ponytail) is synced from each upstream repo and
+versioned, so `tokless update` picks up changes there too. The copy bundled in the
+binary is the offline fallback.
 
 ## Configuration
 
@@ -134,8 +153,24 @@ How each tool connects to each agent:
     <tr><td nowrap><b>ponytail</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
     <tr><td nowrap><b>codegraph</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td></tr>
     <tr><td nowrap><b>context-mode</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Hook + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td></tr>
+    <tr><td nowrap><b>headroom</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td></tr>
+    <tr><td nowrap><b>projectmem</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td></tr>
+    <tr><td nowrap><b>principles</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
   </tbody>
 </table>
+
+### Compression proxy (optional)
+
+headroom's MCP tools compress what an agent hands them. Its proxy compresses
+every request an agent sends, which saves more, but it runs as a background
+service in front of the API and reroutes agents machine-wide. Tokless asks once
+during install and remembers your answer:
+
+```
+tokless headroom-proxy on       # install the service and route detected agents
+tokless headroom-proxy status   # is it up, and what's routed through it
+tokless headroom-proxy off      # remove it; agents go back to direct calls
+```
 
 ## Usage
 
@@ -144,18 +179,22 @@ tokless              Install tools, then pick detected agents (safe to re-run)
 tokless update       Update the tokless CLI, then show version diff and upgrade tools
 tokless doctor       Show what's wired; warn about broken bits
 tokless info         Show how tokless was installed, plus paths and config locations
-tokless index        Build per-project codegraph indexes
+tokless index        Build per-project indexes (codegraph, projectmem)
 tokless disable      Disable one or more agents
-tokless uninstall    Remove everything tokless touched
+tokless uninstall    Remove everything tokless touched, including the CLI itself
 tokless self-update  Update the tokless CLI itself
 tokless --version    Print tokless version
 tokless --help       Show all commands and flags
+
+tokless headroom-proxy on|off|status
+                     Compress every request an agent sends
 ```
 
 Flags:
 ```
 --agents <list>   Subset: claude,opencode,codex,antigravity,copilot,droid,pi
---tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode
+--tools <list>    Subset: rtk,principles,caveman,ponytail,codegraph,context-mode,headroom,projectmem
+--headroom-proxy  Turn the compression proxy on without asking
 --dry-run         Preview, no writes
 --verbose         Every step
 --yes             Skip confirmations

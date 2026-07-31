@@ -26,6 +26,15 @@ echo "$TARGETS" | while read -r asset goos goarch; do
   echo "ok"
 done
 
+# Checksums let the installer confirm it got the file we published.
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$OUT" && sha256sum tokless-* > SHA256SUMS)
+elif command -v shasum >/dev/null 2>&1; then
+  (cd "$OUT" && shasum -a 256 tokless-* > SHA256SUMS)
+else
+  echo "warning: no sha256 tool found, skipping SHA256SUMS" >&2
+fi
+
 echo
 echo "Built binaries for v${VERSION} in ${OUT}/:"
 ls -lh "$OUT"

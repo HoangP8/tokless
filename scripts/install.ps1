@@ -12,12 +12,30 @@ $destDir = Join-Path $env:LOCALAPPDATA "Programs\tokless"
 $dest = Join-Path $destDir "tokless.exe"
 
 New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+$tmp = Join-Path $env:TEMP "tokless-download.exe"
 try {
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+    Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
 } catch {
     Write-Host "✖ Download failed ($asset). See https://github.com/$Owner/$Repo/releases" -ForegroundColor Red
     exit 1
 }
+
+# Releases published before checksums existed have no SHA256SUMS; those still install.
+try {
+    $sums = (Invoke-WebRequest -Uri "https://github.com/$Owner/$Repo/releases/latest/download/SHA256SUMS" -UseBasicParsing).Content
+    $want = ($sums -split "`n" | Where-Object { $_ -match "\s\*?$([regex]::Escape($asset))\s*$" } |
+             ForEach-Object { ($_ -split "\s+")[0] } | Select-Object -First 1)
+    if ($want) {
+        $got = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash
+        if ($got -ne $want.Trim().ToUpper()) {
+            Write-Host "✖ Checksum mismatch for $asset. Refusing to install." -ForegroundColor Red
+            Remove-Item $tmp -ErrorAction SilentlyContinue
+            exit 1
+        }
+    }
+} catch { }
+
+Move-Item -Force -Path $tmp -Destination $dest
 
 $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
 $userPath = ""

@@ -207,6 +207,9 @@ func RunInit(opts InitOptions) int {
 			fullyOK = append(fullyOK, id)
 		}
 	}
+	if len(fullyOK) > 0 {
+		maybeEnableHeadroomProxy(opts)
+	}
 
 	v := util.GatherVersions(versionSpecs())
 	printEquippedAgentTree(fullyOK, tools, v)

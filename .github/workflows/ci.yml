@@ -30,6 +30,9 @@ jobs:
           npm install -g context-mode@latest --silent || true
           go test -count=1 ./...
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Build
         run: go build ./...
 

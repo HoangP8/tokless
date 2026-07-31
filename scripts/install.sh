@@ -33,6 +33,24 @@ if ! curl -fSL --progress-bar -o "$tmp" "$url" || [ ! -s "$tmp" ]; then
   err "Download failed ($asset). See https://github.com/${OWNER}/${REPO}/releases"
   exit 1
 fi
+verify_checksum() {
+  sums="$(curl -fsSL "https://github.com/${OWNER}/${REPO}/releases/latest/download/SHA256SUMS" 2>/dev/null)" || return 0
+  want="$(printf '%s\n' "$sums" | awk -v a="$asset" '$2 == a || $2 == "*"a { print $1 }')"
+  [ -n "$want" ] || return 0
+  if command -v sha256sum >/dev/null 2>&1; then
+    got="$(sha256sum "$tmp" | cut -d' ' -f1)"
+  elif command -v shasum >/dev/null 2>&1; then
+    got="$(shasum -a 256 "$tmp" | cut -d' ' -f1)"
+  else
+    return 0
+  fi
+  [ "$got" = "$want" ] && return 0
+  err "Checksum mismatch for ${asset}. Refusing to install."
+  exit 1
+}
+# Releases before checksums existed have no SHA256SUMS; those still install.
+verify_checksum
+
 chmod +x "$tmp"
 install -m 0755 "$tmp" "${DEST}/tokless"
 ok "installed tokless $("${DEST}/tokless" --version 2>/dev/null) → ${DEST}/tokless"

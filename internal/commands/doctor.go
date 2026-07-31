@@ -82,6 +82,9 @@ func RunDoctor(offline bool) int {
 
 		util.TreeCorner("Tools")
 		listToolVersions(tools, v, true)
+		if line := headroomProxyStatusLine(); line != "" {
+			util.TreeLeaf(line)
+		}
 		util.TreeClose()
 	}
 
