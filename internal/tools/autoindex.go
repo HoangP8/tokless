@@ -27,7 +27,11 @@ func unwireClaudeAutoIndex() {
 	if !ok {
 		return
 	}
-	if removeAutoIndexGroups(hooks) {
+	dropped := removeAutoIndexGroups(hooks)
+	if removeCodegraphOwnHooks(hooks) {
+		dropped = true
+	}
+	if dropped {
 		if hooks.Len() == 0 {
 			cfg.Delete("hooks")
 		} else {
@@ -133,6 +137,77 @@ func groupsContainAutoIndex(groups []any) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// removeCodegraphOwnHooks drops hooks codegraph's own installer added. We run
+// that installer, so we clear up after it — otherwise uninstalling codegraph
+// leaves every prompt calling a binary that isn't there any more.
+func removeCodegraphOwnHooks(hooks *util.OrderedMap) bool {
+	changed := false
+	for _, event := range hooks.Keys() {
+		v, ok := hooks.Get(event)
+		if !ok {
+			continue
+		}
+		arr, ok := v.([]any)
+		if !ok {
+			continue
+		}
+		var kept []any
+		for _, g := range arr {
+			if gm, ok := g.(*util.OrderedMap); ok && groupRunsCodegraph(gm) {
+				continue
+			}
+			kept = append(kept, g)
+		}
+		if len(kept) == len(arr) {
+			continue
+		}
+		changed = true
+		if len(kept) == 0 {
+			hooks.Delete(event)
+		} else {
+			hooks.Set(event, kept)
+		}
+	}
+	return changed
+}
+
+// groupRunsCodegraph: the command runs the codegraph binary itself. Our own
+// hooks go through tokless, so they never match.
+func groupRunsCodegraph(gm *util.OrderedMap) bool {
+	hv, ok := gm.Get("hooks")
+	if !ok {
+		return false
+	}
+	inner, ok := hv.([]any)
+	if !ok {
+		return false
+	}
+	for _, h := range inner {
+		hm, ok := h.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		c, ok := hm.Get("command")
+		if !ok {
+			continue
+		}
+		s, ok := c.(string)
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(s)
+		if len(fields) == 0 {
+			continue
+		}
+		base := strings.ToLower(filepath.Base(strings.ReplaceAll(fields[0], "\\", "/")))
+		base = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(base, ".exe"), ".cmd"), ".bat")
+		if base == "codegraph" {
+			return true
 		}
 	}
 	return false

@@ -33,6 +33,33 @@ func TestClaudeAutoIndexUnwireKeepsUserHook(t *testing.T) {
 	}
 }
 
+// We run codegraph's own installer, so unwiring has to clear the hook it adds
+// — otherwise every prompt calls a binary we just uninstalled.
+func TestClaudeUnwireRemovesCodegraphOwnHook(t *testing.T) {
+	dir := t.TempDir()
+	os.Setenv("HOME", dir)
+	defer os.Unsetenv("HOME")
+	util.SetHomeOverride(dir)
+	defer util.SetHomeOverride("")
+	cp := util.ClaudeCodePaths()
+	os.MkdirAll(cp.Dir, 0o755)
+	os.WriteFile(cp.Settings, []byte(`{"model":"sonnet","hooks":{`+
+		`"UserPromptSubmit":[{"hooks":[{"type":"command","command":"codegraph prompt-hook"}]},`+
+		`{"hooks":[{"type":"command","command":"echo mine"}]}],`+
+		`"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/local/bin/tokless rtk-hook claude"}]}]}}`), 0o644)
+
+	unwireClaudeAutoIndex()
+	s := func() string { b, _ := os.ReadFile(cp.Settings); return string(b) }()
+	if strings.Contains(s, "codegraph prompt-hook") {
+		t.Fatalf("codegraph's own hook survived unwire:\n%s", s)
+	}
+	for _, keep := range []string{"echo mine", "rtk-hook", "sonnet"} {
+		if !strings.Contains(s, keep) {
+			t.Fatalf("unwire removed %q which is not codegraph's:\n%s", keep, s)
+		}
+	}
+}
+
 func TestGeminiAutoIndexUnwireKeepsUserHook(t *testing.T) {
 	dir := t.TempDir()
 	os.Setenv("HOME", dir)

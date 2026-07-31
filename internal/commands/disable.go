@@ -37,23 +37,45 @@ func purgeBinaries(opts InitOptions) int {
 	return runPurge()
 }
 
-// runPurge removes rtk binary and npm globals. Best-effort; errors logged.
+// purgeRtk asks rtk to clean up after itself, then deletes it. rtk refuses to
+// uninstall without --global and exits non-zero, so its answer isn't a reason
+// to keep the binary.
+func purgeRtk(bin string) bool {
+	_ = util.Run(bin, []string{"init", "--uninstall", "--global"}, util.RunOptions{Capture: true})
+	return os.Remove(bin) == nil
+}
+
+// Best-effort: keep going if one removal fails.
 func runPurge() int {
 	n := 0
 	if p := util.ResolveRtkBin(); p != "" && util.Exists(p) {
-		if r := util.Run(p, []string{"init", "--uninstall"}, util.RunOptions{Capture: true}); r.Code == 0 {
-			_ = os.Remove(p)
+		if purgeRtk(p) {
 			n++
 		}
 	}
 	npm := util.ResolveNpmBinary()
-	if npm != "" {
-		for _, pkg := range []string{"context-mode", "@colbymchenry/codegraph"} {
-			if util.NpmInstalledVersionExported(pkg) != nil {
-				if r := util.Run(npm, []string{"uninstall", "-g", pkg}, util.RunOptions{Capture: true}); r.Code == 0 {
-					n++
-				}
+	for _, t := range core.ListTools() {
+		switch t.Channel {
+		case core.ChannelNpm:
+			if npm == "" || util.NpmInstalledVersionExported(t.Pkg) == nil {
+				continue
 			}
+			if util.Run(npm, []string{"uninstall", "-g", t.Pkg}, util.RunOptions{Capture: true}).Code == 0 {
+				n++
+			}
+		case core.ChannelPyPI:
+			if t.ID == "headroom" {
+				headroomProxyTeardown()
+			}
+			if util.PyGlobalUninstall(t.Pkg, t.Bin) {
+				n++
+			}
+		}
+	}
+	// Skill files live outside agent configs, so unwiring leaves them behind.
+	if util.Exists(util.SkillsRoot()) {
+		if os.RemoveAll(util.SkillsRoot()) == nil {
+			n++
 		}
 	}
 	if util.Which("pi") != "" {
@@ -92,7 +114,7 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		return 0
 	}
 
-	// Stage 2: which of the 4 tools to remove (default: all → complete removal).
+	// Stage 2: which tools to remove (default: all → complete removal).
 	allTools := core.ListTools()
 	tools := pickTools(opts, allTools, verb)
 	if len(tools) == 0 {
@@ -118,7 +140,8 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	}
 	bar.Done("")
 
-	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {
+	full := removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected)
+	if full {
 		_ = purgeBinaries(opts)
 		cacheDir := filepath.Join(util.Home(), ".cache", "tokless")
 		if util.Exists(cacheDir) {
@@ -138,8 +161,43 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	util.L.Raw("")
 	util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + verb + " " + util.C.Bold(joinComma(toolLabels)) +
 		util.C.Gray(" from ") + util.C.Bold(joinComma(labels)) + ".")
+
+	if full {
+		removeToklessItself(opts)
+	}
 	util.L.Raw("")
 	return 0
+}
+
+// removeToklessItself deletes the CLI, its data dir and its PATH entry.
+func removeToklessItself(opts InitOptions) {
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return
+	}
+	self := util.ToklessSelfPath()
+	if self == "" {
+		return
+	}
+	if !opts.Yes && util.IsInteractive() {
+		if !util.Confirm("Also remove the tokless CLI itself ("+self+")?", true) {
+			util.L.Raw("  " + util.C.Gray("Kept the tokless CLI. Remove later with: ") + util.C.Cyan("rm "+self))
+			return
+		}
+	}
+	for _, rc := range util.RemoveToklessPathBlock() {
+		util.L.Raw("  " + util.C.Gray("cleaned PATH entry in ") + util.C.Gray(rc))
+	}
+	util.RemoveToklessDataDir()
+	if util.RemoveSelf() {
+		msg := "  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray("Removed the tokless CLI (") + util.C.Gray(self) + util.C.Gray(").")
+		if util.IsWin {
+			msg = "  " + util.C.Green(util.Sym.Check) + " " + util.C.Gray("tokless CLI will be deleted once this process exits.")
+		}
+		util.L.Raw(msg)
+		util.L.Raw("  " + util.C.Gray("Open a new shell to drop it from PATH."))
+		return
+	}
+	util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " " + util.C.Gray("Couldn't remove the CLI. Run: ") + util.C.Cyan("rm "+self))
 }
 
 // pickAgents resolves which agents to act on: --agents flag, else interactive
