@@ -63,6 +63,7 @@ var caveman = &core.ToolManifest{
 		"antigravity": cavemanWireFor("antigravity"),
 		"copilot":     cavemanWireCopilot(),
 		"droid":       cavemanWireFor("droid"),
+		"grok":        cavemanWireFor("grok"),
 		"pi":          cavemanWireFor("pi"),
 	},
 	UnwireFor: map[string]core.AgentFn{
@@ -72,6 +73,7 @@ var caveman = &core.ToolManifest{
 		"antigravity": cavemanUnwireFor("antigravity"),
 		"copilot":     cavemanUnwireFor("copilot"),
 		"droid":       cavemanUnwireFor("droid"),
+		"grok":        cavemanUnwireFor("grok"),
 		"pi":          cavemanUnwireFor("pi"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
@@ -81,6 +83,7 @@ var caveman = &core.ToolManifest{
 		"antigravity": cavemanVerifyFor("antigravity"),
 		"copilot":     cavemanVerifyFor("copilot"),
 		"droid":       cavemanVerifyFor("droid"),
+		"grok":        cavemanVerifyFor("grok"),
 		"pi":          cavemanVerifyFor("pi"),
 	},
 	Install: func(opts core.RunOpts) (bool, error) {

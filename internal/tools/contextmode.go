@@ -416,6 +416,35 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
+// --- Grok ---
+
+func ctxWireGrok(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would add bounded context-mode MCP to Grok")
+		return true, nil
+	}
+	if _, _, err := agents.ConfigureGrokMcp("context-mode"); err != nil {
+		return false, err
+	}
+	WriteOwner("grok", "context-mode")
+	if !HasOwner("grok", "context-mode") {
+		_, _ = agents.RemoveGrokMcp("context-mode")
+		return false, nil
+	}
+	return ctxVerifyGrok(), nil
+}
+
+func ctxUnwireGrok(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	if _, err := agents.RemoveGrokMcp("context-mode"); err != nil {
+		return false, err
+	}
+	RemoveOwner("grok", "context-mode")
+	return true, nil
+}
+
 // --- Droid ---
 
 func ctxWireDroid(opts core.RunOpts) (bool, error) {
@@ -442,6 +471,10 @@ func ctxVerifyDroid() bool {
 
 func ctxVerifyPi() bool {
 	return agents.PiMcpHas("context-mode")
+}
+
+func ctxVerifyGrok() bool {
+	return agents.GrokContextModeMcpHas() && HasOwner("grok", "context-mode")
 }
 
 // --- Antigravity (MCP + GEMINI.md, no PreToolUse hook) ---
@@ -629,6 +662,7 @@ var contextMode = &core.ToolManifest{
 		"antigravity": ctxWireAntigravity,
 		"copilot":     ctxWireCopilot,
 		"droid":       ctxWireDroid,
+		"grok":        ctxWireGrok,
 		"pi": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				util.L.Sub("[dry-run] would: upstream context-mode MCP via pi-mcp-adapter (not pi package)")
@@ -650,6 +684,7 @@ var contextMode = &core.ToolManifest{
 		"antigravity": ctxUnwireAntigravity,
 		"copilot":     ctxUnwireCopilot,
 		"droid":       ctxUnwireDroid,
+		"grok":        ctxUnwireGrok,
 		"pi": func(opts core.RunOpts) (bool, error) {
 			agents.PiPurgeContextModePackages()
 			agents.RemovePiMcp("context-mode")
@@ -669,6 +704,7 @@ var contextMode = &core.ToolManifest{
 			return core.BoolPtr(agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook())
 		},
 		"droid": func() *bool { return core.BoolPtr(ctxVerifyDroid()) },
+		"grok":  func() *bool { return core.BoolPtr(ctxVerifyGrok()) },
 		"pi":    func() *bool { return core.BoolPtr(ctxVerifyPi()) },
 	},
 }

@@ -382,52 +382,6 @@ func RunRtkHookCodex() int {
 	return 0
 }
 
-// RunRtkHookGrok handles transparent command rewriting for Grok's PreToolUse hook.
-func RunRtkHookGrok() int {
-	input, err := io.ReadAll(os.Stdin)
-	if err != nil || len(input) == 0 {
-		return 0
-	}
-
-	var req struct {
-		ToolName  string `json:"toolName"`
-		ToolInput struct {
-			Command string `json:"command"`
-		} `json:"toolInput"`
-	}
-	if err := json.Unmarshal(input, &req); err != nil {
-		return 0
-	}
-	if req.ToolName != "run_terminal_command" {
-		return 0
-	}
-
-	updated := map[string]string{"command": req.ToolInput.Command}
-	if newCmd, changed := rtkRewrite(req.ToolInput.Command); changed {
-		updated["command"] = newCmd
-	}
-
-	type hookOut struct {
-		HookEventName      string            `json:"hookEventName"`
-		PermissionDecision string            `json:"permissionDecision"`
-		UpdatedInput       map[string]string `json:"updatedInput"`
-	}
-	resp := struct {
-		HookSpecificOutput hookOut `json:"hookSpecificOutput"`
-	}{
-		HookSpecificOutput: hookOut{
-			HookEventName:      "PreToolUse",
-			PermissionDecision: "allow",
-			UpdatedInput:       updated,
-		},
-	}
-
-	if out, err := json.Marshal(resp); err == nil {
-		fmt.Println(string(out))
-	}
-	return 0
-}
-
 // RunRtkHookDroid handles transparent command rewriting for Factory Droid.
 func RunRtkHookDroid() int {
 	input, err := io.ReadAll(os.Stdin)

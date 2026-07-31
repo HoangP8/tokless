@@ -174,27 +174,6 @@ func rtkTestShim(agent string) {
 		dir := filepath.Join(agents.PiAgentDirResolved(), "extensions")
 		_ = os.MkdirAll(dir, 0o755)
 		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk pi shim (tokless test)\n")
-	case "grok":
-		dir := filepath.Join(util.Home(), ".grok", "hooks")
-		_ = os.MkdirAll(dir, 0o755)
-		hookJSON := `{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "` + util.PersistedToklessCommand(util.ToklessAbs(), "rtk-hook", "grok") + `",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
-`
-		_ = os.WriteFile(filepath.Join(dir, "rtk.json"), []byte(hookJSON), 0o644)
 	}
 }
 
@@ -516,30 +495,6 @@ func rtkWireCodex() core.AgentFn {
 	}
 }
 
-func rtkWireGrok() core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		if opts.DryRun {
-			util.L.Sub("[dry-run] would install grok PreToolUse hook (~/.grok/hooks/rtk.json) routing shell commands through rtk")
-			return true, nil
-		}
-		if os.Getenv("TOKLESS_TEST") == "1" {
-			rtkTestShim("grok")
-			return grokHasRtkHook(), nil
-		}
-		agents.InstallGrokRtkHook()
-		return grokHasRtkHook(), nil
-	}
-}
-
-func grokHasRtkHook() bool {
-	hookPath := filepath.Join(util.Home(), ".grok", "hooks", "rtk.json")
-	raw, ok := util.ReadFileSafe(hookPath)
-	if !ok {
-		return false
-	}
-	return strings.Contains(raw, "rtk-hook") || strings.Contains(raw, "rtk hook")
-}
-
 func rtkWireCopilot() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -614,7 +569,6 @@ var rtk = &core.ToolManifest{
 		"copilot":     rtkWireCopilot(),
 		"droid":       rtkWireDroid(),
 		"pi":          rtkWirePi(),
-		"grok":        rtkWireGrok(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -669,11 +623,6 @@ var rtk = &core.ToolManifest{
 			RemoveOwner("pi", "rtk")
 			return true, nil
 		},
-		"grok": func(core.RunOpts) (bool, error) {
-			_ = os.Remove(filepath.Join(util.Home(), ".grok", "hooks", "rtk.json"))
-			RemoveOwner("grok", "rtk")
-			return true, nil
-		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -696,9 +645,6 @@ var rtk = &core.ToolManifest{
 		},
 		"pi": func() *bool {
 			return core.BoolPtr(agents.HasPiRtkExtension())
-		},
-		"grok": func() *bool {
-			return core.BoolPtr(grokHasRtkHook())
 		},
 	},
 }

@@ -63,6 +63,7 @@ var ponytail = &core.ToolManifest{
 		"antigravity": ponytailWireFor("antigravity"),
 		"copilot":     ponytailWireCopilot(),
 		"droid":       ponytailWireFor("droid"),
+		"grok":        ponytailWireFor("grok"),
 		"pi":          ponytailWireFor("pi"),
 	},
 	UnwireFor: map[string]core.AgentFn{
@@ -72,6 +73,7 @@ var ponytail = &core.ToolManifest{
 		"antigravity": ponytailUnwireFor("antigravity"),
 		"copilot":     ponytailUnwireFor("copilot"),
 		"droid":       ponytailUnwireFor("droid"),
+		"grok":        ponytailUnwireFor("grok"),
 		"pi":          ponytailUnwireFor("pi"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
@@ -81,6 +83,7 @@ var ponytail = &core.ToolManifest{
 		"antigravity": ponytailVerifyFor("antigravity"),
 		"copilot":     ponytailVerifyFor("copilot"),
 		"droid":       ponytailVerifyFor("droid"),
+		"grok":        ponytailVerifyFor("grok"),
 		"pi":          ponytailVerifyFor("pi"),
 	},
 	Install: func(opts core.RunOpts) (bool, error) {

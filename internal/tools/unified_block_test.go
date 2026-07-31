@@ -20,7 +20,7 @@ func init() {
 func TestUnifiedBody_WiresAllOwnersAcrossAllAgents(t *testing.T) {
 	setupHome(t)
 
-	agentsList := []string{"claude", "opencode", "codex", "antigravity"}
+	agentsList := []string{"claude", "opencode", "codex", "antigravity", "grok"}
 	wireOrder := []string{"caveman", "codegraph", "context-mode", "ponytail"}
 	expectedOrder := []string{
 		util.SectionsByOwner["principles"],
@@ -91,7 +91,7 @@ func TestUnifiedBody_WiresAllOwnersAcrossAllAgents(t *testing.T) {
 func TestUnifiedBody_PerToolUnwire(t *testing.T) {
 	setupHome(t)
 
-	agentsList := []string{"claude", "opencode", "codex", "antigravity"}
+	agentsList := []string{"claude", "opencode", "codex", "antigravity", "grok"}
 	wireOrder := []string{"caveman", "codegraph", "context-mode", "ponytail"}
 
 	for _, agent := range agentsList {
@@ -119,6 +119,37 @@ func TestUnifiedBody_PerToolUnwire(t *testing.T) {
 				t.Errorf("stat: %v", err)
 			}
 		})
+	}
+}
+
+func TestUnifiedBody_PerToolUnwirePreservesOtherOwners(t *testing.T) {
+	setupHome(t)
+	for _, agent := range []string{"claude", "opencode", "codex", "antigravity", "grok"} {
+		for _, tool := range []string{"caveman", "ponytail"} {
+			t.Run(agent+"/"+tool, func(t *testing.T) {
+				for _, owner := range []string{"codegraph", "context-mode"} {
+					if !WriteOwner(agent, owner) {
+						t.Fatalf("write %s owner", owner)
+					}
+				}
+				tm := lookupTool(t, tool)
+				if ok, err := tm.WireFor[agent](core.RunOpts{}); err != nil || !ok {
+					t.Fatalf("wire %s/%s: ok=%v err=%v", agent, tool, ok, err)
+				}
+				if ok, err := tm.UnwireFor[agent](core.RunOpts{}); err != nil || !ok {
+					t.Fatalf("unwire %s/%s: ok=%v err=%v", agent, tool, ok, err)
+				}
+				raw, err := os.ReadFile(agentInstructionPath(t, agent))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, owner := range []string{"codegraph", "context-mode"} {
+					if !strings.Contains(string(raw), util.SectionsByOwner[owner]) {
+						t.Errorf("%s removed by %s/%s unwire", owner, agent, tool)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -218,6 +249,8 @@ func agentInstructionPath(t *testing.T, agent string) string {
 		return filepath.Join(util.Home(), ".codex", "AGENTS.md")
 	case "antigravity":
 		return filepath.Join(util.Home(), ".gemini", "GEMINI.md")
+	case "grok":
+		return filepath.Join(util.Home(), ".grok", "rules", "tokless.md")
 	}
 	t.Fatalf("unknown agent %q", agent)
 	return ""

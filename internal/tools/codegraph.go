@@ -95,6 +95,9 @@ func codegraphConfigureMcp(agent string) bool {
 		agents.ConfigureDroidMcp("codegraph")
 	case "pi":
 		agents.ConfigurePiMcp("codegraph")
+	case "grok":
+		_, _, err := agents.ConfigureGrokMcp("codegraph")
+		return err == nil
 	}
 	return true
 }
@@ -149,6 +152,8 @@ func codegraphVerify(agent string) bool {
 		return agents.DroidMcpHas("codegraph") && agents.HasDroidCodegraphIndexHook()
 	case "pi":
 		return agents.PiMcpHas("codegraph") && piCodegraphIndexExtensionPresent()
+	case "grok":
+		return agents.GrokMcpHas("codegraph") && HasOwner("grok", "codegraph")
 	}
 	return false
 }
@@ -259,6 +264,10 @@ func codegraphWire(agent string) core.AgentFn {
 		if isTest() {
 			codegraphConfigureMcp(agent)
 			WriteOwner(agent, "codegraph")
+			if agent == "grok" && !HasOwner(agent, "codegraph") {
+				_, _ = agents.RemoveGrokMcp("codegraph")
+				return false, nil
+			}
 			if agent == "antigravity" {
 				agents.InstallAntigravityCodegraphIndexHook()
 				agents.CleanupDeadIdeHooks()
@@ -279,8 +288,18 @@ func codegraphWire(agent string) core.AgentFn {
 		if ran := codegraphRealInstall(opts, agent); !ran {
 			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
 		}
-		codegraphConfigureMcp(agent)
+		if agent == "grok" {
+			if !codegraphConfigureMcp(agent) {
+				return false, nil
+			}
+		} else {
+			codegraphConfigureMcp(agent)
+		}
 		writeCodegraphBlock(agent)
+		if agent == "grok" && !HasOwner(agent, "codegraph") {
+			_, _ = agents.RemoveGrokMcp("codegraph")
+			return false, nil
+		}
 		unwireAutoIndex(agent)
 		if agent == "antigravity" {
 			agents.InstallAntigravityCodegraphIndexHook()
@@ -337,6 +356,7 @@ var codegraph = &core.ToolManifest{
 		"antigravity": codegraphWire("antigravity"),
 		"copilot":     codegraphWire("copilot"),
 		"droid":       codegraphWire("droid"),
+		"grok":        codegraphWire("grok"),
 		"pi": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				util.L.Sub("[dry-run] would: purge legacy pi-codegraph pkgs, install pi-mcp-adapter, mcp.json + codegraph-index.ts")
@@ -402,6 +422,13 @@ var codegraph = &core.ToolManifest{
 			RemoveOwner("droid", "codegraph")
 			return true, nil
 		},
+		"grok": func(core.RunOpts) (bool, error) {
+			if _, err := agents.RemoveGrokMcp("codegraph"); err != nil {
+				return false, err
+			}
+			RemoveOwner("grok", "codegraph")
+			return true, nil
+		},
 		"pi": func(core.RunOpts) (bool, error) {
 			agents.RemovePiMcp("codegraph")
 			_ = os.Remove(piCodegraphIndexPath())
@@ -419,6 +446,7 @@ var codegraph = &core.ToolManifest{
 		"antigravity": func() *bool { return core.BoolPtr(codegraphVerify("antigravity")) },
 		"copilot":     func() *bool { return core.BoolPtr(codegraphVerify("copilot")) },
 		"droid":       func() *bool { return core.BoolPtr(codegraphVerify("droid")) },
+		"grok":        func() *bool { return core.BoolPtr(codegraphVerify("grok")) },
 		"pi":          func() *bool { return core.BoolPtr(codegraphVerify("pi")) },
 	},
 }
