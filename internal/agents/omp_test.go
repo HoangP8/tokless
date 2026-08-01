@@ -68,8 +68,9 @@ func TestOmpAgentDirPrecedenceAndProfile(t *testing.T) {
 	if got, want := ompAgentDir(), filepath.Join(util.Home(), ".config", "omp", "agent"); got != want {
 		t.Fatalf("nested config root: %q", got)
 	}
-	t.Setenv("PI_CONFIG_DIR", "/opt/omp")
-	if got, want := ompAgentDir(), filepath.Join("/opt/omp", "agent"); got != want {
+	absoluteRoot := filepath.Join(t.TempDir(), "omp")
+	t.Setenv("PI_CONFIG_DIR", absoluteRoot)
+	if got, want := ompAgentDir(), filepath.Join(absoluteRoot, "agent"); got != want {
 		t.Fatalf("absolute config root: %q", got)
 	}
 	t.Setenv("PI_CONFIG_DIR", "~/.config/omp")
@@ -129,6 +130,12 @@ func TestConfigureOmpMcpPreservesConfigAndBoundsContextMode(t *testing.T) {
 	}
 	if !RemoveOmpMcp("codegraph") || OmpMcpHas("codegraph") || !OmpMcpHas("context-mode") {
 		t.Fatal("surgical removal failed")
+	}
+}
+
+func TestOmpCodegraphTargetAcceptsWindowsNpxShim(t *testing.T) {
+	if !ompCodegraphTarget([]string{"cmd", "/c", "npx.cmd", "--no-install", "@colbymchenry/codegraph", "serve", "--mcp"}) {
+		t.Fatal("Windows npx shim must be recognized as managed CodeGraph target")
 	}
 }
 

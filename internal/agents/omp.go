@@ -182,6 +182,9 @@ func ompCodegraphTarget(args []string) bool {
 	if len(args) == 5 && isOmpCmd(args[0]) && args[1] == "/c" && isOmpBinary(args[2], "codegraph") {
 		return args[3] == "serve" && args[4] == "--mcp"
 	}
+	if len(args) == 7 && isOmpCmd(args[0]) && args[1] == "/c" && isOmpBinary(args[2], "npx") {
+		return args[3] == "--no-install" && args[4] == "@colbymchenry/codegraph" && args[5] == "serve" && args[6] == "--mcp"
+	}
 	return len(args) == 5 && isOmpBinary(args[0], "npx") && args[1] == "--no-install" && args[2] == "@colbymchenry/codegraph" && args[3] == "serve" && args[4] == "--mcp"
 }
 
