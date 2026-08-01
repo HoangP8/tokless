@@ -181,18 +181,47 @@ func rtkTestShim(agent string) {
 	}
 }
 
-const ompRtkExtension = `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+const ompRtkExtension = `import { spawn } from "node:child_process"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 const TOKLESS = %s
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event: any) => {
     if (event?.toolName !== "bash" || typeof event?.input?.command !== "string") return
     const payload = { tool_name: "Bash", tool_input: { command: event.input.command } }
-    const result = await pi.exec(TOKLESS, ["rtk-hook", "omp"], { input: JSON.stringify(payload) })
-    if (!result.stdout) return
+    const stdout = await new Promise<string>((resolve) => {
+      let settled = false
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const finish = (value = "") => {
+        if (settled) return
+        settled = true
+        if (timeout) clearTimeout(timeout)
+        resolve(value)
+      }
+      try {
+        const child = spawn(TOKLESS, ["rtk-hook", "omp"], { stdio: ["pipe", "pipe", "ignore"] })
+        timeout = setTimeout(() => {
+          try {
+            child.kill()
+          } finally {
+            finish()
+          }
+        }, 5000)
+        let output = ""
+        child.stdout.setEncoding("utf8")
+        child.stdout.on("data", (chunk) => { output += chunk })
+        child.once("error", () => finish())
+        child.stdin.once("error", () => finish())
+        child.once("close", (code) => finish(code === 0 ? output : ""))
+        child.stdin.end(JSON.stringify(payload))
+      } catch {
+        finish()
+      }
+    })
+    if (!stdout) return
     let rewritten
     try {
-      rewritten = JSON.parse(result.stdout)?.hookSpecificOutput?.updatedInput?.command
+      rewritten = JSON.parse(stdout)?.hookSpecificOutput?.updatedInput?.command
     } catch {
       return
     }

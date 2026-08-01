@@ -37,6 +37,9 @@ func TestOmpToolWiring(t *testing.T) {
 	if err != nil || !strings.Contains(string(ext), `event?.toolName !== "bash"`) || !strings.Contains(string(ext), "event.input.command") || !strings.Contains(string(ext), `tool_name: "Bash"`) || !strings.Contains(string(ext), "try {") || !strings.Contains(string(ext), "} catch {") || !strings.Contains(string(ext), `return { input: { ...event.input, command: rewritten } }`) {
 		t.Fatalf("bad RTK extension: %v %s", err, ext)
 	}
+	if !strings.Contains(string(ext), `import { spawn } from "node:child_process"`) || !strings.Contains(string(ext), `spawn(TOKLESS, ["rtk-hook", "omp"], { stdio: ["pipe", "pipe", "ignore"] })`) || !strings.Contains(string(ext), `child.stdin.end(JSON.stringify(payload))`) || !strings.Contains(string(ext), `setTimeout(() => {`) || !strings.Contains(string(ext), `}, 5000)`) || !strings.Contains(string(ext), `child.once("error", () => finish())`) || !strings.Contains(string(ext), `child.stdin.once("error", () => finish())`) || !strings.Contains(string(ext), `child.once("close", (code) => finish(code === 0 ? output : ""))`) || !strings.Contains(string(ext), `if (settled) return`) || strings.Contains(string(ext), `pi.exec(`) || strings.Contains(string(ext), `"sh"`) || strings.Contains(string(ext), `{ input: JSON.stringify(payload) }`) {
+		t.Fatalf("RTK extension must use native fail-open spawn stdin without shell or unsupported input option: %s", ext)
+	}
 	if strings.Contains(string(ext), "Object.assign(event") || strings.Contains(string(ext), "return { hookSpecificOutput") {
 		t.Fatalf("extension uses Claude hook result: %s", ext)
 	}
