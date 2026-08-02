@@ -159,6 +159,9 @@ func codegraphVerify(agent string) bool {
 		return agents.OmpMcpHas("codegraph") && HasOwner("omp", "codegraph")
 	case "grok":
 		return agents.GrokMcpHas("codegraph") && HasOwner("grok", "codegraph")
+	case "kilo":
+		expected := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		return agents.KiloMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && kiloHasOwner("codegraph") && agents.KiloInstructionsReferenceReady()
 	}
 	return false
 }
@@ -266,6 +269,19 @@ func piCodegraphIndexExtensionPresent() bool {
 
 func codegraphWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
+		if agent == "kilo" {
+			if opts.DryRun {
+				return true, nil
+			}
+			if !agents.KiloProjectAvailable() {
+				return false, nil
+			}
+			spawn := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+			agents.ConfigureKiloMcp("codegraph", append([]string{spawn.Command}, spawn.Args...))
+			kiloWriteOwner("codegraph")
+			agents.SyncKiloInstructionsReference()
+			return codegraphVerify("kilo"), nil
+		}
 		if isTest() {
 			if !codegraphConfigureMcp(agent) {
 				return false, nil
@@ -385,7 +401,8 @@ var codegraph = &core.ToolManifest{
 			WriteOwner("pi", "codegraph")
 			return codegraphVerify("pi"), nil
 		},
-		"omp": codegraphWire("omp"),
+		"omp":  codegraphWire("omp"),
+		"kilo": codegraphWire("kilo"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -460,6 +477,12 @@ var codegraph = &core.ToolManifest{
 			RemoveOwner("omp", "codegraph")
 			return true, nil
 		},
+		"kilo": func(core.RunOpts) (bool, error) {
+			agents.RemoveKiloMcp("codegraph")
+			kiloRemoveOwner("codegraph")
+			agents.SyncKiloInstructionsReference()
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
@@ -471,5 +494,6 @@ var codegraph = &core.ToolManifest{
 		"grok":        func() *bool { return core.BoolPtr(codegraphVerify("grok")) },
 		"pi":          func() *bool { return core.BoolPtr(codegraphVerify("pi")) },
 		"omp":         func() *bool { return core.BoolPtr(codegraphVerify("omp")) },
+		"kilo":        func() *bool { return core.BoolPtr(codegraphVerify("kilo")) },
 	},
 }

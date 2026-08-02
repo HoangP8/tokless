@@ -156,6 +156,29 @@ func OpenCodePathsResolved() OpenCodePaths {
 	}
 }
 
+// KiloPaths holds Kilo's shared configuration location.
+type KiloPaths struct {
+	Dir, Config, PluginsDir string
+}
+
+func KiloPathsResolved() KiloPaths {
+	dir := os.Getenv("KILO_CONFIG_DIR")
+	if strings.HasPrefix(dir, "~/") {
+		dir = filepath.Join(Home(), strings.TrimPrefix(dir, "~/"))
+	}
+	if dir == "" {
+		if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+			dir = filepath.Join(x, "kilo")
+		} else {
+			dir = filepath.Join(Home(), ".config", "kilo")
+		}
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	return KiloPaths{Dir: dir, Config: filepath.Join(dir, "kilo.jsonc"), PluginsDir: filepath.Join(dir, "plugin")}
+}
+
 // CodexPaths holds Codex config locations.
 type CodexPaths struct {
 	Dir, Config, Instructions string

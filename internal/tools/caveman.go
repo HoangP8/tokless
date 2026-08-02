@@ -28,6 +28,31 @@ func cavemanWireCopilot() core.AgentFn {
 	}
 }
 
+func cavemanKiloWire() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			return true, nil
+		}
+		kiloWriteOwner("caveman")
+		agents.SyncKiloInstructionsReference()
+		return kiloHasOwner("caveman") && agents.KiloInstructionsReferenceReady(), nil
+	}
+}
+
+func cavemanKiloUnwire(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	kiloRemoveOwner("caveman")
+	agents.SyncKiloInstructionsReference()
+	return true, nil
+}
+
+func cavemanKiloVerify() *bool {
+	v := kiloHasOwner("caveman") && agents.KiloInstructionsReferenceReady()
+	return &v
+}
+
 func cavemanUnwireFor(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -66,6 +91,7 @@ var caveman = &core.ToolManifest{
 		"grok":        cavemanWireFor("grok"),
 		"pi":          cavemanWireFor("pi"),
 		"omp":         cavemanWireFor("omp"),
+		"kilo":        cavemanKiloWire(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      cavemanUnwireFor("claude"),
@@ -77,6 +103,7 @@ var caveman = &core.ToolManifest{
 		"grok":        cavemanUnwireFor("grok"),
 		"pi":          cavemanUnwireFor("pi"),
 		"omp":         cavemanUnwireFor("omp"),
+		"kilo":        cavemanKiloUnwire,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      cavemanVerifyFor("claude"),
@@ -88,6 +115,7 @@ var caveman = &core.ToolManifest{
 		"grok":        cavemanVerifyFor("grok"),
 		"pi":          cavemanVerifyFor("pi"),
 		"omp":         cavemanVerifyFor("omp"),
+		"kilo":        cavemanKiloVerify,
 	},
 	Install: func(opts core.RunOpts) (bool, error) {
 		return true, nil

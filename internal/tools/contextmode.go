@@ -137,6 +137,28 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
+func ctxWireKilo(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	if !agents.KiloProjectAvailable() {
+		return false, nil
+	}
+	spawn := util.PickMcpSpawn("context-mode")
+	expected := append([]string{spawn.Command}, spawn.Args...)
+	agents.ConfigureKiloMcp("context-mode", expected)
+	kiloWriteOwner("context-mode")
+	agents.SyncKiloInstructionsReference()
+	return agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode") && agents.KiloInstructionsReferenceReady(), nil
+}
+
+func ctxUnwireKilo(core.RunOpts) (bool, error) {
+	agents.RemoveKiloMcp("context-mode")
+	kiloRemoveOwner("context-mode")
+	agents.SyncKiloInstructionsReference()
+	return true, nil
+}
+
 func removeContextModePlugin(cfg *util.OrderedMap) {
 	plugins := getArr(cfg, "plugin")
 	kept := make([]any, 0, len(plugins))
@@ -688,6 +710,7 @@ var contextMode = &core.ToolManifest{
 			WriteOwner("omp", "context-mode")
 			return HasOwner("omp", "context-mode"), nil
 		},
+		"kilo": ctxWireKilo,
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ctxUnwireClaude,
@@ -713,6 +736,7 @@ var contextMode = &core.ToolManifest{
 			RemoveOwner("omp", "context-mode")
 			return true, nil
 		},
+		"kilo": ctxUnwireKilo,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
@@ -726,6 +750,11 @@ var contextMode = &core.ToolManifest{
 		"grok":  func() *bool { return core.BoolPtr(ctxVerifyGrok()) },
 		"pi":    func() *bool { return core.BoolPtr(ctxVerifyPi()) },
 		"omp":   func() *bool { return core.BoolPtr(agents.OmpMcpHas("context-mode") && HasOwner("omp", "context-mode")) },
+		"kilo": func() *bool {
+			spawn := util.PickMcpSpawn("context-mode")
+			expected := append([]string{spawn.Command}, spawn.Args...)
+			return core.BoolPtr(agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode") && agents.KiloInstructionsReferenceReady())
+		},
 	},
 }
 

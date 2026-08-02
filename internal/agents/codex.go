@@ -805,4 +805,5 @@ func Register() {
 	core.RegisterAgent(antigravity)
 	core.RegisterAgent(copilot)
 	core.RegisterAgent(grok)
+	core.RegisterAgent(kilo)
 }

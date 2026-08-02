@@ -118,6 +118,9 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	}
 	bar.Done("")
 
+	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == 1 && agentIDs[0] == "kilo" {
+		agents.CleanupKiloProject()
+	}
 	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {
 		_ = purgeBinaries(opts)
 		cacheDir := filepath.Join(util.Home(), ".cache", "tokless")

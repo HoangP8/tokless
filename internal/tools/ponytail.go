@@ -28,6 +28,31 @@ func ponytailWireCopilot() core.AgentFn {
 	}
 }
 
+func ponytailKiloWire() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			return true, nil
+		}
+		kiloWriteOwner("ponytail")
+		agents.SyncKiloInstructionsReference()
+		return kiloHasOwner("ponytail") && agents.KiloInstructionsReferenceReady(), nil
+	}
+}
+
+func ponytailKiloUnwire(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	kiloRemoveOwner("ponytail")
+	agents.SyncKiloInstructionsReference()
+	return true, nil
+}
+
+func ponytailKiloVerify() *bool {
+	v := kiloHasOwner("ponytail") && agents.KiloInstructionsReferenceReady()
+	return &v
+}
+
 func ponytailUnwireFor(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -66,6 +91,7 @@ var ponytail = &core.ToolManifest{
 		"grok":        ponytailWireFor("grok"),
 		"pi":          ponytailWireFor("pi"),
 		"omp":         ponytailWireFor("omp"),
+		"kilo":        ponytailKiloWire(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireFor("claude"),
@@ -77,6 +103,7 @@ var ponytail = &core.ToolManifest{
 		"grok":        ponytailUnwireFor("grok"),
 		"pi":          ponytailUnwireFor("pi"),
 		"omp":         ponytailUnwireFor("omp"),
+		"kilo":        ponytailKiloUnwire,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      ponytailVerifyFor("claude"),
@@ -88,6 +115,7 @@ var ponytail = &core.ToolManifest{
 		"grok":        ponytailVerifyFor("grok"),
 		"pi":          ponytailVerifyFor("pi"),
 		"omp":         ponytailVerifyFor("omp"),
+		"kilo":        ponytailKiloVerify,
 	},
 	Install: func(opts core.RunOpts) (bool, error) {
 		return true, nil

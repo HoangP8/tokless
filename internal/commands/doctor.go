@@ -26,16 +26,7 @@ func RunDoctor(offline bool) int {
 		if !agent.Detect().Installed {
 			continue
 		}
-		var missing []string
-		for _, tool := range tools {
-			verify, ok := tool.VerifyFor[agent.ID]
-			if !ok {
-				continue
-			}
-			if r := verify(); r != nil && !*r {
-				missing = append(missing, tool.Label)
-			}
-		}
+		missing := doctorMissingTools(tools, agent.ID)
 		runtime := probeAgentRuntime(agent.ID)
 		reports = append(reports, agentReport{
 			label:     agent.Label,
@@ -89,6 +80,23 @@ func RunDoctor(offline bool) int {
 	printRepoFooter(true)
 	util.L.Raw("")
 	return 0
+}
+
+func doctorMissingTools(tools []*core.ToolManifest, agentID string) []string {
+	var missing []string
+	for _, tool := range tools {
+		if tool.InstructionOnly {
+			continue
+		}
+		verify, ok := tool.VerifyFor[agentID]
+		if !ok {
+			continue
+		}
+		if r := verify(); r != nil && !*r {
+			missing = append(missing, tool.Label)
+		}
+	}
+	return missing
 }
 
 // doctorStatusLines builds labeled Status leaves.

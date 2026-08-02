@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -37,6 +38,85 @@ func TestUninstallSelectiveFlags(t *testing.T) {
 	}
 	if amd, _ := os.ReadFile(filepath.Join(oc, "AGENTS.md")); strings.Contains(string(amd), "## Caveman") {
 		t.Fatal("caveman ruleset not removed")
+	}
+}
+
+func TestUninstallSelectiveKiloDoesNotCleanupProjectConfig(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	global := util.KiloPathsResolved().Dir
+	if err := os.MkdirAll(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	agents.ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
+	config := agents.KiloProjectConfigPath()
+	if code := RunUninstall(InitOptions{Agents: []string{"kilo"}, Tools: []string{"context-mode"}}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if _, err := os.Stat(config); err != nil {
+		t.Fatalf("selective uninstall cleaned Kilo config: %v", err)
+	}
+}
+
+func TestUninstallKiloCleansProjectConfigWithOtherDetectedAgent(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	global := util.KiloPathsResolved().Dir
+	if err := os.MkdirAll(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oc := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(oc, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oc, "opencode.json"), []byte(`{"mcp":{"foreign":{"type":"local"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	agents.ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
+	config := agents.KiloProjectConfigPath()
+	marker := filepath.Join(filepath.Dir(config), ".tokless-kilo-config-created")
+
+	if code := RunUninstall(InitOptions{Agents: []string{"kilo"}}); code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	for _, path := range []string{config, marker, filepath.Dir(config)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected Kilo project artifact removed: %s (err=%v)", path, err)
+		}
 	}
 }
 

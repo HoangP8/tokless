@@ -251,6 +251,155 @@ func rtkWireOmp() core.AgentFn {
 	}
 }
 
+const kiloRtkMarker = "tokless-kilo-rtk-v1"
+
+const kiloRtkPlugin = `import type { Plugin } from "@kilocode/plugin"
+
+// tokless-kilo-rtk-v1
+const rtk = RTK_PATH_PLACEHOLDER
+const server: Plugin = async ({ $ }) => ({
+  "tool.execute.before": async (input, output) => {
+    const tool = String(input?.tool ?? "").toLowerCase()
+    if (tool !== "bash" && tool !== "shell") return
+    if (!output || typeof output.args !== "object" || output.args === null) return
+    const args = output.args as Record<string, unknown>
+    const command = args.command
+    if (typeof command !== "string") return
+    try {
+      const result = await $KILO_COMMAND_TEMPLATE.quiet().nothrow()
+      const rewritten = String(result.stdout).trim()
+      if (rewritten && rewritten !== command) args.command = rewritten
+    } catch {}
+  },
+})
+
+export default { id: "tokless-rtk", server }
+`
+
+func kiloRtkPath() string {
+	return filepath.Join(util.KiloPathsResolved().PluginsDir, "rtk.ts")
+}
+
+func kiloLegacyRtkPath() string { return agents.KiloProjectFile("plugin", "tokless-rtk.ts") }
+
+func kiloOldGlobalRtkPath() string {
+	return filepath.Join(util.KiloPathsResolved().PluginsDir, "tokless-rtk.ts")
+}
+
+func removeKiloOldGlobalRtk() {
+	path := kiloOldGlobalRtkPath()
+	if raw, ok := util.ReadFileSafe(path); ok && strings.Contains(raw, kiloRtkMarker) {
+		_ = os.Remove(path)
+	}
+}
+
+func removeKiloLegacyRtk() {
+	path := kiloLegacyRtkPath()
+	if raw, ok := util.ReadFileSafe(path); ok && strings.Contains(raw, kiloRtkMarker) {
+		_ = os.Remove(path)
+	}
+}
+
+func kiloForeignBackupPath(path string) string {
+	base := path + ".foreign-backup"
+	for i := 0; ; i++ {
+		candidate := base
+		if i > 0 {
+			candidate = fmt.Sprintf("%s.%d", base, i)
+		}
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+}
+
+func kiloRtkPluginSource(rtk string) string {
+	source := strings.Replace(kiloRtkPlugin, "RTK_PATH_PLACEHOLDER", strconv.Quote(rtk), 1)
+	return strings.Replace(source, "KILO_COMMAND_TEMPLATE", "`"+"${rtk} rewrite ${command}"+"`", 1)
+}
+
+func kiloRtkWire(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	path := kiloRtkPath()
+	if path == "" {
+		return false, nil
+	}
+	rtk := util.ResolveRtkBin()
+	if rtk == "" {
+		return false, nil
+	}
+	rtk, err := filepath.Abs(rtk)
+	if err != nil {
+		return false, nil
+	}
+	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+		return false, nil
+	}
+	source := kiloRtkPluginSource(rtk)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tokless-kilo-rtk-*")
+	if err != nil {
+		return false, nil
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(source); err != nil {
+		_ = tmp.Close()
+		return false, nil
+	}
+	if err := tmp.Chmod(0o644); err != nil || tmp.Close() != nil {
+		return false, nil
+	}
+
+	backup := ""
+	if raw, ok := util.ReadFileSafe(path); ok && !strings.Contains(raw, kiloRtkMarker) {
+		backup = kiloForeignBackupPath(path)
+		if err := os.Rename(path, backup); err != nil {
+			return false, nil
+		}
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		if backup != "" {
+			_ = os.Rename(backup, path)
+		}
+		return false, nil
+	}
+	if !kiloRtkVerify() {
+		_ = os.Remove(path)
+		if backup != "" {
+			_ = os.Rename(backup, path)
+		}
+		return false, nil
+	}
+	removeKiloOldGlobalRtk()
+	removeKiloLegacyRtk()
+	return true, nil
+}
+
+func kiloRtkUnwire(core.RunOpts) (bool, error) {
+	path := kiloRtkPath()
+	if raw, ok := util.ReadFileSafe(path); ok && strings.Contains(raw, kiloRtkMarker) {
+		_ = os.Remove(path)
+	}
+	removeKiloOldGlobalRtk()
+	removeKiloLegacyRtk()
+	return true, nil
+}
+
+func kiloRtkVerify() bool {
+	path := kiloRtkPath()
+	raw, ok := util.ReadFileSafe(path)
+	rtk := util.ResolveRtkBin()
+	if rtk == "" {
+		return false
+	}
+	rtk, err := filepath.Abs(rtk)
+	return err == nil && ok && strings.Contains(raw, kiloRtkMarker) &&
+		strings.Contains(raw, `tool.execute.before`) && strings.Contains(raw, `const rtk = `+strconv.Quote(rtk)) &&
+		strings.Contains(raw, "${rtk} rewrite ${command}")
+}
+
 // rtkWirePi: rtk init -g --agent pi.
 func rtkWirePi() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
@@ -644,6 +793,7 @@ var rtk = &core.ToolManifest{
 		"droid":       rtkWireDroid(),
 		"pi":          rtkWirePi(),
 		"omp":         rtkWireOmp(),
+		"kilo":        kiloRtkWire,
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -705,6 +855,7 @@ var rtk = &core.ToolManifest{
 			_ = os.Remove(ompRtkExtensionPath())
 			return !agents.HasOmpRtkExtension(), nil
 		},
+		"kilo": kiloRtkUnwire,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -728,6 +879,7 @@ var rtk = &core.ToolManifest{
 		"pi": func() *bool {
 			return core.BoolPtr(agents.HasPiRtkExtension())
 		},
-		"omp": func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
+		"omp":  func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
+		"kilo": func() *bool { return core.BoolPtr(kiloRtkVerify()) },
 	},
 }
