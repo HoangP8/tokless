@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,15 +28,63 @@ func kiloToolProject(t *testing.T) string {
 	return root
 }
 
+func kiloExecutableFixture(t *testing.T, dir, name, kind string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if runtime.GOOS != "windows" {
+		body := "echo rtk 1.0\n"
+		if kind == "codegraph" {
+			body = "if [ \"$1\" = \"--version\" ]; then echo codegraph 1.0; fi\n"
+		} else if kind == "rtk-rewrite" {
+			body = "if [ \"$1\" = rewrite ] && [ \"$2\" = \"git status\" ]; then printf 'rtk git status'; exit 3; fi\nexit 3\n"
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	path += ".exe"
+	src := filepath.Join(t.TempDir(), "main.go")
+	program := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	args := os.Args[1:]
+	if ` + strconv.Quote(kind) + ` == "codegraph" {
+		if len(args) == 1 && args[0] == "--version" {
+			fmt.Println("codegraph 1.0")
+		}
+		return
+	}
+	if ` + strconv.Quote(kind) + ` == "rtk-rewrite" {
+		if len(args) == 2 && args[0] == "rewrite" && args[1] == "git status" {
+			fmt.Print("rtk git status")
+		}
+		os.Exit(3)
+	}
+	fmt.Println("rtk 1.0")
+}
+`
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("go", "build", "-o", path, src).CombinedOutput(); err != nil {
+		t.Fatalf("go build fake %s: %v: %s", name, err, out)
+	}
+	return path
+}
+
 func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 	kiloToolProject(t)
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
 	t.Setenv("TOKLESS_TEST", "1")
 	binDir := t.TempDir()
-	codegraphBin := filepath.Join(binDir, "codegraph")
-	if err := os.WriteFile(codegraphBin, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo codegraph 1.0; fi\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	kiloExecutableFixture(t, binDir, "codegraph", "codegraph")
 	t.Setenv("PATH", binDir)
 	globalConfigPath := util.KiloPathsResolved().Config
 	globalConfig := "// user Kilo config\n{\"provider\":\"user\"}\n"
@@ -76,7 +125,8 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 func TestCleanupKiloLegacyInstructionsRemovesToklessOnlyFile(t *testing.T) {
 	root := kiloToolProject(t)
 	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
-	content := util.ToklessAgentBody([]string{"principles", "codegraph"}) + "\n"
+	content := strings.ReplaceAll(util.ToklessAgentBody([]string{"principles", "codegraph"}), "\r", "")
+	content = strings.ReplaceAll(content, "\n", "\r\n") + "\r\n"
 	if err := util.WriteFile(path, content); err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +184,7 @@ func TestKiloContextVerifyRejectsMutatedValidEntry(t *testing.T) {
 	kiloToolProject(t)
 	t.Setenv("TOKLESS_TEST", "1")
 	binDir := t.TempDir()
-	rtk := filepath.Join(binDir, "rtk")
-	if err := os.WriteFile(rtk, []byte("#!/bin/sh\necho rtk 1.0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	kiloExecutableFixture(t, binDir, "rtk", "rtk")
 	t.Setenv("PATH", binDir)
 	if ok, err := contextMode.WireFor["kilo"](core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("Kilo context wire = %v, %v", ok, err)
@@ -193,7 +240,14 @@ func TestKiloCodegraphWireUnwireLeavesGlobalConfigUnchanged(t *testing.T) {
 
 func TestKiloRTKPluginDryRunAndForeignPreservation(t *testing.T) {
 	root := kiloToolProject(t)
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	t.Setenv("HOME", home)
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(root, "global-kilo"))
+	binDir := t.TempDir()
+	kiloExecutableFixture(t, binDir, "rtk", "rtk")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	plugin := filepath.Join(util.KiloPathsResolved().PluginsDir, "rtk.ts")
 	if ok, err := kiloRtkWire(core.RunOpts{DryRun: true}); err != nil || !ok {
 		t.Fatalf("Kilo RTK dry-run = %v, %v", ok, err)
@@ -223,16 +277,13 @@ func TestKiloRTKPluginAPI(t *testing.T) {
 	root := kiloToolProject(t)
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(root, "global-kilo"))
 	binDir := t.TempDir()
-	rtk := filepath.Join(binDir, "rtk")
-	if err := os.WriteFile(rtk, []byte("#!/bin/sh\necho rtk 1.0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	kiloExecutableFixture(t, binDir, "rtk", "rtk")
 	t.Setenv("PATH", binDir)
 	if ok, err := kiloRtkWire(core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("Kilo RTK wire = %v, %v", ok, err)
 	}
 	raw, _ := util.ReadFileSafe(filepath.Join(util.KiloPathsResolved().PluginsDir, "rtk.ts"))
-	absRTK, _ := filepath.Abs(rtk)
+	absRTK, _ := filepath.Abs(util.ResolveRtkBin())
 	for _, want := range []string{"@kilocode/plugin", "Plugin", "const rtk = " + strconv.Quote(absRTK), "const server: Plugin = async ({ $ })", "tool.execute.before", "toLowerCase", "output.args", "${rtk} rewrite ${command}", ".quiet().nothrow()", "String(result.stdout).trim()", "rewritten !== command", `export default { id: "tokless-rtk", server }`, kiloRtkMarker} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("Kilo plugin missing %q: %s", want, raw)
@@ -260,10 +311,7 @@ func TestKiloGlobalRTKPathsOutsideGit(t *testing.T) {
 	if got := util.KiloPathsResolved().PluginsDir; got != filepath.Join(root, "xdg", "kilo", "plugin") {
 		t.Fatalf("Kilo plugin path = %s", got)
 	}
-	bin := filepath.Join(root, "rtk")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho rtk 1.0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	kiloExecutableFixture(t, root, "rtk", "rtk")
 	t.Setenv("PATH", root)
 	if ok, err := kiloRtkWire(core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("global Kilo RTK wire = %v, %v", ok, err)
@@ -290,10 +338,7 @@ func TestKiloRTKLegacyMigrationSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	rtk := filepath.Join(binDir, "rtk")
-	if err := os.WriteFile(rtk, []byte("#!/bin/sh\necho rtk 1.0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	kiloExecutableFixture(t, binDir, "rtk", "rtk")
 	t.Setenv("PATH", binDir)
 	if ok, err := kiloRtkWire(core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("foreign global migration = %v, %v", ok, err)
@@ -316,10 +361,7 @@ func TestKiloRTKPluginRuntime(t *testing.T) {
 	}
 	root := kiloToolProject(t)
 	binDir := t.TempDir()
-	rtk := filepath.Join(binDir, "rtk")
-	if err := os.WriteFile(rtk, []byte("#!/bin/sh\nif [ \"$1\" = rewrite ] && [ \"$2\" = \"git status\" ]; then printf 'rtk git status'; exit 3; fi\nexit 3\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	rtk := kiloExecutableFixture(t, binDir, "rtk", "rtk-rewrite")
 	plugin := filepath.Join(t.TempDir(), "rtk.ts")
 	if err := os.WriteFile(plugin, []byte(kiloRtkPluginSource(rtk)), 0o644); err != nil {
 		t.Fatal(err)
@@ -432,10 +474,7 @@ func TestKiloRTKOldGlobalCleanup(t *testing.T) {
 	}
 
 	binDir := t.TempDir()
-	rtk := filepath.Join(binDir, "rtk")
-	if err := os.WriteFile(rtk, []byte("#!/bin/sh\necho rtk 1.0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	kiloExecutableFixture(t, binDir, "rtk", "rtk")
 	t.Setenv("PATH", binDir)
 	if err := util.WriteFile(oldGlobal, "foreign old global\n"); err != nil {
 		t.Fatal(err)

@@ -286,6 +286,10 @@ func toAny(ss []string) []any {
 	return out
 }
 
+func kiloKnownBinDirs() []string {
+	return []string{filepath.Join(util.Home(), ".kilo", "bin")}
+}
+
 var kilo = &core.AgentManifest{
 	ID:        "kilo",
 	Label:     "Kilo",
@@ -293,6 +297,6 @@ var kilo = &core.AgentManifest{
 	CLIBin:    "kilo",
 	ConfigDir: func() string { return util.KiloPathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("kilo", util.KiloPathsResolved().Dir, nil, nil)
+		return detectAgent("kilo", util.KiloPathsResolved().Dir, kiloKnownBinDirs(), nil)
 	},
 }

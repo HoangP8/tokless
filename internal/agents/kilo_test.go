@@ -22,6 +22,10 @@ func withKiloProject(t *testing.T) string {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
+	root, err = os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
 	return root
 }
@@ -52,6 +56,30 @@ func TestKiloInstructionsPathUsesGlobalAgentsFile(t *testing.T) {
 	want := filepath.Join(home, "kilo", "AGENTS.md")
 	if got := KiloInstructionsPath(); got != want {
 		t.Fatalf("KiloInstructionsPath = %s, want %s", got, want)
+	}
+}
+
+func TestKiloDetectsOfficialInstallerBinaryWithoutPATH(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	t.Setenv("PATH", "")
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "config"))
+
+	bin := filepath.Join(home, ".kilo", "bin", "kilo")
+	if util.IsWin {
+		bin += ".exe"
+	}
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	d := kilo.Detect()
+	if !d.Installed || d.Source != "cli" {
+		t.Fatalf("Kilo official installer binary should detect as cli, got %+v", d)
 	}
 }
 
@@ -109,6 +137,10 @@ func TestKiloLinkedWorktreeGitFileAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	root, err = os.Getwd()
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })

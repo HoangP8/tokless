@@ -428,7 +428,8 @@ func legacyInstructionsAreToklessOnly(raw string) bool {
 			canonical[i] = util.SectionsByOwner[owner]
 		}
 	}
-	return strings.TrimRight(strings.Join(canonical, "\n"), "\n") == strings.TrimRight(util.ToklessAgentBody(unique), "\n")
+	expected := strings.ReplaceAll(util.ToklessAgentBody(unique), "\r", "")
+	return strings.TrimRight(strings.Join(canonical, "\n"), "\n") == strings.TrimRight(expected, "\n")
 }
 
 func hasOwnerInRaw(raw, owner string) bool {
