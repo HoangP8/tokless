@@ -10,8 +10,8 @@ func ponytailWireFor(agent string) core.AgentFn {
 		if opts.DryRun {
 			return true, nil
 		}
-		ok := WriteOwner(agent, "ponytail")
-		return ok, nil
+		WriteOwner(agent, "ponytail")
+		return HasOwner(agent, "ponytail"), nil
 	}
 }
 
@@ -20,11 +20,11 @@ func ponytailWireCopilot() core.AgentFn {
 		if opts.DryRun {
 			return true, nil
 		}
-		ok := WriteOwner("copilot", "ponytail")
-		if ok {
+		WriteOwner("copilot", "ponytail")
+		if HasOwner("copilot", "ponytail") {
 			agents.SyncCopilotIdeInstructions()
 		}
-		return ok, nil
+		return HasOwner("copilot", "ponytail"), nil
 	}
 }
 

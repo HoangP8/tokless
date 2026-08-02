@@ -10,8 +10,8 @@ func cavemanWireFor(agent string) core.AgentFn {
 		if opts.DryRun {
 			return true, nil
 		}
-		ok := WriteOwner(agent, "caveman")
-		return ok, nil
+		WriteOwner(agent, "caveman")
+		return HasOwner(agent, "caveman"), nil
 	}
 }
 
@@ -20,11 +20,11 @@ func cavemanWireCopilot() core.AgentFn {
 		if opts.DryRun {
 			return true, nil
 		}
-		ok := WriteOwner("copilot", "caveman")
-		if ok {
+		WriteOwner("copilot", "caveman")
+		if HasOwner("copilot", "caveman") {
 			agents.SyncCopilotIdeInstructions()
 		}
-		return ok, nil
+		return HasOwner("copilot", "caveman"), nil
 	}
 }
 
