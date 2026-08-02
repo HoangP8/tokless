@@ -389,6 +389,48 @@ func removeOwnerAtPath(path, owner string) {
 	removeOwnerInPath(path, cur, owner)
 }
 
+// CleanupKiloLegacyInstructions removes Tokless-owned sections from legacy
+// project instructions while preserving unrelated user content.
+func CleanupKiloLegacyInstructions(path string) {
+	cur, ok := util.ReadFileSafe(path)
+	if !ok {
+		return
+	}
+	if legacyInstructionsAreToklessOnly(cur) {
+		_ = os.Remove(path)
+	}
+}
+
+// legacyInstructionsAreToklessOnly proves ownership before permitting removal.
+// Unknown headings, preambles, or edits inside managed sections make proof fail.
+func legacyInstructionsAreToklessOnly(raw string) bool {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n")
+	var owners []string
+	for _, line := range lines {
+		if owner := ownerOf(line); owner != "" {
+			owners = append(owners, owner)
+		}
+	}
+	if len(owners) == 0 {
+		return false
+	}
+	unique := make([]string, 0, len(owners))
+	for _, owner := range owners {
+		if !containsOwner(unique, owner) {
+			unique = append(unique, owner)
+		}
+	}
+	sortOwnersByRegistry(unique)
+	canonical := make([]string, len(lines))
+	for i, line := range lines {
+		canonical[i] = line
+		if owner := ownerOf(line); owner != "" {
+			canonical[i] = util.SectionsByOwner[owner]
+		}
+	}
+	return strings.TrimRight(strings.Join(canonical, "\n"), "\n") == strings.TrimRight(util.ToklessAgentBody(unique), "\n")
+}
+
 func hasOwnerInRaw(raw, owner string) bool {
 	cleaned := stripLegacy(raw)
 	_, blocks, _ := fileParts(cleaned)

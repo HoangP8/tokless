@@ -37,13 +37,17 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)
+	globalConfigPath := util.KiloPathsResolved().Config
+	globalConfig := "// user Kilo config\n{\"provider\":\"user\"}\n"
+	if err := util.WriteFile(globalConfigPath, globalConfig); err != nil {
+		t.Fatal(err)
+	}
 	ctx := contextMode.WireFor["kilo"]
 	if ok, err := ctx(core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("context Kilo wire = %v, %v", ok, err)
 	}
-	globalConfig, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !agents.KiloInstructionsReferenceReady() || !strings.Contains(globalConfig, agents.KiloInstructionsPath()) {
-		t.Fatalf("Kilo instructions reference missing: %s", globalConfig)
+	if got, _ := util.ReadFileSafe(util.KiloPathsResolved().Config); got != globalConfig {
+		t.Fatalf("Kilo global config changed: %s", got)
 	}
 	spawn := util.PickMcpSpawn("context-mode")
 	if !agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) || !kiloHasOwner("context-mode") {
@@ -60,6 +64,69 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 	instructions, err := os.ReadFile(agents.KiloInstructionsPath())
 	if err != nil || strings.Contains(string(instructions), "run-mcp") {
 		t.Fatal("MCP command leaked into instructions")
+	}
+	if !strings.Contains(string(instructions), "## Context Tools (context-mode)") || !strings.Contains(string(instructions), "## Code Index (codegraph)") {
+		t.Fatalf("Kilo AGENTS.md missing owners: %s", instructions)
+	}
+	if got, _ := util.ReadFileSafe(globalConfigPath); got != globalConfig {
+		t.Fatalf("Kilo global config changed: %s", got)
+	}
+}
+
+func TestCleanupKiloLegacyInstructionsRemovesToklessOnlyFile(t *testing.T) {
+	root := kiloToolProject(t)
+	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
+	content := util.ToklessAgentBody([]string{"principles", "codegraph"}) + "\n"
+	if err := util.WriteFile(path, content); err != nil {
+		t.Fatal(err)
+	}
+
+	CleanupKiloLegacyInstructions(path)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Tokless-only legacy file remains: %v", err)
+	}
+}
+
+func TestCleanupKiloLegacyInstructionsPreservesUserContent(t *testing.T) {
+	root := kiloToolProject(t)
+	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
+	content := "# User Kilo notes\n\nKeep this note.\n\n" + util.ToklessAgentBody([]string{"principles", "codegraph"}) + "\n"
+	if err := util.WriteFile(path, content); err != nil {
+		t.Fatal(err)
+	}
+
+	CleanupKiloLegacyInstructions(path)
+	raw, ok := util.ReadFileSafe(path)
+	if !ok || raw != content {
+		t.Fatalf("user-owned file changed: %q", raw)
+	}
+}
+
+func TestCleanupKiloLegacyInstructionsPreservesTrailingUserHeading(t *testing.T) {
+	root := kiloToolProject(t)
+	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
+	content := util.ToklessAgentBody([]string{"principles"}) + "\n\n## User heading\nKeep this.\n"
+	if err := util.WriteFile(path, content); err != nil {
+		t.Fatal(err)
+	}
+	CleanupKiloLegacyInstructions(path)
+	raw, ok := util.ReadFileSafe(path)
+	if !ok || raw != content {
+		t.Fatalf("trailing user content changed: %q", raw)
+	}
+}
+
+func TestCleanupKiloLegacyInstructionsPreservesUnknownHeading(t *testing.T) {
+	root := kiloToolProject(t)
+	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
+	content := util.ToklessAgentBody([]string{"principles"}) + "\n\n### User heading\nKeep this.\n"
+	if err := util.WriteFile(path, content); err != nil {
+		t.Fatal(err)
+	}
+	CleanupKiloLegacyInstructions(path)
+	raw, ok := util.ReadFileSafe(path)
+	if !ok || raw != content {
+		t.Fatalf("unknown heading file changed: %q", raw)
 	}
 }
 
@@ -101,22 +168,26 @@ func TestKiloStrictMCPVerificationRejectsMalformedCommands(t *testing.T) {
 	}
 }
 
-func TestKiloCodegraphUnwireRemovesManagedReference(t *testing.T) {
+func TestKiloCodegraphWireUnwireLeavesGlobalConfigUnchanged(t *testing.T) {
 	kiloToolProject(t)
-	_ = util.WriteFile(util.KiloPathsResolved().Config, `{"instructions":["user.md"]}`)
-	_ = util.WriteFile(agents.KiloInstructionsPath(), "## Code Index (codegraph)\nmanaged\n")
-	_ = kiloWriteOwner("codegraph")
-	agents.SyncKiloInstructionsReference()
-	globalConfig, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !strings.Contains(globalConfig, agents.KiloInstructionsPath()) {
-		t.Fatal("managed Kilo reference missing")
+	globalConfigPath := util.KiloPathsResolved().Config
+	globalConfig := "// user Kilo config\n{\"provider\":\"user\"}\n"
+	_ = util.WriteFile(globalConfigPath, globalConfig)
+	if ok, err := codegraph.WireFor["kilo"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("Kilo codegraph wire = %v, %v", ok, err)
+	}
+	if raw, _ := util.ReadFileSafe(agents.KiloInstructionsPath()); !strings.Contains(raw, "## Code Index (codegraph)") {
+		t.Fatalf("Kilo AGENTS.md owner missing: %s", raw)
 	}
 	if ok, err := codegraph.UnwireFor["kilo"](core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("Kilo codegraph unwire = %v, %v", ok, err)
 	}
-	globalConfig, _ = util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if strings.Contains(globalConfig, agents.KiloInstructionsPath()) || !strings.Contains(globalConfig, "user.md") {
-		t.Fatalf("Kilo instruction reference cleanup damaged config: %s", globalConfig)
+	got, _ := util.ReadFileSafe(globalConfigPath)
+	if got != globalConfig {
+		t.Fatalf("Kilo global config changed: %s", got)
+	}
+	if raw, _ := util.ReadFileSafe(agents.KiloInstructionsPath()); strings.Contains(raw, "## Code Index (codegraph)") {
+		t.Fatalf("Kilo AGENTS.md owner remains: %s", raw)
 	}
 }
 

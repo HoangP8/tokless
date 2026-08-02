@@ -44,6 +44,17 @@ func TestKiloConfigResolutionIndependentOfOpenCode(t *testing.T) {
 	}
 }
 
+func TestKiloInstructionsPathUsesGlobalAgentsFile(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(home, "kilo"))
+	want := filepath.Join(home, "kilo", "AGENTS.md")
+	if got := KiloInstructionsPath(); got != want {
+		t.Fatalf("KiloInstructionsPath = %s, want %s", got, want)
+	}
+}
+
 func TestKiloProjectOnlyConfigPreservesMCPAndInstructions(t *testing.T) {
 	root := withKiloProject(t)
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
@@ -85,104 +96,6 @@ func TestKiloProjectOnlyAndRemoval(t *testing.T) {
 	raw, _ := util.ReadFileSafe(KiloProjectConfigPath())
 	if !strings.Contains(raw, "foreign") || !strings.Contains(raw, "user.md") {
 		t.Fatalf("removal damaged user config: %s", raw)
-	}
-}
-
-func TestRemoveKiloMcpDoesNotSyncInstructions(t *testing.T) {
-	withKiloProject(t)
-	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "kilo"))
-	if err := util.WriteFile(KiloProjectConfigPath(), `{"mcp":{"context-mode":{"type":"local","command":["tokless"],"enabled":true}}}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := util.WriteFile(KiloInstructionsPath(), "## Context Mode (context-mode)\nmanaged\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := util.WriteFile(util.KiloPathsResolved().Config, `{"instructions":["user.md"]}`); err != nil {
-		t.Fatal(err)
-	}
-	if !RemoveKiloMcp("context-mode") {
-		t.Fatal("Kilo MCP removal failed")
-	}
-	config, ok := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !ok || strings.Contains(config, KiloInstructionsPath()) {
-		t.Fatalf("direct MCP removal unexpectedly synced instructions: %s", config)
-	}
-}
-
-func TestKiloInstructionsMigrateGlobalAndPreserveProjectRefs(t *testing.T) {
-	root := withKiloProject(t)
-	global := filepath.Join(t.TempDir(), "kilo")
-	t.Setenv("KILO_CONFIG_DIR", global)
-	projectConfig := KiloProjectConfigPath()
-	if err := util.WriteFile(projectConfig, `{"provider":"user","instructions":["user.md",".kilo/tokless-instructions.md"]}`); err != nil {
-		t.Fatal(err)
-	}
-	legacy := KiloProjectFile("tokless-instructions.md")
-	if err := util.WriteFile(legacy, util.ToklessAgentBody([]string{"caveman", "ponytail"})+"\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	SyncKiloInstructionsReference()
-
-	globalInstructions, ok := util.ReadFileSafe(KiloInstructionsPath())
-	if !ok || !strings.Contains(globalInstructions, "## Response Style (caveman)") || !strings.Contains(globalInstructions, "## Build Discipline (ponytail)") {
-		t.Fatalf("global instructions missing migrated sections: %s", globalInstructions)
-	}
-	globalConfig, ok := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !ok || !strings.Contains(globalConfig, KiloInstructionsPath()) {
-		t.Fatalf("global instruction reference missing: %s", globalConfig)
-	}
-	project, ok := util.ReadFileSafe(projectConfig)
-	if !ok || !strings.Contains(project, "user.md") || strings.Contains(project, "tokless-instructions") {
-		t.Fatalf("project instruction refs not migrated safely: %s", project)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("legacy project instructions remain: %v", err)
-	}
-	if !KiloInstructionsReferenceReady() {
-		t.Fatal("global Kilo instruction reference not ready")
-	}
-	_ = root
-}
-
-func TestKiloGlobalInstructionCleanupPreservesUserConfig(t *testing.T) {
-	withKiloProject(t)
-	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "kilo"))
-	if err := util.WriteFile(KiloInstructionsPath(), "## Code Index (codegraph)\nmanaged\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := util.WriteFile(util.KiloPathsResolved().Config, `{"provider":"user"}`); err != nil {
-		t.Fatal(err)
-	}
-	SyncKiloInstructionsReference()
-	if !KiloInstructionsReferenceReady() {
-		t.Fatal("global instruction reference not ready")
-	}
-	if err := os.Remove(KiloInstructionsPath()); err != nil {
-		t.Fatal(err)
-	}
-	SyncKiloInstructionsReference()
-	config, ok := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !ok || !strings.Contains(config, "provider") || strings.Contains(config, KiloInstructionsPath()) {
-		t.Fatalf("global user config damaged: %s", config)
-	}
-}
-
-func TestKiloEmptyLegacyInstructionsDoesNotCreateGlobalFile(t *testing.T) {
-	withKiloProject(t)
-	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "kilo"))
-	legacy := KiloProjectFile("tokless-instructions.md")
-	if err := util.WriteFile(legacy, "user instructions\n"); err != nil {
-		t.Fatal(err)
-	}
-
-	SyncKiloInstructionsReference()
-
-	if _, err := os.Stat(KiloInstructionsPath()); !os.IsNotExist(err) {
-		t.Fatalf("blank global instructions file created: %v", err)
-	}
-	if raw, ok := util.ReadFileSafe(util.KiloPathsResolved().Config); ok && strings.Contains(raw, KiloInstructionsPath()) {
-		t.Fatalf("blank global instruction reference created: %s", raw)
 	}
 }
 

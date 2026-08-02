@@ -6,6 +6,7 @@ import (
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
+	toolsPkg "github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -118,7 +119,8 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	}
 	bar.Done("")
 
-	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == 1 && agentIDs[0] == "kilo" {
+	if !opts.DryRun && len(tools) == len(allTools) && contains(agentIDs, "kilo") {
+		toolsPkg.CleanupKiloLegacyInstructions(agents.KiloProjectFile("tokless-instructions.md"))
 		agents.CleanupKiloProject()
 	}
 	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {

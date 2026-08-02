@@ -34,8 +34,7 @@ func ponytailKiloWire() core.AgentFn {
 			return true, nil
 		}
 		kiloWriteOwner("ponytail")
-		agents.SyncKiloInstructionsReference()
-		return kiloHasOwner("ponytail") && agents.KiloInstructionsReferenceReady(), nil
+		return kiloHasOwner("ponytail"), nil
 	}
 }
 
@@ -44,12 +43,11 @@ func ponytailKiloUnwire(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	kiloRemoveOwner("ponytail")
-	agents.SyncKiloInstructionsReference()
 	return true, nil
 }
 
 func ponytailKiloVerify() *bool {
-	v := kiloHasOwner("ponytail") && agents.KiloInstructionsReferenceReady()
+	v := kiloHasOwner("ponytail")
 	return &v
 }
 

@@ -148,14 +148,12 @@ func ctxWireKilo(opts core.RunOpts) (bool, error) {
 	expected := append([]string{spawn.Command}, spawn.Args...)
 	agents.ConfigureKiloMcp("context-mode", expected)
 	kiloWriteOwner("context-mode")
-	agents.SyncKiloInstructionsReference()
-	return agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode") && agents.KiloInstructionsReferenceReady(), nil
+	return agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode"), nil
 }
 
 func ctxUnwireKilo(core.RunOpts) (bool, error) {
 	agents.RemoveKiloMcp("context-mode")
 	kiloRemoveOwner("context-mode")
-	agents.SyncKiloInstructionsReference()
 	return true, nil
 }
 
@@ -753,7 +751,7 @@ var contextMode = &core.ToolManifest{
 		"kilo": func() *bool {
 			spawn := util.PickMcpSpawn("context-mode")
 			expected := append([]string{spawn.Command}, spawn.Args...)
-			return core.BoolPtr(agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode") && agents.KiloInstructionsReferenceReady())
+			return core.BoolPtr(agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode"))
 		},
 	},
 }

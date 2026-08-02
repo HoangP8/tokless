@@ -161,7 +161,7 @@ func codegraphVerify(agent string) bool {
 		return agents.GrokMcpHas("codegraph") && HasOwner("grok", "codegraph")
 	case "kilo":
 		expected := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-		return agents.KiloMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && kiloHasOwner("codegraph") && agents.KiloInstructionsReferenceReady()
+		return agents.KiloMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && kiloHasOwner("codegraph")
 	}
 	return false
 }
@@ -279,7 +279,6 @@ func codegraphWire(agent string) core.AgentFn {
 			spawn := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 			agents.ConfigureKiloMcp("codegraph", append([]string{spawn.Command}, spawn.Args...))
 			kiloWriteOwner("codegraph")
-			agents.SyncKiloInstructionsReference()
 			return codegraphVerify("kilo"), nil
 		}
 		if isTest() {
@@ -480,7 +479,6 @@ var codegraph = &core.ToolManifest{
 		"kilo": func(core.RunOpts) (bool, error) {
 			agents.RemoveKiloMcp("codegraph")
 			kiloRemoveOwner("codegraph")
-			agents.SyncKiloInstructionsReference()
 			return true, nil
 		},
 	},

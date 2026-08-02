@@ -87,8 +87,7 @@ var principles = &core.ToolManifest{
 				return true, nil
 			}
 			kiloWriteOwner("principles")
-			agents.SyncKiloInstructionsReference()
-			return kiloHasOwner("principles") && agents.KiloInstructionsReferenceReady(), nil
+			return kiloHasOwner("principles"), nil
 		},
 	},
 	UnwireFor: map[string]core.AgentFn{
@@ -99,7 +98,6 @@ var principles = &core.ToolManifest{
 		"copilot":     principlesUnwireFor("copilot"),
 		"kilo": func(core.RunOpts) (bool, error) {
 			kiloRemoveOwner("principles")
-			agents.SyncKiloInstructionsReference()
 			return true, nil
 		},
 	},
@@ -110,7 +108,7 @@ var principles = &core.ToolManifest{
 		"antigravity": func() *bool { v := principlesVerifyFor("antigravity")(); return &v },
 		"copilot":     func() *bool { v := principlesVerifyFor("copilot")(); return &v },
 		"kilo": func() *bool {
-			return core.BoolPtr(kiloHasOwner("principles") && agents.KiloInstructionsReferenceReady())
+			return core.BoolPtr(kiloHasOwner("principles"))
 		},
 	},
 }

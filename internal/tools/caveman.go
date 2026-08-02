@@ -34,8 +34,7 @@ func cavemanKiloWire() core.AgentFn {
 			return true, nil
 		}
 		kiloWriteOwner("caveman")
-		agents.SyncKiloInstructionsReference()
-		return kiloHasOwner("caveman") && agents.KiloInstructionsReferenceReady(), nil
+		return kiloHasOwner("caveman"), nil
 	}
 }
 
@@ -44,12 +43,11 @@ func cavemanKiloUnwire(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	kiloRemoveOwner("caveman")
-	agents.SyncKiloInstructionsReference()
 	return true, nil
 }
 
 func cavemanKiloVerify() *bool {
-	v := kiloHasOwner("caveman") && agents.KiloInstructionsReferenceReady()
+	v := kiloHasOwner("caveman")
 	return &v
 }
 
