@@ -64,17 +64,25 @@ func TestUninstallSelectiveKiloDoesNotCleanupProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
-	agents.ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
-	config := agents.KiloProjectConfigPath()
+	if _, _, err = agents.ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, ".kilo", "kilo.jsonc")
 	if code := RunUninstall(InitOptions{Agents: []string{"kilo"}, Tools: []string{"context-mode"}}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	if _, err := os.Stat(config); err != nil {
-		t.Fatalf("selective uninstall cleaned Kilo config: %v", err)
+	if _, err := os.Stat(config); !os.IsNotExist(err) {
+		t.Fatalf("selective uninstall created project Kilo config: %v", err)
+	}
+	if _, err := os.Stat(util.KiloPathsResolved().Config); err != nil {
+		t.Fatalf("selective uninstall removed global Kilo config: %v", err)
+	}
+	if agents.KiloMcpConfigured("context-mode") {
+		t.Fatal("selective uninstall left global Kilo MCP entry wired")
 	}
 }
 
-func TestUninstallKiloCleansProjectConfigWithOtherDetectedAgent(t *testing.T) {
+func TestUninstallKiloLeavesLegacyProjectArtifactsUntouched(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -106,17 +114,32 @@ func TestUninstallKiloCleansProjectConfigWithOtherDetectedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
-	agents.ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
-	config := agents.KiloProjectConfigPath()
-	marker := filepath.Join(filepath.Dir(config), ".tokless-kilo-config-created")
+	if _, _, err = agents.ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); err != nil {
+		t.Fatal(err)
+	}
+	legacyDir := filepath.Join(root, ".kilo")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyConfig := filepath.Join(legacyDir, "kilo.jsonc")
+	legacyMarker := filepath.Join(legacyDir, ".tokless-kilo-config-created")
+	if err := os.WriteFile(legacyConfig, []byte(`{"provider":"user"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyMarker, []byte("tokless\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	if code := RunUninstall(InitOptions{Agents: []string{"kilo"}}); code != 0 {
+	if code := RunUninstall(InitOptions{}); code != 0 {
 		t.Fatalf("exit=%d", code)
 	}
-	for _, path := range []string{config, marker, filepath.Dir(config)} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("expected Kilo project artifact removed: %s (err=%v)", path, err)
+	for _, path := range []string{legacyConfig, legacyMarker, legacyDir} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("legacy Kilo project artifact was removed: %s (err=%v)", path, err)
 		}
+	}
+	if agents.KiloMcpConfigured("context-mode") {
+		t.Fatal("full uninstall left global Kilo MCP entry wired")
 	}
 }
 

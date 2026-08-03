@@ -141,18 +141,19 @@ func ctxWireKilo(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	if !agents.KiloProjectAvailable() {
-		return false, nil
-	}
 	spawn := util.PickMcpSpawn("context-mode")
 	expected := append([]string{spawn.Command}, spawn.Args...)
-	agents.ConfigureKiloMcp("context-mode", expected)
+	if _, _, err := agents.ConfigureKiloMcpSafe("context-mode", expected); err != nil {
+		return false, err
+	}
 	kiloWriteOwner("context-mode")
 	return agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode"), nil
 }
 
 func ctxUnwireKilo(core.RunOpts) (bool, error) {
-	agents.RemoveKiloMcp("context-mode")
+	if !agents.RemoveKiloMcp("context-mode") {
+		return false, nil
+	}
 	kiloRemoveOwner("context-mode")
 	return true, nil
 }

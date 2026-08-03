@@ -41,6 +41,19 @@ func TestRunCodegraphIndexInitializesBeforeReturn(t *testing.T) {
 	}
 }
 
+func TestRunCodegraphIndexIgnoresHostileCodegraphDir(t *testing.T) {
+	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] || exit 1\n[ -z \"$CODEGRAPH_DIR\" ] || exit 2\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db")
+	t.Setenv("CODEGRAPH_DIR", ".custom-codegraph")
+	project := t.TempDir()
+	ok, err := RunCodegraphIndex(project, core.RunOpts{})
+	if err != nil || !ok {
+		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
+	}
+	if !dirExists(filepath.Join(project, ".codegraph")) || dirExists(filepath.Join(project, ".custom-codegraph")) {
+		t.Fatalf("wrong index directory: log=%q", readCodegraphLog(t, log))
+	}
+}
+
 func TestRunCodegraphIndexSyncsExistingIndex(t *testing.T) {
 	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = sync ] || exit 1")
 	project := t.TempDir()

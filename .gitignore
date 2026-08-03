@@ -12,3 +12,4 @@ skills-lock.json
 .slim/deepwork/
 /tokless
 .refs/
+.claude/

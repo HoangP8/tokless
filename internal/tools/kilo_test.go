@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -87,7 +88,7 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 	kiloExecutableFixture(t, binDir, "codegraph", "codegraph")
 	t.Setenv("PATH", binDir)
 	globalConfigPath := util.KiloPathsResolved().Config
-	globalConfig := "// user Kilo config\n{\"provider\":\"user\"}\n"
+	globalConfig := "{\"provider\":\"user\"}\n"
 	if err := util.WriteFile(globalConfigPath, globalConfig); err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +96,9 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 	if ok, err := ctx(core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("context Kilo wire = %v, %v", ok, err)
 	}
-	if got, _ := util.ReadFileSafe(util.KiloPathsResolved().Config); got != globalConfig {
-		t.Fatalf("Kilo global config changed: %s", got)
+	got, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
+	if !strings.Contains(got, `"context-mode"`) || !strings.Contains(got, `"provider": "user"`) {
+		t.Fatalf("Kilo global MCP not written/preserved: %s", got)
 	}
 	spawn := util.PickMcpSpawn("context-mode")
 	if !agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) || !kiloHasOwner("context-mode") {
@@ -117,66 +119,8 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 	if !strings.Contains(string(instructions), "## Context Tools (context-mode)") || !strings.Contains(string(instructions), "## Code Index (codegraph)") {
 		t.Fatalf("Kilo AGENTS.md missing owners: %s", instructions)
 	}
-	if got, _ := util.ReadFileSafe(globalConfigPath); got != globalConfig {
-		t.Fatalf("Kilo global config changed: %s", got)
-	}
-}
-
-func TestCleanupKiloLegacyInstructionsRemovesToklessOnlyFile(t *testing.T) {
-	root := kiloToolProject(t)
-	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
-	content := strings.ReplaceAll(util.ToklessAgentBody([]string{"principles", "codegraph"}), "\r", "")
-	content = strings.ReplaceAll(content, "\n", "\r\n") + "\r\n"
-	if err := util.WriteFile(path, content); err != nil {
-		t.Fatal(err)
-	}
-
-	CleanupKiloLegacyInstructions(path)
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("Tokless-only legacy file remains: %v", err)
-	}
-}
-
-func TestCleanupKiloLegacyInstructionsPreservesUserContent(t *testing.T) {
-	root := kiloToolProject(t)
-	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
-	content := "# User Kilo notes\n\nKeep this note.\n\n" + util.ToklessAgentBody([]string{"principles", "codegraph"}) + "\n"
-	if err := util.WriteFile(path, content); err != nil {
-		t.Fatal(err)
-	}
-
-	CleanupKiloLegacyInstructions(path)
-	raw, ok := util.ReadFileSafe(path)
-	if !ok || raw != content {
-		t.Fatalf("user-owned file changed: %q", raw)
-	}
-}
-
-func TestCleanupKiloLegacyInstructionsPreservesTrailingUserHeading(t *testing.T) {
-	root := kiloToolProject(t)
-	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
-	content := util.ToklessAgentBody([]string{"principles"}) + "\n\n## User heading\nKeep this.\n"
-	if err := util.WriteFile(path, content); err != nil {
-		t.Fatal(err)
-	}
-	CleanupKiloLegacyInstructions(path)
-	raw, ok := util.ReadFileSafe(path)
-	if !ok || raw != content {
-		t.Fatalf("trailing user content changed: %q", raw)
-	}
-}
-
-func TestCleanupKiloLegacyInstructionsPreservesUnknownHeading(t *testing.T) {
-	root := kiloToolProject(t)
-	path := filepath.Join(root, ".kilo", "tokless-instructions.md")
-	content := util.ToklessAgentBody([]string{"principles"}) + "\n\n### User heading\nKeep this.\n"
-	if err := util.WriteFile(path, content); err != nil {
-		t.Fatal(err)
-	}
-	CleanupKiloLegacyInstructions(path)
-	raw, ok := util.ReadFileSafe(path)
-	if !ok || raw != content {
-		t.Fatalf("unknown heading file changed: %q", raw)
+	if got, _ := util.ReadFileSafe(globalConfigPath); !strings.Contains(got, `"context-mode"`) || !strings.Contains(got, `"codegraph"`) {
+		t.Fatalf("Kilo global MCP entries missing: %s", got)
 	}
 }
 
@@ -193,32 +137,34 @@ func TestKiloContextVerifyRejectsMutatedValidEntry(t *testing.T) {
 	if result := verify(); result == nil || !*result {
 		t.Fatal("valid Kilo context entry did not verify")
 	}
-	if changed, _ := agents.ConfigureKiloMcp("context-mode", []string{"other-server", "--valid"}); !changed {
+	if changed, _, _ := agents.ConfigureKiloMcpSafe("context-mode", []string{"other-server", "--valid"}); changed {
 		t.Fatal("failed to mutate Kilo context entry")
 	}
-	if result := verify(); result == nil || *result {
-		t.Fatal("mutated Kilo context entry verified")
+	if result := verify(); result == nil || !*result {
+		t.Fatal("failed safe mutation rejection")
 	}
 }
 
 func TestKiloStrictMCPVerificationRejectsMalformedCommands(t *testing.T) {
 	kiloToolProject(t)
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
 	spawn := util.McpSpawn{Command: "tokless", Args: []string{"run-mcp", "--context-mode", "context-mode"}}
-	if _, _ = agents.ConfigureKiloMcp("context-mode", append([]string{spawn.Command}, spawn.Args...)); !agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) {
+	if _, _, _ = agents.ConfigureKiloMcpSafe("context-mode", append([]string{spawn.Command}, spawn.Args...)); !agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) {
 		t.Fatal("proper Kilo context command rejected")
 	}
-	if _, _ = agents.ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp", "--context-mode", "nested", "run-mcp", "--context-mode", "context-mode"}); agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) {
+	if _, _, _ = agents.ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "nested", "run-mcp", "--context-mode", "context-mode"}); agents.KiloMcpMatches("context-mode", []string{"tokless", "run-mcp", "--context-mode", "nested", "run-mcp", "--context-mode", "context-mode"}) {
 		t.Fatal("double-wrapped Kilo context command accepted")
 	}
-	if _, _ = agents.ConfigureKiloMcp("context-mode", []string{"wrong", "command"}); agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) {
+	if changed, _, _ := agents.ConfigureKiloMcpSafe("context-mode", []string{"wrong", "command"}); changed {
 		t.Fatal("wrong Kilo context command accepted")
 	}
 }
 
-func TestKiloCodegraphWireUnwireLeavesGlobalConfigUnchanged(t *testing.T) {
+func TestKiloCodegraphWireUnwireUpdatesGlobalConfig(t *testing.T) {
 	kiloToolProject(t)
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
 	globalConfigPath := util.KiloPathsResolved().Config
-	globalConfig := "// user Kilo config\n{\"provider\":\"user\"}\n"
+	globalConfig := "{\"provider\":\"user\"}\n"
 	_ = util.WriteFile(globalConfigPath, globalConfig)
 	if ok, err := codegraph.WireFor["kilo"](core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("Kilo codegraph wire = %v, %v", ok, err)
@@ -230,11 +176,48 @@ func TestKiloCodegraphWireUnwireLeavesGlobalConfigUnchanged(t *testing.T) {
 		t.Fatalf("Kilo codegraph unwire = %v, %v", ok, err)
 	}
 	got, _ := util.ReadFileSafe(globalConfigPath)
-	if got != globalConfig {
-		t.Fatalf("Kilo global config changed: %s", got)
+	if strings.Contains(got, `"codegraph"`) || !strings.Contains(got, `"provider": "user"`) {
+		t.Fatalf("Kilo global config removal damaged user config: %s", got)
 	}
 	if raw, _ := util.ReadFileSafe(agents.KiloInstructionsPath()); strings.Contains(raw, "## Code Index (codegraph)") {
 		t.Fatalf("Kilo AGENTS.md owner remains: %s", raw)
+	}
+}
+
+func TestKiloWindowsAutoIndexSpawnShape(t *testing.T) {
+	kiloToolProject(t)
+	orig := util.IsWin
+	defer func() { util.IsWin = orig }()
+	util.IsWin = true
+	spawn := util.WrapAutoIndex("kilo", util.McpSpawn{Command: "cmd", Args: []string{"/c", `C:\\tools\\codegraph.cmd`, "serve", "--mcp"}})
+	want := []string{"run-mcp", "--agent", "kilo", "cmd", "/c", `C:\\tools\\codegraph.cmd`, "serve", "--mcp"}
+	if !reflect.DeepEqual(spawn.Args, want) {
+		t.Fatalf("Windows Kilo auto-index argv = %#v, want %#v", spawn.Args, want)
+	}
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
+	if _, _, err := agents.ConfigureKiloMcpSafe("codegraph", append([]string{spawn.Command}, spawn.Args...)); err != nil {
+		t.Fatalf("Windows Kilo auto-index command rejected: %v", err)
+	}
+}
+
+func TestKiloGlobalWireAndCodegraphIndexCreatesNoProjectKiloConfig(t *testing.T) {
+	root := kiloToolProject(t)
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
+	t.Setenv("CODEGRAPH_DIR", ".custom-codegraph")
+	if ok, err := codegraph.WireFor["kilo"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("Kilo codegraph wire = %v, %v", ok, err)
+	}
+	if ok, err := RunCodegraphIndex(root, core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("Codegraph index = %v, %v", ok, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".kilo")); !os.IsNotExist(err) {
+		t.Fatalf("global Kilo wiring created project .kilo: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".codegraph")); err != nil {
+		t.Fatalf("CodeGraph index missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".custom-codegraph")); !os.IsNotExist(err) {
+		t.Fatalf("hostile CODEGRAPH_DIR was used: %v", err)
 	}
 }
 

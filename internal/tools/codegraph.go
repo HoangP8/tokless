@@ -201,9 +201,9 @@ func codegraphSync(bin, dir string) (bool, error) {
 	defer cancel()
 	run := func(args ...string) util.ExecResult {
 		command, commandArgs := codegraphRunCommand(bin, args...)
-		return util.Run(command, commandArgs, util.RunOptions{Cwd: dir, Capture: true, Ctx: ctx})
+		return util.Run(command, commandArgs, util.RunOptions{Cwd: dir, Capture: true, Ctx: ctx, Env: []string{"CODEGRAPH_DIR="}})
 	}
-	if HasCodegraphIndex(dir) {
+	if util.Exists(filepath.Join(dir, ".codegraph", "codegraph.db")) {
 		if result := run("sync"); result.Code != 0 {
 			return false, fmt.Errorf("codegraph sync failed%s", codegraphFailure(result.Stderr))
 		}
@@ -273,11 +273,10 @@ func codegraphWire(agent string) core.AgentFn {
 			if opts.DryRun {
 				return true, nil
 			}
-			if !agents.KiloProjectAvailable() {
-				return false, nil
-			}
 			spawn := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-			agents.ConfigureKiloMcp("codegraph", append([]string{spawn.Command}, spawn.Args...))
+			if _, _, err := agents.ConfigureKiloMcpSafe("codegraph", append([]string{spawn.Command}, spawn.Args...)); err != nil {
+				return false, err
+			}
 			kiloWriteOwner("codegraph")
 			return codegraphVerify("kilo"), nil
 		}
@@ -477,7 +476,9 @@ var codegraph = &core.ToolManifest{
 			return true, nil
 		},
 		"kilo": func(core.RunOpts) (bool, error) {
-			agents.RemoveKiloMcp("codegraph")
+			if !agents.RemoveKiloMcp("codegraph") {
+				return false, nil
+			}
 			kiloRemoveOwner("codegraph")
 			return true, nil
 		},

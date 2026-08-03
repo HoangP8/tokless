@@ -30,6 +30,12 @@ func withKiloProject(t *testing.T) string {
 	return root
 }
 
+func withKiloGlobal(t *testing.T) string {
+	t.Helper()
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
+	return util.KiloPathsResolved().Config
+}
+
 func TestKiloConfigResolutionIndependentOfOpenCode(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -83,25 +89,28 @@ func TestKiloDetectsOfficialInstallerBinaryWithoutPATH(t *testing.T) {
 	}
 }
 
-func TestKiloProjectOnlyConfigPreservesMCPAndInstructions(t *testing.T) {
+func TestKiloGlobalConfigPreservesMCPAndInstructions(t *testing.T) {
 	root := withKiloProject(t)
-	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
-	config := filepath.Join(root, ".kilo", "kilo.jsonc")
+	config := withKiloGlobal(t)
+	projectConfig := filepath.Join(root, ".kilo", "kilo.jsonc")
 	if err := util.WriteFile(config, `{"provider":"user","instructions":["user.md"],"mcp":{"foreign":{"type":"local","command":["foreign"],"enabled":true}}}`); err != nil {
 		t.Fatal(err)
 	}
-	changed, file := ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"})
-	if !changed || file != config {
-		t.Fatalf("ConfigureKiloMcp = %v, %q", changed, file)
+	changed, file, err := ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(util.KiloPathsResolved().Dir, "AGENTS.md")); err == nil {
-		t.Fatal("shared Kilo AGENTS.md written")
+	if !changed || file != config {
+		t.Fatalf("ConfigureKiloMcpSafe = %v, %q", changed, file)
+	}
+	if _, err := os.Stat(projectConfig); err == nil {
+		t.Fatal("project Kilo config created")
 	}
 	raw, ok := util.ReadFileSafe(config)
 	if !ok || !strings.Contains(raw, `"foreign"`) || !strings.Contains(raw, `"user.md"`) {
 		t.Fatalf("user config not preserved: %s", raw)
 	}
-	if changed, _ := ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); changed {
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); changed || err != nil {
 		t.Fatal("second Kilo configure was not idempotent")
 	}
 	if !KiloMcpConfigured("context-mode") || !KiloMcpMatches("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}) {
@@ -109,108 +118,299 @@ func TestKiloProjectOnlyConfigPreservesMCPAndInstructions(t *testing.T) {
 	}
 }
 
-func TestKiloProjectOnlyAndRemoval(t *testing.T) {
-	root := withKiloProject(t)
-	if KiloProjectAvailable() == false || KiloProjectConfigPath() != filepath.Join(root, ".kilo", "kilo.jsonc") {
-		t.Fatal("Kilo project path not detected")
-	}
-	if err := util.WriteFile(KiloProjectConfigPath(), `{"instructions":["user.md"],"mcp":{"foreign":{"type":"local","command":["foreign"],"enabled":true}}}`); err != nil {
+func TestKiloGlobalWireAndRemovalPreservesUserConfig(t *testing.T) {
+	config := withKiloGlobal(t)
+	if err := util.WriteFile(config, `{"instructions":["user.md"],"mcp":{"foreign":{"type":"local","command":["foreign"],"enabled":true}}}`); err != nil {
 		t.Fatal(err)
 	}
-	ConfigureKiloMcp("codegraph", []string{"tokless", "run-mcp", "--agent", "kilo", "codegraph", "serve", "--mcp"})
+	if _, _, err := ConfigureKiloMcpSafe("codegraph", []string{"tokless", "run-mcp", "--agent", "kilo", "codegraph", "serve", "--mcp"}); err != nil {
+		t.Fatal(err)
+	}
 	if !RemoveKiloMcp("codegraph") || KiloMcpConfigured("codegraph") {
 		t.Fatal("Kilo MCP removal failed")
 	}
-	raw, _ := util.ReadFileSafe(KiloProjectConfigPath())
+	raw, _ := util.ReadFileSafe(config)
 	if !strings.Contains(raw, "foreign") || !strings.Contains(raw, "user.md") {
 		t.Fatalf("removal damaged user config: %s", raw)
 	}
 }
 
-func TestKiloLinkedWorktreeGitFileAccepted(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: /tmp/worktree\n"), 0o644); err != nil {
+func TestKiloProjectFileLegacyResolutionOnly(t *testing.T) {
+	root := withKiloProject(t)
+	if got := KiloProjectFile(); got != filepath.Join(root, ".kilo") {
+		t.Fatalf("KiloProjectFile() = %s", got)
+	}
+	if got := KiloProjectFile("plugin", "tokless-rtk.ts"); got != filepath.Join(root, ".kilo", "plugin", "tokless-rtk.ts") {
+		t.Fatalf("KiloProjectFile nested = %s", got)
+	}
+	root2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root2, ".git"), []byte("gitdir: /tmp/worktree\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	old, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chdir(root); err != nil {
-		t.Fatal(err)
-	}
-	root, err = os.Getwd()
-	if err != nil {
+	if err := os.Chdir(root2); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
-	if !KiloProjectAvailable() || KiloProjectConfigPath() != filepath.Join(root, ".kilo", "kilo.jsonc") {
-		t.Fatal("Kilo linked worktree was not detected")
+	if got := KiloProjectFile("kilo.jsonc"); got != filepath.Join(root2, ".kilo", "kilo.jsonc") {
+		t.Fatalf("linked worktree KiloProjectFile = %s", got)
 	}
 }
 
-func TestCleanupKiloProjectRemovesToklessOnlyConfig(t *testing.T) {
-	root := withKiloProject(t)
-	ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
-	if !RemoveKiloMcp("context-mode") {
-		t.Fatal("Kilo MCP removal failed")
-	}
-	CleanupKiloProject()
-	if _, err := os.Stat(filepath.Join(root, ".kilo")); !os.IsNotExist(err) {
-		t.Fatalf("Tokless-only .kilo directory remains: %v", err)
-	}
-}
-
-func TestCleanupKiloProjectPreservesForeignConfig(t *testing.T) {
-	root := withKiloProject(t)
-	config := filepath.Join(root, ".kilo", "kilo.jsonc")
-	content := "// user comment\n{\"provider\":\"user\"}\n"
-	if err := util.WriteFile(config, content); err != nil {
+func TestKiloStateFirstRecoveryWritesMissingConfig(t *testing.T) {
+	withKiloProject(t)
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := kiloStateSet("context-mode", command); err != nil {
 		t.Fatal(err)
 	}
-	ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
-	RemoveKiloMcp("context-mode")
-	CleanupKiloProject()
+	if util.Exists(config) {
+		t.Fatal("config should not exist yet")
+	}
+	changed, _, err := ConfigureKiloMcpSafe("context-mode", command)
+	if err != nil || !changed || !KiloMcpMatches("context-mode", command) {
+		t.Fatalf("state-first recovery = %v, %v", changed, err)
+	}
+}
+
+func TestKiloExistingOwnedConfigIsNotRewritten(t *testing.T) {
+	withKiloProject(t)
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := util.WriteFile(config, `{"provider":"user","mcp":{"context-mode":{"type":"local","command":["tokless","run-mcp","--context-mode","context-mode"],"enabled":true},"foreign":{"type":"local","command":["foreign"],"enabled":true}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := kiloStateSet("context-mode", command); err != nil {
+		t.Fatal(err)
+	}
+	changed, _, err := ConfigureKiloMcpSafe("context-mode", command)
+	if err != nil || changed {
+		t.Fatalf("owned config was unexpectedly rewritten: %v, %v", changed, err)
+	}
 	raw, ok := util.ReadFileSafe(config)
-	if !ok || !strings.Contains(raw, "user") {
-		t.Fatalf("foreign Kilo config was removed: %s", raw)
+	if !ok || !strings.Contains(raw, `"provider":"user"`) || !strings.Contains(raw, `"foreign"`) || !strings.Contains(raw, `"enabled":true`) {
+		t.Fatalf("existing global content not preserved: %s", raw)
 	}
 }
 
-func TestCleanupKiloProjectPreservesPreexistingSchemaOnlyConfig(t *testing.T) {
-	root := withKiloProject(t)
-	config := filepath.Join(root, ".kilo", "kilo.jsonc")
-	if err := util.WriteFile(config, `{"$schema":"https://app.kilo.ai/config.json"}`); err != nil {
+func TestKiloWriteConflictPreservesEditAndRetryRewires(t *testing.T) {
+	withKiloProject(t)
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := util.WriteFile(config, `{"provider":"user"}`); err != nil {
 		t.Fatal(err)
 	}
-	ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
-	RemoveKiloMcp("context-mode")
-	CleanupKiloProject()
-	if _, err := os.Stat(config); err != nil {
-		t.Fatalf("pre-existing schema-only config removed: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".kilo", kiloCreatedMarker)); !os.IsNotExist(err) {
-		t.Fatalf("unexpected ownership marker: %v", err)
-	}
-}
-
-func TestCleanupKiloProjectPreservesPackageArtifacts(t *testing.T) {
-	root := withKiloProject(t)
-	ConfigureKiloMcp("context-mode", []string{"tokless", "run-mcp"})
-	if err := util.WriteFile(filepath.Join(root, ".kilo", "package.json"), "{}\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := util.WriteFile(filepath.Join(root, ".kilo", "package-lock.json"), "{}\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(root, ".kilo", "node_modules"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	RemoveKiloMcp("context-mode")
-	CleanupKiloProject()
-	for _, name := range []string{"package.json", "package-lock.json", "node_modules"} {
-		if _, err := os.Stat(filepath.Join(root, ".kilo", name)); err != nil {
-			t.Fatalf("package artifact %s removed: %v", name, err)
+	defer func() { kiloBeforeReplaceHook = nil }()
+	kiloBeforeReplaceHook = func(path string) {
+		if path == config {
+			_ = util.WriteFile(path, `{"provider":"concurrent"}`)
+			kiloBeforeReplaceHook = nil
 		}
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", command); err == nil || changed {
+		t.Fatal("global write conflict not reported")
+	}
+	if raw, _ := util.ReadFileSafe(config); raw != `{"provider":"concurrent"}` {
+		t.Fatalf("concurrent global edit lost: %q", raw)
+	}
+	if _, exists, _ := kiloStateRead(); exists {
+		t.Fatal("ownership state left behind after failed wire")
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", command); err != nil || !changed {
+		t.Fatalf("retry after conflict failed to wire: %v, %v", changed, err)
+	}
+	raw, _ := util.ReadFileSafe(config)
+	if !strings.Contains(raw, "concurrent") || !KiloMcpConfigured("context-mode") {
+		t.Fatalf("retry lost concurrent edit or entry: %s", raw)
+	}
+}
+
+func TestKiloConflictEntryIsNotAdoptedOrRemoved(t *testing.T) {
+	withKiloProject(t)
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := util.WriteFile(config, `{"provider":"user"}`); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { kiloBeforeReplaceHook = nil }()
+	kiloBeforeReplaceHook = func(path string) {
+		if path == config {
+			_ = util.WriteFile(path, `{"mcp":{"context-mode":{"type":"local","command":["tokless","run-mcp","--context-mode","context-mode"],"enabled":true}}}`)
+			kiloBeforeReplaceHook = nil
+		}
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", command); err == nil || changed {
+		t.Fatal("config conflict not reported")
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", command); err == nil || changed {
+		t.Fatal("retry adopted user MCP entry")
+	}
+	if RemoveKiloMcp("context-mode") {
+		t.Fatal("unwire removed user MCP entry")
+	}
+	raw, _ := util.ReadFileSafe(config)
+	if !strings.Contains(raw, `"context-mode"`) {
+		t.Fatal("user MCP entry was deleted")
+	}
+}
+
+func TestKiloUnwireWriteConflictPreservesEdit(t *testing.T) {
+	withKiloProject(t)
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := util.WriteFile(config, `{"provider":"user","mcp":{"context-mode":{"type":"local","command":["tokless","run-mcp","--context-mode","context-mode"],"enabled":true}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := kiloStateSet("context-mode", command); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { kiloBeforeReplaceHook = nil }()
+	kiloBeforeReplaceHook = func(path string) {
+		if path == config {
+			_ = util.WriteFile(path, `{"provider":"concurrent"}`)
+			kiloBeforeReplaceHook = nil
+		}
+	}
+	if RemoveKiloMcp("context-mode") {
+		t.Fatal("unwire conflict reported success")
+	}
+	if raw, _ := util.ReadFileSafe(config); raw != `{"provider":"concurrent"}` {
+		t.Fatalf("concurrent unwire edit lost: %q", raw)
+	}
+	state, exists, _ := kiloStateRead()
+	if !exists {
+		t.Fatal("ownership state removed after config conflict")
+	}
+	if _, ok := state["context-mode"]; !ok {
+		t.Fatal("ownership state record removed after config conflict")
+	}
+	if !RemoveKiloMcp("context-mode") {
+		t.Fatal("clean unwire retry failed")
+	}
+}
+
+func TestKiloExistingEntryWithoutStateIsNotAdopted(t *testing.T) {
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := util.WriteFile(config, `{"mcp":{"context-mode":{"type":"local","command":["tokless","run-mcp","--context-mode","context-mode"],"enabled":true}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", command); err == nil || changed {
+		t.Fatal("existing MCP entry adopted without ownership state")
+	}
+}
+
+func TestKiloStateWithDifferentCommandRefuses(t *testing.T) {
+	config := withKiloGlobal(t)
+	if err := util.WriteFile(config, `{"provider":"user"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := kiloStateSet("context-mode", []string{"tokless", "run-mcp", "--context-mode", "other"}); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); err == nil || changed {
+		t.Fatal("ownership state with different command was accepted")
+	}
+}
+
+func TestKiloRefusesJSONCCommentConfig(t *testing.T) {
+	config := withKiloGlobal(t)
+	if err := util.WriteFile(config, "// user comment\n{\"provider\":\"user\"}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); err == nil || changed {
+		t.Fatal("JSONC-comment config was rewritten")
+	}
+	if RemoveKiloMcp("context-mode") {
+		t.Fatal("JSONC-comment config was modified on unwire")
+	}
+	raw, _ := util.ReadFileSafe(config)
+	if raw != "// user comment\n{\"provider\":\"user\"}\n" {
+		t.Fatalf("JSONC config changed: %q", raw)
+	}
+}
+
+func TestKiloRefusesUnparseableConfig(t *testing.T) {
+	config := withKiloGlobal(t)
+	if err := util.WriteFile(config, "{malformed"); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", []string{"tokless", "run-mcp", "--context-mode", "context-mode"}); err == nil || changed {
+		t.Fatal("malformed config was overwritten")
+	}
+}
+
+func TestKiloMcpExtrasAreUserModifiedAndPreserved(t *testing.T) {
+	withKiloProject(t)
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if _, _, err := ConfigureKiloMcpSafe("context-mode", command); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(config, `{"mcp":{"context-mode":{"type":"local","command":["tokless","run-mcp","--context-mode","context-mode"],"enabled":true,"timeout":30,"env":{"USER":"keep"}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := ConfigureKiloMcpSafe("context-mode", command); err == nil || changed {
+		t.Fatal("wire adopted user-modified MCP entry")
+	}
+	if RemoveKiloMcp("context-mode") {
+		t.Fatal("unwire removed user-modified MCP entry")
+	}
+	raw, _ := util.ReadFileSafe(config)
+	if !strings.Contains(raw, `"timeout":30`) || !strings.Contains(raw, `"USER":"keep"`) {
+		t.Fatalf("user MCP fields were not preserved: %s", raw)
+	}
+}
+
+func TestKiloStrictWindowsSpawnCommands(t *testing.T) {
+	for toolID, command := range map[string][]string{
+		"context-mode": {`C:\\Users\\me\\tokless.exe`, "run-mcp", "--context-mode", "cmd", "/c", `C:\\tools\\context-mode.cmd`},
+		"codegraph":    {`C:\\Users\\me\\tokless.exe`, "run-mcp", "--agent", "kilo", "cmd", "/c", `C:\\tools\\codegraph.bat`, "serve", "--mcp"},
+	} {
+		if !kiloExpectedCommand(toolID, command) {
+			t.Fatalf("valid Windows %s command rejected: %#v", toolID, command)
+		}
+	}
+	if kiloExpectedCommand("context-mode", []string{"tokless", "run-mcp", "--context-mode", "cmd", "/c", `C:\\tools\\codegraph.cmd`}) {
+		t.Fatal("context accepted codegraph shim")
+	}
+}
+
+func TestKiloUnwireRemovesStaleStateOnly(t *testing.T) {
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := kiloStateSet("context-mode", command); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveKiloMcp("context-mode") {
+		t.Fatal("valid stale Kilo owner state not removed")
+	}
+	if _, ok := util.ReadFileSafe(kiloStatePath()); ok {
+		t.Fatal("stale Kilo owner state remains")
+	}
+	if util.Exists(config) {
+		t.Fatal("config was created during stale-state cleanup")
+	}
+}
+
+func TestKiloUnwireRemovesStateWhenConfigHasNoMCP(t *testing.T) {
+	config := withKiloGlobal(t)
+	command := []string{"tokless", "run-mcp", "--context-mode", "context-mode"}
+	if err := util.WriteFile(config, `{"provider":"user"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := kiloStateSet("context-mode", command); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := util.ReadFileSafe(config)
+	if !RemoveKiloMcp("context-mode") {
+		t.Fatal("stale state was not removed")
+	}
+	after, _ := util.ReadFileSafe(config)
+	if before != after {
+		t.Fatalf("config changed during stale-state recovery: %q != %q", before, after)
 	}
 }
