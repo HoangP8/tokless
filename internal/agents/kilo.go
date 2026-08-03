@@ -234,6 +234,9 @@ func kiloContextServer(command []string) bool {
 	if len(command) == 3 && kiloCommandBase(command[0]) == "npx" && command[1] == "--no-install" && command[2] == "context-mode" {
 		return true
 	}
+	if len(command) == 5 && kiloCmdShimServer(command[:3], "npx") && command[3] == "--no-install" && command[4] == "context-mode" {
+		return true
+	}
 	return len(command) == 3 && kiloCmdShimServer(command, "context-mode")
 }
 
@@ -242,6 +245,9 @@ func kiloCodegraphServer(command []string) bool {
 		return kiloCommandBase(command[0]) == "codegraph"
 	}
 	if len(command) == 5 && kiloCommandBase(command[0]) == "npx" && command[1] == "--no-install" && command[2] == "@colbymchenry/codegraph" && command[3] == "serve" && command[4] == "--mcp" {
+		return true
+	}
+	if len(command) == 7 && kiloCmdShimServer(command[:3], "npx") && command[3] == "--no-install" && command[4] == "@colbymchenry/codegraph" && command[5] == "serve" && command[6] == "--mcp" {
 		return true
 	}
 	return len(command) == 5 && kiloCmdShimServer(command[:3], "codegraph") && command[3] == "serve" && command[4] == "--mcp"

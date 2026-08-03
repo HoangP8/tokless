@@ -155,8 +155,32 @@ func TestKiloProjectFileLegacyResolutionOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
-	if got := KiloProjectFile("kilo.jsonc"); got != filepath.Join(root2, ".kilo", "kilo.jsonc") {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := KiloProjectFile("kilo.jsonc"); got != filepath.Join(wd, ".kilo", "kilo.jsonc") {
 		t.Fatalf("linked worktree KiloProjectFile = %s", got)
+	}
+}
+
+func TestKiloExpectedCommandAcceptsCmdShimNpxShapes(t *testing.T) {
+	cmds := [][]string{
+		{"tokless", "run-mcp", "--agent", "kilo", "cmd", "/c", `C:\Users\ci\AppData\Roaming\npm\npx.cmd`, "--no-install", "@colbymchenry/codegraph", "serve", "--mcp"},
+		{"tokless", "run-mcp", "--context-mode", "cmd", "/c", `C:\Users\ci\AppData\Roaming\npm\npx.cmd`, "--no-install", "context-mode"},
+	}
+	for i, c := range cmds {
+		id := "codegraph"
+		if c[2] == "--context-mode" {
+			id = "context-mode"
+		}
+		if !kiloExpectedCommand(id, c) {
+			t.Fatalf("case %d: cmd-shim npx shape rejected: %v", i, c)
+		}
+	}
+	bad := []string{"tokless", "run-mcp", "--agent", "kilo", "cmd", "/c", `C:\npx.cmd`, "--no-install", "@evil/codegraph", "serve", "--mcp"}
+	if kiloExpectedCommand("codegraph", bad) {
+		t.Fatal("cmd-shim npx shape with wrong package accepted")
 	}
 }
 

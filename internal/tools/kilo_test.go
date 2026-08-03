@@ -202,6 +202,7 @@ func TestKiloWindowsAutoIndexSpawnShape(t *testing.T) {
 
 func TestKiloGlobalWireAndCodegraphIndexCreatesNoProjectKiloConfig(t *testing.T) {
 	root := kiloToolProject(t)
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
 	t.Setenv("CODEGRAPH_DIR", ".custom-codegraph")
 	if ok, err := codegraph.WireFor["kilo"](core.RunOpts{}); err != nil || !ok {
