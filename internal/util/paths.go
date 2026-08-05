@@ -67,6 +67,24 @@ func isGoTestExecutable(exe string) bool {
 	return strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe") || strings.Contains(exe, string(filepath.Separator)+"go-build")
 }
 
+// ToklessAbsStrict returns the absolute tokless path, or "" when only a
+// PATH/bare-name fallback is available.
+func ToklessAbsStrict() string {
+	exe, err := os.Executable()
+	if err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
+			exe = resolved
+		}
+		if !strings.ContainsAny(exe, " \t") && !isGoTestExecutable(exe) {
+			return exe
+		}
+	}
+	if w := Which("tokless"); w != "" && filepath.IsAbs(w) {
+		return w
+	}
+	return ""
+}
+
 func whichToklessOrBare() string {
 	if w := Which("tokless"); w != "" {
 		return w
@@ -177,6 +195,47 @@ func KiloPathsResolved() KiloPaths {
 		dir = abs
 	}
 	return KiloPaths{Dir: dir, Config: filepath.Join(dir, "kilo.jsonc"), PluginsDir: filepath.Join(dir, "plugin")}
+}
+
+// ClinePaths holds Cline config locations.
+type ClinePaths struct {
+	Dir, DataDir, McpConfig, HooksDir, RulesDir, Instructions string
+}
+
+func ClinePathsResolved() ClinePaths {
+	dir := os.Getenv("CLINE_DIR")
+	if strings.HasPrefix(dir, "~/") {
+		dir = filepath.Join(Home(), strings.TrimPrefix(dir, "~/"))
+	}
+	if dir == "" {
+		dir = filepath.Join(Home(), ".cline")
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	dataDir := os.Getenv("CLINE_DATA_DIR")
+	if strings.HasPrefix(dataDir, "~/") {
+		dataDir = filepath.Join(Home(), strings.TrimPrefix(dataDir, "~/"))
+	}
+	if dataDir == "" {
+		dataDir = filepath.Join(dir, "data")
+	}
+	mcpConfig := os.Getenv("CLINE_MCP_SETTINGS_PATH")
+	if strings.HasPrefix(mcpConfig, "~/") {
+		mcpConfig = filepath.Join(Home(), strings.TrimPrefix(mcpConfig, "~/"))
+	}
+	if mcpConfig == "" {
+		mcpConfig = filepath.Join(dataDir, "settings", "cline_mcp_settings.json")
+	}
+	rulesDir := filepath.Join(dir, "rules")
+	return ClinePaths{
+		Dir:          dir,
+		DataDir:      dataDir,
+		McpConfig:    mcpConfig,
+		HooksDir:     filepath.Join(dir, "hooks"),
+		RulesDir:     rulesDir,
+		Instructions: filepath.Join(rulesDir, "AGENTS.md"),
+	}
 }
 
 // CodexPaths holds Codex config locations.

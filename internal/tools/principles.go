@@ -89,6 +89,7 @@ var principles = &core.ToolManifest{
 			kiloWriteOwner("principles")
 			return kiloHasOwner("principles"), nil
 		},
+		"cline": principlesWireFor("cline"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      principlesUnwireFor("claude"),
@@ -100,6 +101,7 @@ var principles = &core.ToolManifest{
 			kiloRemoveOwner("principles")
 			return true, nil
 		},
+		"cline": principlesUnwireFor("cline"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { v := principlesVerifyFor("claude")(); return &v },
@@ -110,5 +112,6 @@ var principles = &core.ToolManifest{
 		"kilo": func() *bool {
 			return core.BoolPtr(kiloHasOwner("principles"))
 		},
+		"cline": func() *bool { v := principlesVerifyFor("cline")(); return &v },
 	},
 }

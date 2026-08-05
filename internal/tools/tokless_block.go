@@ -31,6 +31,8 @@ func instructionPath(agent string) string {
 		return filepath.Join(agents.OmpAgentDirResolved(), "AGENTS.md")
 	case "grok":
 		return agents.GrokInstructionsFile()
+	case "cline":
+		return agents.ClineInstructionsPath()
 	}
 	return ""
 }

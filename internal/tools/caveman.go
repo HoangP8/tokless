@@ -90,6 +90,7 @@ var caveman = &core.ToolManifest{
 		"pi":          cavemanWireFor("pi"),
 		"omp":         cavemanWireFor("omp"),
 		"kilo":        cavemanKiloWire(),
+		"cline":       cavemanWireFor("cline"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      cavemanUnwireFor("claude"),
@@ -102,6 +103,7 @@ var caveman = &core.ToolManifest{
 		"pi":          cavemanUnwireFor("pi"),
 		"omp":         cavemanUnwireFor("omp"),
 		"kilo":        cavemanKiloUnwire,
+		"cline":       cavemanUnwireFor("cline"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      cavemanVerifyFor("claude"),
@@ -114,6 +116,7 @@ var caveman = &core.ToolManifest{
 		"pi":          cavemanVerifyFor("pi"),
 		"omp":         cavemanVerifyFor("omp"),
 		"kilo":        cavemanKiloVerify,
+		"cline":       cavemanVerifyFor("cline"),
 	},
 	Install: func(opts core.RunOpts) (bool, error) {
 		return true, nil

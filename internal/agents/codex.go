@@ -806,4 +806,5 @@ func Register() {
 	core.RegisterAgent(copilot)
 	core.RegisterAgent(grok)
 	core.RegisterAgent(kilo)
+	core.RegisterAgent(cline)
 }
