@@ -198,11 +198,34 @@ func runClineHookScript(t *testing.T, hookPath, payload string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// fakeRtk writes a hermetic rtk shim so hook rewriting is deterministic
+// without depending on a real installed rtk binary (CI runners have none).
+// It must satisfy BinaryHealthy (--version → exit 0, output with a dot) and
+// implement `rtk rewrite` for the exact commands these tests send.
+func fakeRtk(t *testing.T, dir string) {
+	t.Helper()
+	body := `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'rtk 1.0\n'; exit 0; fi
+if [ "$1" = "rewrite" ]; then
+  shift
+  case "$*" in
+    "git status") printf 'rtk git status'; exit 0;;
+    "git diff") printf 'rtk git diff'; exit 0;;
+  esac
+fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(dir, "rtk"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClineRtkHookEndToEnd(t *testing.T) {
 	if util.IsWin {
 		t.Skip("sh simulation only; ps1 covered by content test")
 	}
 	bin := buildClineSimBinary(t)
+	fakeRtk(t, filepath.Dir(bin))
 	// The hook script embeds this binary's quoted path; ensure tokless on PATH
 	// is the one we built so the simulation exercises current code.
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
