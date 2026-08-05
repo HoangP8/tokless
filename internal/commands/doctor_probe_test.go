@@ -230,6 +230,66 @@ func TestMcpFromCommandArgsFile(t *testing.T) {
 	}
 }
 
+func TestManagedMcpSpawnsCline(t *testing.T) {
+	t.Setenv("CLINE_DIR", t.TempDir())
+	p := util.ClinePathsResolved()
+	if err := os.MkdirAll(filepath.Dir(p.McpConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{
+  "mcpServers": {
+    "foreign": {"command": "/no/such/foreign-mcp", "args": []},
+    "codegraph": {"command": "/opt/tokless", "args": ["run-mcp", "--agent", "cline", "/opt/codegraph", "serve", "--mcp"]},
+    "context-mode": {"command": "/opt/tokless", "args": ["run-mcp", "--context-mode", "/opt/context-mode"]}
+  }
+}`
+	if err := os.WriteFile(p.McpConfig, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spawns := managedMcpSpawns("cline")
+	if len(spawns) != 2 {
+		t.Fatalf("spawns = %+v", spawns)
+	}
+	if spawns[0].Args[2] != "cline" || spawns[1].Args[1] != "--context-mode" {
+		t.Fatalf("spawns = %+v", spawns)
+	}
+}
+
+func TestManagedMcpSpawnsClineIgnoresForeignCommands(t *testing.T) {
+	t.Setenv("CLINE_DIR", t.TempDir())
+	p := util.ClinePathsResolved()
+	if err := os.MkdirAll(filepath.Dir(p.McpConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"mcpServers":{"codegraph":{"command":"/no/such/foreign-mcp","args":["serve","--mcp"]},"context-mode":{"command":"/no/such/foreign-context","args":[]}}}`
+	if err := os.WriteFile(p.McpConfig, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if spawns := managedMcpSpawns("cline"); len(spawns) != 0 {
+		t.Fatalf("foreign spawns = %+v", spawns)
+	}
+}
+
+func TestIsClineMcpTargetVariants(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		target string
+	}{
+		{"direct path", []string{"/opt/context-mode"}, "context-mode"},
+		{"npx context", []string{"npx", "--no-install", "context-mode"}, "context-mode"},
+		{"npx codegraph", []string{"npx", "--no-install", "@colbymchenry/codegraph"}, "codegraph"},
+		{"cmd wrapper", []string{"cmd", "/c", `C:\\bin\\codegraph.cmd`}, "codegraph"},
+	} {
+		if !isClineMcpTarget(tc.args, tc.target) {
+			t.Errorf("%s: target %q rejected for %#v", tc.name, tc.target, tc.args)
+		}
+	}
+	if isClineMcpTarget([]string{"/opt/foreign-mcp"}, "codegraph") {
+		t.Fatal("foreign target accepted")
+	}
+}
+
 func TestMcpFromCommandArrayFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "opencode.json")

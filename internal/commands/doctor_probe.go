@@ -392,8 +392,54 @@ func managedMcpSpawns(agentID string) []util.McpSpawn {
 		out = append(out, mcpFromCommandArgsFile(filepath.Join(agents.PiAgentDirResolved(), "mcp.json"), "mcpServers", "codegraph")...)
 	case "omp":
 		out = append(out, mcpFromCommandArgsFile(filepath.Join(agents.OmpAgentDirResolved(), "mcp.json"), "mcpServers", "codegraph")...)
+	case "cline":
+		p := util.ClinePathsResolved()
+		for _, toolID := range []string{"codegraph", "context-mode"} {
+			for _, spawn := range mcpFromCommandArgsFile(p.McpConfig, "mcpServers", toolID) {
+				if isManagedClineMcpSpawn(toolID, spawn) {
+					out = append(out, spawn)
+				}
+			}
+		}
 	}
 	return out
+}
+
+// Only probe the exact Tokless routing we own; foreign Cline servers must not run.
+func isManagedClineMcpSpawn(toolID string, spawn util.McpSpawn) bool {
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(spawn.Command, "\\", "/")))
+	if base != "tokless" && base != "tokless.exe" || len(spawn.Args) < 3 || spawn.Args[0] != "run-mcp" {
+		return false
+	}
+	switch toolID {
+	case "context-mode":
+		return len(spawn.Args) >= 3 && spawn.Args[1] == "--context-mode" && isClineMcpTarget(spawn.Args[2:], "context-mode")
+	case "codegraph":
+		return len(spawn.Args) >= 4 && spawn.Args[1] == "--agent" && spawn.Args[2] == "cline" && isClineMcpTarget(spawn.Args[3:], "codegraph")
+	default:
+		return false
+	}
+}
+
+func isClineMcpTarget(args []string, target string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(args[0], "\\", "/")))
+	for _, ext := range []string{".exe", ".cmd", ".bat"} {
+		base = strings.TrimSuffix(base, ext)
+	}
+	if base == target {
+		return true
+	}
+	if base == "npx" && len(args) >= 3 && args[1] == "--no-install" {
+		return target == "context-mode" && args[2] == "context-mode" ||
+			target == "codegraph" && args[2] == "@colbymchenry/codegraph"
+	}
+	if base == "cmd" && len(args) >= 3 && strings.EqualFold(args[1], "/c") {
+		return isClineMcpTarget(args[2:], target)
+	}
+	return false
 }
 
 func mcpFromCommandArgsFile(path, serversKey, toolID string) []util.McpSpawn {
