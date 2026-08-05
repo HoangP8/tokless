@@ -444,7 +444,7 @@ func RunRtkHookDroid() int {
 	return 0
 }
 
-// RunRtkHookCopilot rewrites bash/shell via `rtk rewrite` only. 
+// RunRtkHookCopilot rewrites bash/shell via `rtk rewrite` only.
 var copilotRtkTracePath = filepath.Join(util.CopilotPathsResolved().Dir, "tokless-rtk.log")
 
 func copilotRtkTrace(cmdLine string) {
@@ -565,6 +565,122 @@ func RunRtkHookCopilot() int {
 	return 0
 }
 
+// RunRtkHookCline rewrites shell-execution tool commands for Cline's CLI
+// PreToolUse hook using Cline's overrideInput response.
+func RunRtkHookCline() int {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(input) == 0 {
+		return 0
+	}
+
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(input, &req); err != nil {
+		fmt.Println("{}")
+		return 0
+	}
+	toolName, toolInput, ok := clineToolInput(req)
+	if !ok || !clineShellTool(toolName) {
+		fmt.Println("{}")
+		return 0
+	}
+	if commands, changed := clineRewriteCommands(toolInput); changed {
+		updated := cloneMap(toolInput)
+		updated["commands"] = commands
+		if out, err := json.Marshal(map[string]any{"overrideInput": updated}); err == nil {
+			fmt.Println(string(out))
+		}
+		return 0
+	}
+	cmdLine, _ := toolInput["command"].(string)
+	if cmdLine == "" {
+		fmt.Println("{}")
+		return 0
+	}
+
+	newCmd, changed, approve := copilotRtkDecide(cmdLine)
+	if !approve || !changed || newCmd == "" || newCmd == cmdLine {
+		fmt.Println("{}")
+		return 0
+	}
+	updated := cloneMap(toolInput)
+	updated["command"] = newCmd
+	if out, err := json.Marshal(map[string]any{"overrideInput": updated}); err == nil {
+		fmt.Println(string(out))
+	}
+	return 0
+}
+
+func clineRewriteCommands(toolInput map[string]any) ([]any, bool) {
+	commands, ok := toolInput["commands"].([]any)
+	if !ok {
+		return nil, false
+	}
+	updated := make([]any, len(commands))
+	changed := false
+	for i, item := range commands {
+		updated[i] = item
+		if cmdLine, ok := item.(string); ok {
+			newCmd, didChange, approve := copilotRtkDecide(cmdLine)
+			if approve && didChange && newCmd != "" && newCmd != cmdLine {
+				updated[i] = newCmd
+				changed = true
+			}
+			continue
+		}
+		commandItem, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		cmdLine, _ := commandItem["command"].(string)
+		if cmdLine == "" {
+			continue
+		}
+		newCmd, didChange, approve := copilotRtkDecide(cmdLine)
+		if !approve || !didChange || newCmd == "" || newCmd == cmdLine {
+			continue
+		}
+		updatedItem := cloneMap(commandItem)
+		updatedItem["command"] = newCmd
+		updated[i] = updatedItem
+		changed = true
+	}
+	if !changed {
+		return nil, false
+	}
+	return updated, true
+}
+
+func clineToolInput(req map[string]json.RawMessage) (string, map[string]any, bool) {
+	if v, ok := req["tool_call"]; ok {
+		var tc struct {
+			Name  string         `json:"name"`
+			Input map[string]any `json:"input"`
+		}
+		if json.Unmarshal(v, &tc) == nil && tc.Name != "" {
+			return tc.Name, tc.Input, true
+		}
+	}
+	if v, ok := req["preToolUse"]; ok {
+		var pt struct {
+			ToolName   string         `json:"toolName"`
+			Parameters map[string]any `json:"parameters"`
+		}
+		if json.Unmarshal(v, &pt) == nil && pt.ToolName != "" {
+			return pt.ToolName, pt.Parameters, true
+		}
+	}
+	return "", nil, false
+}
+
+func clineShellTool(name string) bool {
+	switch name {
+	case "execute_command", "run_commands", "run_command", "bash", "shell":
+		return true
+	default:
+		return false
+	}
+}
+
 // copilotRtkPost traces the rtk-wrapped command to stderr for verification.
 func copilotRtkPost(req map[string]json.RawMessage, snake bool) int {
 	var toolName string
@@ -641,7 +757,7 @@ func cloneMap(in map[string]any) map[string]any {
 	return out
 }
 
-// copilotRtkDecide: only rewrite what `rtk rewrite` supports. 
+// copilotRtkDecide: only rewrite what `rtk rewrite` supports.
 func copilotRtkDecide(cmdLine string) (newCmd string, changed bool, approve bool) {
 	newCmd, changed = copilotRtkRewrite(cmdLine)
 	if changed {

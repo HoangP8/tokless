@@ -400,6 +400,121 @@ func kiloRtkVerify() bool {
 		strings.Contains(raw, "${rtk} rewrite ${command}")
 }
 
+const clineRtkMarker = "tokless-cline-rtk-v1"
+
+func clineRtkHookPath() string {
+	name := "PreToolUse"
+	if util.IsWin {
+		name = "PreToolUse.ps1"
+	}
+	return filepath.Join(util.ClinePathsResolved().HooksDir, name)
+}
+
+// clineRtkHookScript: quoted tokless abs path so the hook works with spaces in path — no fallback.
+func clineRtkHookScript(exe string) string {
+	if util.IsWin {
+		return "# " + clineRtkMarker + "\n" +
+			"[Console]::InputEncoding = [System.Text.Encoding]::UTF8\n" +
+			"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
+			"$OutputEncoding = [System.Text.Encoding]::UTF8\n" +
+			"[Console]::In.ReadToEnd() | & " + psQuote(exe) + " rtk-hook cline\n"
+	}
+	return "#!/bin/sh\n# " + clineRtkMarker + "\nexec " + shQuote(exe) + " rtk-hook cline\n"
+}
+
+// shQuote single-quotes s for POSIX sh, safe for embedded single quotes.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// psQuote single-quotes s for PowerShell, safe for embedded single quotes.
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func clineRtkWire(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	exe := util.ToklessAbsStrict()
+	if exe == "" {
+		util.L.Err("cannot resolve absolute tokless path for Cline hook; refusing to install a PATH-dependent hook")
+		return false, nil
+	}
+	hookPath := clineRtkHookPath()
+	if raw, ok := util.ReadFileSafe(hookPath); ok && !strings.Contains(raw, clineRtkMarker) {
+		util.L.Err("Cline PreToolUse hook already exists; refusing to overwrite: " + hookPath)
+		return false, nil
+	}
+	content := clineRtkHookScript(exe)
+	if err := util.EnsureDir(util.ClinePathsResolved().HooksDir); err != nil {
+		return false, nil
+	}
+	tmp, err := os.CreateTemp(util.ClinePathsResolved().HooksDir, ".tokless-cline-rtk-*")
+	if err != nil {
+		return false, nil
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		return false, nil
+	}
+	if err := tmp.Chmod(0o755); err != nil || tmp.Close() != nil {
+		return false, nil
+	}
+
+	if err := os.Rename(tmpPath, hookPath); err != nil {
+		if util.IsWin {
+			_ = os.Remove(hookPath)
+			err = os.Rename(tmpPath, hookPath)
+		}
+		if err != nil {
+			return false, nil
+		}
+	}
+	if !clineRtkVerify() {
+		_ = os.Remove(hookPath)
+		return false, nil
+	}
+	return true, nil
+}
+
+func clineRtkUnwire(core.RunOpts) (bool, error) {
+	path := clineRtkHookPath()
+	raw, ok := util.ReadFileSafe(path)
+	if !ok || !strings.Contains(raw, clineRtkMarker) {
+		return true, nil
+	}
+	if err := os.Remove(path); err != nil {
+		return false, nil
+	}
+	restoreClineRtkBackup(path)
+	return true, nil
+}
+
+// restoreClineRtkBackup renames the first foreign-backup back into place.
+func restoreClineRtkBackup(path string) {
+	base := path + ".foreign-backup"
+	for i := 0; ; i++ {
+		candidate := base
+		if i > 0 {
+			candidate = fmt.Sprintf("%s.%d", base, i)
+		}
+		if _, err := os.Stat(candidate); err == nil {
+			_ = os.Rename(candidate, path)
+			return
+		} else if !os.IsNotExist(err) || i > 0 {
+			return
+		}
+	}
+}
+
+func clineRtkVerify() bool {
+	raw, ok := util.ReadFileSafe(clineRtkHookPath())
+	return ok && strings.Contains(raw, clineRtkMarker) && strings.Contains(raw, "rtk-hook cline")
+}
+
 // rtkWirePi: rtk init -g --agent pi.
 func rtkWirePi() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
@@ -794,6 +909,7 @@ var rtk = &core.ToolManifest{
 		"pi":          rtkWirePi(),
 		"omp":         rtkWireOmp(),
 		"kilo":        kiloRtkWire,
+		"cline":       clineRtkWire,
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -855,7 +971,8 @@ var rtk = &core.ToolManifest{
 			_ = os.Remove(ompRtkExtensionPath())
 			return !agents.HasOmpRtkExtension(), nil
 		},
-		"kilo": kiloRtkUnwire,
+		"kilo":  kiloRtkUnwire,
+		"cline": clineRtkUnwire,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -879,7 +996,8 @@ var rtk = &core.ToolManifest{
 		"pi": func() *bool {
 			return core.BoolPtr(agents.HasPiRtkExtension())
 		},
-		"omp":  func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
-		"kilo": func() *bool { return core.BoolPtr(kiloRtkVerify()) },
+		"omp":   func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
+		"kilo":  func() *bool { return core.BoolPtr(kiloRtkVerify()) },
+		"cline": func() *bool { return core.BoolPtr(clineRtkVerify()) },
 	},
 }

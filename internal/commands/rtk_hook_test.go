@@ -824,3 +824,178 @@ func TestRunRtkHookDroidUnsupportedPassthrough(t *testing.T) {
 	}
 	t.Logf("OK passthrough: %q", cmd)
 }
+
+func runRtkHookClinePayload(t *testing.T, payload string) (int, string) {
+	t.Helper()
+	oldIn, oldOut := os.Stdin, os.Stdout
+	rIn, wIn, _ := os.Pipe()
+	rOut, wOut, _ := os.Pipe()
+	os.Stdin, os.Stdout = rIn, wOut
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+	go func() { _, _ = io.WriteString(wIn, payload); _ = wIn.Close() }()
+	code := RunRtkHookCline()
+	_ = wOut.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, rOut)
+	_ = rIn.Close()
+	return code, strings.TrimSpace(buf.String())
+}
+
+func TestRunRtkHookCline(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	payload := `{"hookName":"tool_call","tool_call":{"id":"1","name":"execute_command","input":{"command":"git status","cwd":"/tmp"}}}`
+	code, out := runRtkHookClinePayload(t, payload)
+	if code != 0 || out == "" || out == "{}" {
+		t.Fatalf("expected overrideInput JSON, code=%d out=%q", code, out)
+	}
+	var resp struct {
+		OverrideInput map[string]string `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(resp.OverrideInput["command"], "rtk ") || resp.OverrideInput["cwd"] != "/tmp" {
+		t.Fatalf("Cline input not preserved or rewritten: %q", out)
+	}
+}
+
+func TestRunRtkHookClineLegacyPreToolUseShape(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	payload := `{"hookName":"tool_call","preToolUse":{"toolName":"run_commands","parameters":{"command":"git status"}}}`
+	_, out := runRtkHookClinePayload(t, payload)
+	var resp struct {
+		OverrideInput map[string]string `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil || !strings.HasPrefix(resp.OverrideInput["command"], "rtk ") {
+		t.Fatalf("legacy Cline shape not rewritten: %q", out)
+	}
+}
+
+func TestRunRtkHookClineCommandsArray(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"hookName":"tool_call","tool_call":{"name":"run_commands","input":{"cwd":"/tmp","timeout":30,"commands":[{"command":"git status","label":"keep first","extra":"one"},{"command":"git diff","label":"keep second","nested":{"value":true}}]}}}`
+	_, out := runRtkHookClinePayload(t, payload)
+	var resp struct {
+		OverrideInput map[string]any `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OverrideInput["cwd"] != "/tmp" || resp.OverrideInput["timeout"] != float64(30) {
+		t.Fatalf("non-command input fields not preserved: %q", out)
+	}
+	commands, ok := resp.OverrideInput["commands"].([]any)
+	if !ok || len(commands) != 2 {
+		t.Fatalf("commands array not returned: %q", out)
+	}
+	wantLabels := []string{"keep first", "keep second"}
+	for i, raw := range commands {
+		item, ok := raw.(map[string]any)
+		if !ok || !strings.HasPrefix(item["command"].(string), "rtk ") {
+			t.Fatalf("command %d not rewritten: %q", i, out)
+		}
+		if item["label"] != wantLabels[i] {
+			t.Fatalf("command %d label changed: %q", i, out)
+		}
+	}
+	first := commands[0].(map[string]any)
+	if first["extra"] != "one" {
+		t.Fatalf("extra command field lost: %q", out)
+	}
+	second := commands[1].(map[string]any)
+	if second["nested"].(map[string]any)["value"] != true {
+		t.Fatalf("nested command field lost: %q", out)
+	}
+}
+
+func TestRunRtkHookClineCommandsStringArray(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"tool_call":{"name":"run_commands","input":{"cwd":"/tmp","commands":["git status --short","git diff"]}}}`
+	_, out := runRtkHookClinePayload(t, payload)
+	var resp struct {
+		OverrideInput map[string]any `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.OverrideInput["cwd"] != "/tmp" {
+		t.Fatalf("non-command input fields not preserved: %q", out)
+	}
+	commands, ok := resp.OverrideInput["commands"].([]any)
+	if !ok || len(commands) != 2 {
+		t.Fatalf("commands array not returned: %q", out)
+	}
+	for i, raw := range commands {
+		command, ok := raw.(string)
+		if !ok || !strings.HasPrefix(command, "rtk ") {
+			t.Fatalf("command %d not rewritten: %q", i, out)
+		}
+	}
+}
+
+func TestRunRtkHookClineCommandsMixedArray(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+
+	payload := `{"tool_call":{"name":"run_commands","input":{"commands":["git status",{"command":"git diff","label":"keep"},"git log"]}}}`
+	_, out := runRtkHookClinePayload(t, payload)
+	var resp struct {
+		OverrideInput map[string]any `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatal(err)
+	}
+	commands, ok := resp.OverrideInput["commands"].([]any)
+	if !ok || len(commands) != 3 {
+		t.Fatalf("commands array not returned: %q", out)
+	}
+	if !strings.HasPrefix(commands[0].(string), "rtk ") || !strings.HasPrefix(commands[2].(string), "rtk ") {
+		t.Fatalf("string commands not rewritten in order: %q", out)
+	}
+	object, ok := commands[1].(map[string]any)
+	if !ok || !strings.HasPrefix(object["command"].(string), "rtk ") || object["label"] != "keep" {
+		t.Fatalf("object command or fields not preserved: %q", out)
+	}
+}
+
+func TestRunRtkHookClineCommandsArrayNoOp(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "already rtk",
+			payload: `{"tool_call":{"name":"run_commands","input":{"commands":["rtk git status"]}}}`,
+		},
+		{
+			name:    "non shell",
+			payload: `{"tool_call":{"name":"read_file","input":{"commands":[{"command":"git status"}]}}}`,
+		},
+		{
+			name:    "non command item",
+			payload: `{"tool_call":{"name":"run_commands","input":{"commands":[{"label":"missing command","value":true}]}}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, out := runRtkHookClinePayload(t, tc.payload)
+			if out != "{}" {
+				t.Fatalf("got %q; want {}", out)
+			}
+		})
+	}
+}
