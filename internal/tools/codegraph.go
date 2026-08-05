@@ -162,6 +162,9 @@ func codegraphVerify(agent string) bool {
 	case "kilo":
 		expected := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 		return agents.KiloMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && kiloHasOwner("codegraph")
+	case "cline":
+		expected := util.WrapAutoIndex("cline", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		return agents.ClineMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && HasOwner("cline", "codegraph")
 	}
 	return false
 }
@@ -279,6 +282,17 @@ func codegraphWire(agent string) core.AgentFn {
 			}
 			kiloWriteOwner("codegraph")
 			return codegraphVerify("kilo"), nil
+		}
+		if agent == "cline" {
+			if opts.DryRun {
+				return true, nil
+			}
+			spawn := util.WrapAutoIndex("cline", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+			if _, _, err := agents.ConfigureClineMcpSafe("codegraph", append([]string{spawn.Command}, spawn.Args...)); err != nil {
+				return false, err
+			}
+			WriteOwner("cline", "codegraph")
+			return codegraphVerify("cline"), nil
 		}
 		if isTest() {
 			if !codegraphConfigureMcp(agent) {
@@ -399,8 +413,9 @@ var codegraph = &core.ToolManifest{
 			WriteOwner("pi", "codegraph")
 			return codegraphVerify("pi"), nil
 		},
-		"omp":  codegraphWire("omp"),
-		"kilo": codegraphWire("kilo"),
+		"omp":   codegraphWire("omp"),
+		"kilo":  codegraphWire("kilo"),
+		"cline": codegraphWire("cline"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -482,6 +497,13 @@ var codegraph = &core.ToolManifest{
 			kiloRemoveOwner("codegraph")
 			return true, nil
 		},
+		"cline": func(core.RunOpts) (bool, error) {
+			if !agents.RemoveClineMcp("codegraph") {
+				return false, nil
+			}
+			RemoveOwner("cline", "codegraph")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
@@ -494,5 +516,6 @@ var codegraph = &core.ToolManifest{
 		"pi":          func() *bool { return core.BoolPtr(codegraphVerify("pi")) },
 		"omp":         func() *bool { return core.BoolPtr(codegraphVerify("omp")) },
 		"kilo":        func() *bool { return core.BoolPtr(codegraphVerify("kilo")) },
+		"cline":       func() *bool { return core.BoolPtr(codegraphVerify("cline")) },
 	},
 }

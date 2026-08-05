@@ -158,6 +158,27 @@ func ctxUnwireKilo(core.RunOpts) (bool, error) {
 	return true, nil
 }
 
+func ctxWireCline(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	spawn := util.PickMcpSpawn("context-mode")
+	expected := append([]string{spawn.Command}, spawn.Args...)
+	if _, _, err := agents.ConfigureClineMcpSafe("context-mode", expected); err != nil {
+		return false, err
+	}
+	WriteOwner("cline", "context-mode")
+	return agents.ClineMcpMatches("context-mode", expected) && HasOwner("cline", "context-mode"), nil
+}
+
+func ctxUnwireCline(core.RunOpts) (bool, error) {
+	if !agents.RemoveClineMcp("context-mode") {
+		return false, nil
+	}
+	RemoveOwner("cline", "context-mode")
+	return true, nil
+}
+
 func removeContextModePlugin(cfg *util.OrderedMap) {
 	plugins := getArr(cfg, "plugin")
 	kept := make([]any, 0, len(plugins))
@@ -709,7 +730,8 @@ var contextMode = &core.ToolManifest{
 			WriteOwner("omp", "context-mode")
 			return HasOwner("omp", "context-mode"), nil
 		},
-		"kilo": ctxWireKilo,
+		"kilo":  ctxWireKilo,
+		"cline": ctxWireCline,
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ctxUnwireClaude,
@@ -735,7 +757,8 @@ var contextMode = &core.ToolManifest{
 			RemoveOwner("omp", "context-mode")
 			return true, nil
 		},
-		"kilo": ctxUnwireKilo,
+		"kilo":  ctxUnwireKilo,
+		"cline": ctxUnwireCline,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
@@ -753,6 +776,11 @@ var contextMode = &core.ToolManifest{
 			spawn := util.PickMcpSpawn("context-mode")
 			expected := append([]string{spawn.Command}, spawn.Args...)
 			return core.BoolPtr(agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode"))
+		},
+		"cline": func() *bool {
+			spawn := util.PickMcpSpawn("context-mode")
+			expected := append([]string{spawn.Command}, spawn.Args...)
+			return core.BoolPtr(agents.ClineMcpMatches("context-mode", expected) && HasOwner("cline", "context-mode"))
 		},
 	},
 }
