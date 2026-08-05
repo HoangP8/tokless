@@ -30,7 +30,11 @@ func parseArgs(argv []string) parsedArgs {
 				p.flags[a[2:]] = argv[i+1]
 				i++
 			} else {
-				p.bools[a[2:]] = true
+				if a[2:] == "agents" || a[2:] == "tools" {
+					p.flags[a[2:]] = ""
+				} else {
+					p.bools[a[2:]] = true
+				}
 			}
 		} else if strings.HasPrefix(a, "-") && len(a) == 2 {
 			p.bools[a[1:]] = true
@@ -85,6 +89,9 @@ func parseList(raw string, ok bool, allowed []string) ([]string, error) {
 	if len(invalid) > 0 {
 		return nil, fmt.Errorf("Invalid value(s): %s. Allowed: %s", strings.Join(invalid, ", "), strings.Join(allowed, ", "))
 	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("value must not be empty")
+	}
 	return items, nil
 }
 
@@ -138,11 +145,6 @@ func run() int {
 		return 0
 	}
 
-	command := p.cmd
-	if command == "" {
-		command = "init"
-	}
-
 	agentRaw, agentOK := p.flags["agents"]
 	toolRaw, toolOK := p.flags["tools"]
 	agentList, err := parseList(agentRaw, agentOK, core.AgentIDs())
@@ -154,6 +156,11 @@ func run() int {
 	if err != nil {
 		util.L.Err(err.Error())
 		return 2
+	}
+
+	command := p.cmd
+	if command == "" {
+		command = "init"
 	}
 
 	opts := commands.InitOptions{

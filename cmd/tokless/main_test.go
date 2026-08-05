@@ -22,6 +22,45 @@ func TestHelpListsPonytailTool(t *testing.T) {
 	}
 }
 
+func TestParseArgsRejectsEmptyAgentAndToolLists(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+	}{
+		{name: "bare agents", args: []string{"--agents"}},
+		{name: "empty agents", args: []string{"--agents="}},
+		{name: "bare tools", args: []string{"--tools"}},
+		{name: "empty tools", args: []string{"--tools="}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			oldArgs := os.Args
+			os.Args = append([]string{"tokless"}, tt.args...)
+			defer func() { os.Args = oldArgs }()
+			if code := run(); code != 2 {
+				t.Fatalf("run exit = %d, want 2", code)
+			}
+		})
+	}
+}
+
+func TestParseListAcceptsNonemptyLists(t *testing.T) {
+	agents, err := parseList("claude,opencode", true, []string{"claude", "opencode"})
+	if err != nil || len(agents) != 2 {
+		t.Fatalf("valid agents list rejected: %v", err)
+	}
+	tools, err := parseList("rtk", true, []string{"rtk"})
+	if err != nil || len(tools) != 1 {
+		t.Fatalf("valid tools list rejected: %v", err)
+	}
+}
+
+func TestHelpWinsOverIncompleteListFlag(t *testing.T) {
+	oldArgs := os.Args
+	os.Args = []string{"tokless", "--help", "--agents"}
+	t.Cleanup(func() { os.Args = oldArgs })
+	captureStdout(t, run)
+}
+
 func TestInstallerRunImpliesUpgrade(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
