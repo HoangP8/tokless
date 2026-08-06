@@ -88,13 +88,18 @@ func firstSegment(line string) string {
 }
 
 func rtkUnsafeFind(cmdLine string) bool {
-	toks := shellTokens(firstSegment(cmdLine))
-	if len(toks) < 2 || toks[0] != "find" {
-		return false
-	}
-	for _, t := range toks[1:] {
-		if findUnsupportedFlags[t] {
-			return true
+	for _, part := range shellParts(cmdLine) {
+		if part.isOp {
+			continue
+		}
+		toks := shellTokens(part.text)
+		if len(toks) < 2 || toks[0] != "find" {
+			continue
+		}
+		for _, t := range toks[1:] {
+			if findUnsupportedFlags[t] {
+				return true
+			}
 		}
 	}
 	return false
@@ -165,7 +170,7 @@ func rtkRewriteOnce(cmdLine string) (string, bool) {
 	if strings.TrimSpace(newCmd) == strings.TrimSpace(cmdLine) {
 		return "", false
 	}
-	if !strings.Contains(newCmd, "rtk ") {
+	if !rtkSegmentPresent(newCmd) {
 		return "", false
 	}
 	if strings.HasPrefix(strings.TrimSpace(newCmd), "rtk rtk ") {
@@ -173,6 +178,15 @@ func rtkRewriteOnce(cmdLine string) (string, bool) {
 	}
 	newCmd = stripRtkAbsPath(newCmd)
 	return newCmd, true
+}
+
+func rtkSegmentPresent(cmdLine string) bool {
+	for _, seg := range shellCommandSegments(cmdLine) {
+		if segmentStartsWithRtk(seg) {
+			return true
+		}
+	}
+	return false
 }
 
 // rtkRewriteBySegment rewrites each shell command segment independently and
@@ -344,10 +358,8 @@ func RunRtkHookCodex() int {
 	}
 
 	var req struct {
-		ToolName  string `json:"tool_name"`
-		ToolInput struct {
-			Command string `json:"command"`
-		} `json:"tool_input"`
+		ToolName  string         `json:"tool_name"`
+		ToolInput map[string]any `json:"tool_input"`
 	}
 	if err := json.Unmarshal(input, &req); err != nil {
 		return 0
@@ -356,15 +368,16 @@ func RunRtkHookCodex() int {
 		return 0
 	}
 
-	updated := map[string]string{"command": req.ToolInput.Command}
-	if newCmd, changed := rtkRewrite(req.ToolInput.Command); changed {
+	updated := cloneMap(req.ToolInput)
+	cmdLine, _ := updated["command"].(string)
+	if newCmd, changed := rtkRewrite(cmdLine); changed {
 		updated["command"] = newCmd
 	}
 
 	type hookOut struct {
-		HookEventName      string            `json:"hookEventName"`
-		PermissionDecision string            `json:"permissionDecision"`
-		UpdatedInput       map[string]string `json:"updatedInput"`
+		HookEventName      string         `json:"hookEventName"`
+		PermissionDecision string         `json:"permissionDecision"`
+		UpdatedInput       map[string]any `json:"updatedInput"`
 	}
 	resp := struct {
 		HookSpecificOutput hookOut `json:"hookSpecificOutput"`
@@ -418,15 +431,15 @@ func RunRtkHookDroid() int {
 		return 0
 	}
 
-	updated := map[string]string{cmdKey: cmdLine}
+	updated := cloneMap(toolInput)
 	if newCmd, changed := rtkRewrite(cmdLine); changed {
 		updated[cmdKey] = newCmd
 	}
 
 	type hookOut struct {
-		HookEventName      string            `json:"hookEventName"`
-		PermissionDecision string            `json:"permissionDecision"`
-		UpdatedInput       map[string]string `json:"updatedInput"`
+		HookEventName      string         `json:"hookEventName"`
+		PermissionDecision string         `json:"permissionDecision"`
+		UpdatedInput       map[string]any `json:"updatedInput"`
 	}
 	resp := struct {
 		HookSpecificOutput hookOut `json:"hookSpecificOutput"`
@@ -639,9 +652,7 @@ func clineRewriteCommands(toolInput map[string]any) ([]any, bool) {
 		if !approve || !didChange || newCmd == "" || newCmd == cmdLine {
 			continue
 		}
-		updatedItem := cloneMap(commandItem)
-		updatedItem["command"] = newCmd
-		updated[i] = updatedItem
+		updated[i] = newCmd
 		changed = true
 	}
 	if !changed {
@@ -651,6 +662,15 @@ func clineRewriteCommands(toolInput map[string]any) ([]any, bool) {
 }
 
 func clineToolInput(req map[string]json.RawMessage) (string, map[string]any, bool) {
+	// Legacy (pre-SDK) bundle wraps the payload: {hookName, hookInput:{...}}.
+	if v, ok := req["hookInput"]; ok {
+		var hi map[string]json.RawMessage
+		if json.Unmarshal(v, &hi) == nil {
+			if name, input, ok := clineToolInput(hi); ok {
+				return name, input, true
+			}
+		}
+	}
 	if v, ok := req["tool_call"]; ok {
 		var tc struct {
 			Name  string         `json:"name"`
@@ -784,20 +804,37 @@ func segmentStartsWithRtk(seg string) bool {
 	if trimmed == "" {
 		return false
 	}
-	toks := shellTokens(trimmed)
-	if len(toks) == 0 {
-		return false
+	bin := firstRawToken(trimmed)
+	if len(bin) >= 2 {
+		if (bin[0] == '"' && bin[len(bin)-1] == '"') || (bin[0] == '\'' && bin[len(bin)-1] == '\'') {
+			bin = bin[1 : len(bin)-1]
+		}
 	}
-	bin := toks[0]
-	if bin == "rtk" {
-		return true
+	base := bin
+	if i := strings.LastIndexAny(bin, "/\\"); i >= 0 {
+		base = bin[i+1:]
 	}
-	lower := strings.ToLower(bin)
-	if strings.HasSuffix(bin, "/rtk") || strings.HasSuffix(bin, "\\rtk") ||
-		strings.HasSuffix(lower, "/rtk.exe") || strings.HasSuffix(lower, "\\rtk.exe") {
-		return true
+	lower := strings.ToLower(base)
+	return lower == "rtk" || strings.TrimSuffix(lower, ".exe") == "rtk"
+}
+
+func firstRawToken(s string) string {
+	var buf strings.Builder
+	inSingle, inDouble := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case (c == ' ' || c == '\t' || c == '\n') && !inSingle && !inDouble:
+			return buf.String()
+		default:
+			buf.WriteByte(c)
+		}
 	}
-	return false
+	return buf.String()
 }
 
 // shellCommandSegments splits a shell line into command segments at

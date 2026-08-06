@@ -405,7 +405,7 @@ const clineRtkMarker = "tokless-cline-rtk-v1"
 func clineRtkHookPath() string {
 	name := "PreToolUse"
 	if util.IsWin {
-		name = "PreToolUse.ps1"
+		name = "PreToolUse.cjs"
 	}
 	return filepath.Join(util.ClinePathsResolved().HooksDir, name)
 }
@@ -413,11 +413,11 @@ func clineRtkHookPath() string {
 // clineRtkHookScript: quoted tokless abs path so the hook works with spaces in path — no fallback.
 func clineRtkHookScript(exe string) string {
 	if util.IsWin {
-		return "# " + clineRtkMarker + "\n" +
-			"[Console]::InputEncoding = [System.Text.Encoding]::UTF8\n" +
-			"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
-			"$OutputEncoding = [System.Text.Encoding]::UTF8\n" +
-			"[Console]::In.ReadToEnd() | & " + psQuote(exe) + " rtk-hook cline\n"
+		return "#!/usr/bin/env node\n// " + clineRtkMarker + "\n" +
+			"// stdio inherit streams stdin/stdout straight through — no buffering, no re-encoding.\n" +
+			"const { spawnSync } = require(\"child_process\");\n" +
+			"const r = spawnSync(" + strconv.Quote(exe) + ", [\"rtk-hook\", \"cline\"], { stdio: \"inherit\" });\n" +
+			"process.exit(typeof r.status === \"number\" ? r.status : 0);\n"
 	}
 	return "#!/bin/sh\n# " + clineRtkMarker + "\nexec " + shQuote(exe) + " rtk-hook cline\n"
 }
@@ -425,11 +425,6 @@ func clineRtkHookScript(exe string) string {
 // shQuote single-quotes s for POSIX sh, safe for embedded single quotes.
 func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// psQuote single-quotes s for PowerShell, safe for embedded single quotes.
-func psQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func clineRtkWire(opts core.RunOpts) (bool, error) {
@@ -894,7 +889,7 @@ func rtkWire(agent string) core.AgentFn {
 var rtk = &core.ToolManifest{
 	ID:          "rtk",
 	Label:       "RTK",
-	Description: "Token-efficient command-runner replacing shell commands with deterministic primitives.",
+	Description: "Command output compression and formatting utility.",
 	Homepage:    "https://github.com/rtk-ai/rtk",
 	InstallHint: "Prebuilt binary from GitHub releases (no Rust required).",
 	Channel:     core.ChannelGitHub,

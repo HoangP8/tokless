@@ -35,6 +35,7 @@ func RunMcp(argv []string) int {
 	}
 	if codegraphPath != "" {
 		_ = RunCodegraphAutoIndex()
+		argv = injectCodegraphPath(argv)
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
@@ -56,6 +57,27 @@ func codegraphMcpCommand(argv []string) string {
 		return argv[2]
 	}
 	return ""
+}
+
+// injectCodegraphPath pins the CodeGraph project root with --path when the MCP
+// transport's cwd is not the project.
+func injectCodegraphPath(argv []string) []string {
+	for _, a := range argv {
+		if a == "--path" || strings.HasPrefix(a, "--path=") || a == "-p" || (len(a) > 2 && a[0] == '-' && a[1] == 'p') {
+			return argv
+		}
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return argv
+	}
+	dir = findProjectDir(dir)
+	if !looksLikeProject(dir) {
+		return argv
+	}
+	out := make([]string, 0, len(argv)+2)
+	out = append(out, argv...)
+	return append(out, "--path", dir)
 }
 
 func isCodegraphCommand(p string) bool {

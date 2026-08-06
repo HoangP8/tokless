@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -211,6 +213,7 @@ if [ "$1" = "rewrite" ]; then
   case "$*" in
     "git status") printf 'rtk git status'; exit 0;;
     "git diff") printf 'rtk git diff'; exit 0;;
+    "cd /tmp && git status") printf 'cd /tmp && rtk git status'; exit 0;;
   esac
 fi
 exit 0
@@ -266,9 +269,19 @@ func TestClineRtkHookEndToEnd(t *testing.T) {
 	}
 
 	// Commands-array shape preserved.
-	arr := `{"hookName":"tool_call","tool_call":{"id":"2","name":"run_commands","input":{"cwd":"/tmp","timeout":30,"commands":[{"command":"git status","label":"keep","extra":"one"}]}}}`
-	if out := runClineHookScript(t, hookPath, arr); !strings.Contains(out, `"command":"rtk git status"`) || !strings.Contains(out, `"label":"keep"`) {
-		t.Fatalf("commands array not rewritten or fields lost: %q", out)
+	arr := `{"hookName":"tool_call","tool_call":{"id":"2","name":"run_commands","input":{"cwd":"/tmp","timeout":30,"commands":[{"command":"cd /tmp && git status","label":"display only","extra":"one"}]}}}`
+	out = runClineHookScript(t, hookPath, arr)
+	var response struct {
+		OverrideInput struct {
+			Commands []any `json:"commands"`
+		} `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &response); err != nil {
+		t.Fatal(err)
+	}
+	command, ok := response.OverrideInput.Commands[0].(string)
+	if !ok || command != "cd /tmp && rtk git status" {
+		t.Fatalf("commands array not normalized and rewritten: %q", out)
 	}
 
 	// Non-shell tool passthrough.
@@ -277,30 +290,58 @@ func TestClineRtkHookEndToEnd(t *testing.T) {
 	}
 }
 
-func TestClineRtkHookPs1Content(t *testing.T) {
+func TestClineRtkHookWindowsShimContent(t *testing.T) {
 	old := util.IsWin
 	util.IsWin = true
 	defer func() { util.IsWin = old }()
-	script := clineRtkHookScript(`C:\Program Files\tokless\tokless.exe`)
-	if !strings.Contains(script, `'C:\Program Files\tokless\tokless.exe'`) {
-		t.Fatalf("ps1 must embed quoted abs path, got:\n%s", script)
+	exe := `C:\Program Files\tokless\tokless.exe`
+	script := clineRtkHookScript(exe)
+	if strings.Contains(script, ".ps1") || strings.Contains(script, "pwsh") ||
+		strings.Contains(script, "[Console]::") {
+		t.Fatalf("windows hook must not depend on PowerShell, got:\n%s", script)
 	}
-	if !strings.Contains(script, "[Console]::In.ReadToEnd()") {
-		t.Fatalf("ps1 must read stdin via ReadToEnd, got:\n%s", script)
+	if !strings.Contains(script, strconv.Quote(exe)) {
+		t.Fatalf("windows shim must embed JSON-quoted abs path, got:\n%s", script)
 	}
-	if strings.Contains(script, "$input") {
-		t.Fatalf("ps1 must not use $input, got:\n%s", script)
+	if !strings.Contains(script, `stdio: "inherit"`) {
+		t.Fatalf("windows shim must pass stdio through, got:\n%s", script)
 	}
-	for _, enc := range []string{
-		"[Console]::InputEncoding = [System.Text.Encoding]::UTF8",
-		"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
-		"$OutputEncoding = [System.Text.Encoding]::UTF8",
-	} {
-		if !strings.Contains(script, enc) {
-			t.Fatalf("ps1 must force UTF-8 (%s), got:\n%s", enc, script)
-		}
+	if !strings.Contains(script, "rtk-hook") || !strings.Contains(script, `"cline"`) ||
+		!strings.Contains(script, clineRtkMarker) {
+		t.Fatalf("windows shim missing marker/args:\n%s", script)
 	}
-	if !strings.Contains(script, "rtk-hook cline") || !strings.Contains(script, clineRtkMarker) {
-		t.Fatalf("ps1 missing marker/args:\n%s", script)
+	if want := filepath.Base(clineRtkHookPath()); want != "PreToolUse.cjs" {
+		t.Fatalf("windows hook filename = %q, want PreToolUse.cjs", want)
+	}
+}
+
+// TestClineRtkHookWindowsShimRuns executes the generated Windows shim with the
+// real node runtime, proving it forwards stdin and emits Cline's control JSON.
+func TestClineRtkHookWindowsShimRuns(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	bin := buildClineSimBinary(t)
+	fakeRtk(t, filepath.Dir(bin))
+
+	old := util.IsWin
+	util.IsWin = true
+	script := clineRtkHookScript(bin)
+	util.IsWin = old
+
+	shim := filepath.Join(t.TempDir(), "PreToolUse.cjs")
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(node, shim)
+	cmd.Stdin = strings.NewReader(`{"hookName":"tool_call","tool_call":{"id":"1","name":"execute_command","input":{"command":"git status"}}}`)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node shim failed: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); !strings.Contains(got, `"overrideInput"`) ||
+		!strings.Contains(got, `"command":"rtk git status"`) {
+		t.Fatalf("node shim output = %q", got)
 	}
 }
