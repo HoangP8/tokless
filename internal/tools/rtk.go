@@ -507,7 +507,8 @@ func restoreClineRtkBackup(path string) {
 
 func clineRtkVerify() bool {
 	raw, ok := util.ReadFileSafe(clineRtkHookPath())
-	return ok && strings.Contains(raw, clineRtkMarker) && strings.Contains(raw, "rtk-hook cline")
+	return ok && strings.Contains(raw, clineRtkMarker) &&
+		(strings.Contains(raw, "rtk-hook cline") || strings.Contains(raw, `["rtk-hook", "cline"]`))
 }
 
 // rtkWirePi: rtk init -g --agent pi.
