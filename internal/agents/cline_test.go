@@ -63,7 +63,7 @@ func TestClinePathsResolvedEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestClineDetectsSharedConfigWithoutCLI(t *testing.T) {
+func TestClineIgnoresSharedConfigWithoutCLI(t *testing.T) {
 	p := withClineGlobal(t)
 	t.Setenv("PATH", t.TempDir())
 	if err := util.EnsureDir(filepath.Dir(p.McpConfig)); err != nil {
@@ -72,8 +72,8 @@ func TestClineDetectsSharedConfigWithoutCLI(t *testing.T) {
 	if err := util.WriteFile(p.McpConfig, "{}"); err != nil {
 		t.Fatal(err)
 	}
-	if got := cline.Detect(); !got.Installed || got.Source != "config" {
-		t.Fatalf("Cline detection = %+v, want config", got)
+	if got := cline.Detect(); got.Installed || got.Source != "" {
+		t.Fatalf("Cline detection = %+v, want not installed (CLI-only)", got)
 	}
 }
 
@@ -85,16 +85,9 @@ func TestClineDoesNotDetectEmptyDir(t *testing.T) {
 	}
 }
 
-func TestClineCLITakesPrecedenceOverSharedConfig(t *testing.T) {
-	p := withClineGlobal(t)
+func TestClineDetectsCLI(t *testing.T) {
 	binDir := t.TempDir()
 	t.Setenv("PATH", binDir)
-	if err := util.EnsureDir(filepath.Dir(p.McpConfig)); err != nil {
-		t.Fatal(err)
-	}
-	if err := util.WriteFile(p.McpConfig, "{}"); err != nil {
-		t.Fatal(err)
-	}
 	binName := "cline"
 	if util.IsWin {
 		binName = "cline.EXE"

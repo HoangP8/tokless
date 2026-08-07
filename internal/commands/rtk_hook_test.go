@@ -955,7 +955,7 @@ func TestRunRtkHookCline(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")
 	}
-	payload := `{"hookName":"tool_call","tool_call":{"id":"1","name":"execute_command","input":{"command":"git status","cwd":"/tmp"}}}`
+	payload := `{"hookName":"tool_call","tool_call":{"id":"1","name":"execute_command","input":{"command":"git status"}}}`
 	code, out := runRtkHookClinePayload(t, payload)
 	if code != 0 || out == "" || out == "{}" {
 		t.Fatalf("expected overrideInput JSON, code=%d out=%q", code, out)
@@ -966,71 +966,58 @@ func TestRunRtkHookCline(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(resp.OverrideInput["command"], "rtk ") || resp.OverrideInput["cwd"] != "/tmp" {
-		t.Fatalf("Cline input not preserved or rewritten: %q", out)
+	if !strings.HasPrefix(resp.OverrideInput["command"], "rtk ") {
+		t.Fatalf("Cline command not rewritten: %q", out)
 	}
 }
 
-func TestRunRtkHookClineLegacyPreToolUseShape(t *testing.T) {
+func TestRunRtkHookClineCurrentPreToolUseCompatibility(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")
 	}
-	payload := `{"hookName":"tool_call","preToolUse":{"toolName":"run_commands","parameters":{"command":"git status"}}}`
-	_, out := runRtkHookClinePayload(t, payload)
-	var resp struct {
-		OverrideInput map[string]string `json:"overrideInput"`
-	}
-	if err := json.Unmarshal([]byte(out), &resp); err != nil || !strings.HasPrefix(resp.OverrideInput["command"], "rtk ") {
-		t.Fatalf("legacy Cline shape not rewritten: %q", out)
+	_, out := runRtkHookClinePayload(t, `{"preToolUse":{"toolName":"execute_command","parameters":{"command":"git diff"}}}`)
+	if !strings.Contains(out, `"command":"rtk git diff"`) {
+		t.Fatalf("current CLI preToolUse compatibility not rewritten: %q", out)
 	}
 }
 
-func TestRunRtkHookClineLegacyHookInputWrapperShape(t *testing.T) {
+func TestRunRtkHookClineLegacyHookInputWrapperNoOp(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")
 	}
-	// Legacy (pre-SDK) bundle wraps PreToolUse in hookInput.
-	payload := `{"hookName":"PreToolUse","hookInput":{"preToolUse":{"toolName":"bash","parameters":{"command":"git status --short"}}}}`
-	_, out := runRtkHookClinePayload(t, payload)
-	var resp struct {
-		OverrideInput map[string]string `json:"overrideInput"`
-	}
-	if err := json.Unmarshal([]byte(out), &resp); err != nil || !strings.HasPrefix(resp.OverrideInput["command"], "rtk ") {
-		t.Fatalf("legacy hookInput wrapper not rewritten: %q", out)
-	}
-	// Unsupported commands must still no-op through the wrapper.
-	payload = `{"hookName":"PreToolUse","hookInput":{"preToolUse":{"toolName":"bash","parameters":{"command":"npm test"}}}}`
-	_, out = runRtkHookClinePayload(t, payload)
+	_, out := runRtkHookClinePayload(t, `{"hookInput":{"tool_call":{"name":"execute_command","input":{"command":"git diff"}}}}`)
 	if out != "{}" {
-		t.Fatalf("legacy hookInput wrapper rewrote unsupported command: %q", out)
+		t.Fatalf("legacy hookInput wrapper must no-op: %q", out)
 	}
 }
 
-func TestRunRtkHookClineCommandsArray(t *testing.T) {
+func TestRunRtkHookClineStructuredCommandNoOp(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")
 	}
+	_, out := runRtkHookClinePayload(t, `{"tool_call":{"name":"run_commands","input":{"commands":[{"command":"git","args":["status","--short"]}]}}}`)
+	if out != "{}" {
+		t.Fatalf("structured command must pass through unchanged: %q", out)
+	}
+}
 
-	payload := `{"hookName":"tool_call","tool_call":{"name":"run_commands","input":{"cwd":"/tmp","timeout":30,"commands":[{"command":"git status","label":"keep first","extra":"one"},{"command":"git diff","label":"keep second","nested":{"value":true}}]}}}`
-	_, out := runRtkHookClinePayload(t, payload)
+func TestRunRtkHookClinePreservesRtkRewrite(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	_, out := runRtkHookClinePayload(t, `{"workspaceRoots":["/home/hoangp8/tokless"],"tool_call":{"name":"run_commands","input":{"commands":["git -C /home/hoangp8/tokless diff","git -C /tmp diff"]}}}`)
 	var resp struct {
 		OverrideInput map[string]any `json:"overrideInput"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.OverrideInput["cwd"] != "/tmp" || resp.OverrideInput["timeout"] != float64(30) {
-		t.Fatalf("non-command input fields not preserved: %q", out)
+	commands := resp.OverrideInput["commands"].([]any)
+	if commands[0] != "rtk git -C /home/hoangp8/tokless diff" {
+		t.Fatalf("RTK rewrite changed by Cline adapter: %q", out)
 	}
-	commands, ok := resp.OverrideInput["commands"].([]any)
-	if !ok || len(commands) != 2 {
-		t.Fatalf("commands array not returned: %q", out)
-	}
-	for i, raw := range commands {
-		item, ok := raw.(string)
-		if !ok || !strings.HasPrefix(item, "rtk ") {
-			t.Fatalf("command %d not normalized and rewritten: %q", i, out)
-		}
+	if !strings.Contains(commands[1].(string), "git -C /tmp") {
+		t.Fatalf("different -C path changed: %q", out)
 	}
 }
 
@@ -1039,16 +1026,13 @@ func TestRunRtkHookClineCommandsStringArray(t *testing.T) {
 		t.Skip("rtk binary not installed")
 	}
 
-	payload := `{"tool_call":{"name":"run_commands","input":{"cwd":"/tmp","commands":["git status --short","git diff"]}}}`
+	payload := `{"tool_call":{"name":"run_commands","input":{"commands":["git status --short","git diff"]}}}`
 	_, out := runRtkHookClinePayload(t, payload)
 	var resp struct {
 		OverrideInput map[string]any `json:"overrideInput"`
 	}
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		t.Fatal(err)
-	}
-	if resp.OverrideInput["cwd"] != "/tmp" {
-		t.Fatalf("non-command input fields not preserved: %q", out)
 	}
 	commands, ok := resp.OverrideInput["commands"].([]any)
 	if !ok || len(commands) != 2 {
@@ -1059,50 +1043,6 @@ func TestRunRtkHookClineCommandsStringArray(t *testing.T) {
 		if !ok || !strings.HasPrefix(command, "rtk ") {
 			t.Fatalf("command %d not rewritten: %q", i, out)
 		}
-	}
-}
-
-func TestRunRtkHookClineCommandsMixedArray(t *testing.T) {
-	if !utilHaveRtk() {
-		t.Skip("rtk binary not installed")
-	}
-
-	payload := `{"tool_call":{"name":"run_commands","input":{"commands":["git status",{"command":"git diff","label":"keep"},"git log"]}}}`
-	_, out := runRtkHookClinePayload(t, payload)
-	var resp struct {
-		OverrideInput map[string]any `json:"overrideInput"`
-	}
-	if err := json.Unmarshal([]byte(out), &resp); err != nil {
-		t.Fatal(err)
-	}
-	commands, ok := resp.OverrideInput["commands"].([]any)
-	if !ok || len(commands) != 3 {
-		t.Fatalf("commands array not returned: %q", out)
-	}
-	if !strings.HasPrefix(commands[0].(string), "rtk ") || !strings.HasPrefix(commands[2].(string), "rtk ") {
-		t.Fatalf("string commands not rewritten in order: %q", out)
-	}
-	if object, ok := commands[1].(string); !ok || !strings.HasPrefix(object, "rtk ") {
-		t.Fatalf("object command not normalized and rewritten: %q", out)
-	}
-}
-
-func TestRunRtkHookClineCommandsObjectCompoundNormalizesToString(t *testing.T) {
-	if !utilHaveRtk() {
-		t.Skip("rtk binary not installed")
-	}
-	payload := `{"tool_call":{"name":"run_commands","input":{"commands":[{"command":"cd /tmp && git status","label":"display only"}]}}}`
-	_, out := runRtkHookClinePayload(t, payload)
-	var resp struct {
-		OverrideInput map[string]any `json:"overrideInput"`
-	}
-	if err := json.Unmarshal([]byte(out), &resp); err != nil {
-		t.Fatal(err)
-	}
-	commands := resp.OverrideInput["commands"].([]any)
-	command, ok := commands[0].(string)
-	if !ok || !strings.Contains(command, "cd /tmp && rtk git status") {
-		t.Fatalf("compound object command not normalized and rewritten: %q", out)
 	}
 }
 
@@ -1156,7 +1096,7 @@ func TestRunRtkHookClineUnsupportedCommandPassthrough(t *testing.T) {
 	for _, cmd := range unsupported {
 		t.Run(cmd, func(t *testing.T) {
 			payload := `{"tool_call":{"name":"execute_command","input":{"command":` +
-				strconv.Quote(cmd) + `,"cwd":"/tmp"}}}`
+				strconv.Quote(cmd) + `}}}`
 			_, out := runRtkHookClinePayload(t, payload)
 			if out != "{}" {
 				t.Fatalf("unsupported command %q: got %q; want {}", cmd, out)
@@ -1169,7 +1109,7 @@ func TestRunRtkHookClineCommandsArrayUnsupportedPreserved(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")
 	}
-	payload := `{"tool_call":{"name":"run_commands","input":{"cwd":"/tmp","commands":["npm test","echo hello","sleep 1"]}}}`
+	payload := `{"tool_call":{"name":"run_commands","input":{"commands":["npm test","echo hello","sleep 1"]}}}`
 	_, out := runRtkHookClinePayload(t, payload)
 	if out != "{}" {
 		t.Fatalf("all-unsupported array: got %q; want {}", out)

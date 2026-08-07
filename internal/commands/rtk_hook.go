@@ -632,28 +632,15 @@ func clineRewriteCommands(toolInput map[string]any) ([]any, bool) {
 	changed := false
 	for i, item := range commands {
 		updated[i] = item
-		if cmdLine, ok := item.(string); ok {
-			newCmd, didChange, approve := copilotRtkDecide(cmdLine)
-			if approve && didChange && newCmd != "" && newCmd != cmdLine {
-				updated[i] = newCmd
-				changed = true
-			}
-			continue
-		}
-		commandItem, ok := item.(map[string]any)
+		cmdLine, ok := item.(string)
 		if !ok {
 			continue
 		}
-		cmdLine, _ := commandItem["command"].(string)
-		if cmdLine == "" {
-			continue
-		}
 		newCmd, didChange, approve := copilotRtkDecide(cmdLine)
-		if !approve || !didChange || newCmd == "" || newCmd == cmdLine {
-			continue
+		if approve && didChange && newCmd != "" && newCmd != cmdLine {
+			updated[i] = newCmd
+			changed = true
 		}
-		updated[i] = newCmd
-		changed = true
 	}
 	if !changed {
 		return nil, false
@@ -662,15 +649,6 @@ func clineRewriteCommands(toolInput map[string]any) ([]any, bool) {
 }
 
 func clineToolInput(req map[string]json.RawMessage) (string, map[string]any, bool) {
-	// Legacy (pre-SDK) bundle wraps the payload: {hookName, hookInput:{...}}.
-	if v, ok := req["hookInput"]; ok {
-		var hi map[string]json.RawMessage
-		if json.Unmarshal(v, &hi) == nil {
-			if name, input, ok := clineToolInput(hi); ok {
-				return name, input, true
-			}
-		}
-	}
 	if v, ok := req["tool_call"]; ok {
 		var tc struct {
 			Name  string         `json:"name"`
@@ -694,7 +672,7 @@ func clineToolInput(req map[string]json.RawMessage) (string, map[string]any, boo
 
 func clineShellTool(name string) bool {
 	switch name {
-	case "execute_command", "run_commands", "run_command", "bash", "shell":
+	case "execute_command", "run_commands":
 		return true
 	default:
 		return false

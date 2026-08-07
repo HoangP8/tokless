@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,14 +112,11 @@ func TestClineContextAndCodegraphWireVerify(t *testing.T) {
 
 func TestClineRtkHookWireUnwire(t *testing.T) {
 	clineToolProject(t)
-	p := clineTestEnv(t)
+	clineTestEnv(t)
 	binDir := t.TempDir()
 	kiloExecutableFixture(t, binDir, "tokless", "rtk-rewrite")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	hookPath := filepath.Join(p.HooksDir, "PreToolUse")
-	if util.IsWin {
-		hookPath = filepath.Join(p.HooksDir, "PreToolUse.ps1")
-	}
+	hookPath := clineRtkHookPath()
 	foreign := "#!/bin/sh\necho foreign\n"
 	if err := util.WriteFile(hookPath, foreign); err != nil {
 		t.Fatal(err)
@@ -168,6 +166,9 @@ func buildClineSimBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(binDir, "tokless")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -206,6 +207,10 @@ func runClineHookScript(t *testing.T, hookPath, payload string) string {
 // implement `rtk rewrite` for the exact commands these tests send.
 func fakeRtk(t *testing.T, dir string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		kiloExecutableFixture(t, dir, "rtk", "rtk-rewrite")
+		return
+	}
 	body := `#!/bin/sh
 if [ "$1" = "--version" ]; then printf 'rtk 1.0\n'; exit 0; fi
 if [ "$1" = "rewrite" ]; then
@@ -253,23 +258,17 @@ func TestClineRtkHookEndToEnd(t *testing.T) {
 	}
 
 	// Cline SDK payload: tool_call name + input.
-	payload := `{"hookName":"tool_call","tool_call":{"id":"1","name":"execute_command","input":{"command":"git status","cwd":"/tmp"}}}`
+	payload := `{"hookName":"tool_call","tool_call":{"id":"1","name":"execute_command","input":{"command":"git status"}}}`
 	out := runClineHookScript(t, hookPath, payload)
 	if !strings.HasPrefix(out, `{"overrideInput":`) {
 		t.Fatalf("expected overrideInput response, got %q", out)
 	}
-	if !strings.Contains(out, `"command":"rtk git status"`) || !strings.Contains(out, `"cwd":"/tmp"`) {
-		t.Fatalf("command not rewritten or fields lost: %q", out)
+	if !strings.Contains(out, `"command":"rtk git status"`) {
+		t.Fatalf("command not rewritten: %q", out)
 	}
 
-	// Legacy preToolUse shape still works.
-	legacy := `{"hookName":"tool_call","preToolUse":{"toolName":"execute_command","parameters":{"command":"git diff"}}}`
-	if out := runClineHookScript(t, hookPath, legacy); !strings.Contains(out, `"command":"rtk git diff"`) {
-		t.Fatalf("legacy shape not rewritten: %q", out)
-	}
-
-	// Commands-array shape preserved.
-	arr := `{"hookName":"tool_call","tool_call":{"id":"2","name":"run_commands","input":{"cwd":"/tmp","timeout":30,"commands":[{"command":"cd /tmp && git status","label":"display only","extra":"one"}]}}}`
+	// Commands-array (string) shape preserved.
+	arr := `{"hookName":"tool_call","tool_call":{"id":"2","name":"run_commands","input":{"timeout":30,"commands":["cd /tmp && git status","git diff"]}}}`
 	out = runClineHookScript(t, hookPath, arr)
 	var response struct {
 		OverrideInput struct {
@@ -281,7 +280,10 @@ func TestClineRtkHookEndToEnd(t *testing.T) {
 	}
 	command, ok := response.OverrideInput.Commands[0].(string)
 	if !ok || command != "cd /tmp && rtk git status" {
-		t.Fatalf("commands array not normalized and rewritten: %q", out)
+		t.Fatalf("commands array not rewritten: %q", out)
+	}
+	if second, ok := response.OverrideInput.Commands[1].(string); !ok || second != "rtk git diff" {
+		t.Fatalf("second command not rewritten: %q", out)
 	}
 
 	// Non-shell tool passthrough.
@@ -324,6 +326,7 @@ func TestClineRtkHookWindowsShimRuns(t *testing.T) {
 	}
 	bin := buildClineSimBinary(t)
 	fakeRtk(t, filepath.Dir(bin))
+	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	old := util.IsWin
 	util.IsWin = true

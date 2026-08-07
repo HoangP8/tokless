@@ -63,7 +63,7 @@ func codegraphMcpCommand(argv []string) string {
 // transport's cwd is not the project.
 func injectCodegraphPath(argv []string) []string {
 	for _, a := range argv {
-		if a == "--path" || strings.HasPrefix(a, "--path=") || a == "-p" || (len(a) > 2 && a[0] == '-' && a[1] == 'p') {
+		if a == "--path" || strings.HasPrefix(a, "--path=") || a == "-p" || strings.HasPrefix(a, "-p/") {
 			return argv
 		}
 	}

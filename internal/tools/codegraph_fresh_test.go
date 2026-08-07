@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/util"
@@ -10,6 +11,10 @@ import (
 
 func writeHealthyCodegraph(t *testing.T, path string) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		kiloExecutableFixture(t, filepath.Dir(path), filepath.Base(path), "codegraph")
+		return
+	}
 	script := `#!/bin/sh
 if [ "$1" = "--version" ]; then echo 1.2.3; exit 0; fi
 if [ "$1" = "serve" ] && [ "$2" = "--mcp" ]; then

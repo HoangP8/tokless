@@ -342,9 +342,6 @@ var cline = &core.AgentManifest{
 		if util.FindBinary("cline", nil) != "" {
 			return core.Detection{Installed: true, Source: "cli"}
 		}
-		if _, err := os.Stat(util.ClinePathsResolved().McpConfig); err == nil {
-			return core.Detection{Installed: true, Source: "config"}
-		}
 		return core.Detection{}
 	},
 }

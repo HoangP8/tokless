@@ -8,9 +8,19 @@ import (
 	"testing"
 )
 
+func tempProjectDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
 func TestRunMcpInitializesCodegraphBeforeProxy(t *testing.T) {
 	binDir := t.TempDir()
-	project := t.TempDir()
+	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
@@ -50,7 +60,7 @@ func TestInjectCodegraphPathPinsProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project := t.TempDir()
+	project := tempProjectDir(t)
 	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +112,28 @@ func TestInjectCodegraphPathKeepsEqualsFormAndShortCombined(t *testing.T) {
 	}
 }
 
+func TestInjectCodegraphPathDoesNotTreatUnrelatedShortFlagsAsPath(t *testing.T) {
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := tempProjectDir(t)
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	for _, flag := range []string{"-progress", "-pretty"} {
+		got := injectCodegraphPath([]string{"codegraph", "serve", flag})
+		if len(got) != 5 || got[3] != "--path" || got[4] != project {
+			t.Fatalf("flag %q suppressed path injection: got %v", flag, got)
+		}
+	}
+}
+
 func TestInjectCodegraphPathSkipsNonProjectDir(t *testing.T) {
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -122,7 +154,7 @@ func TestInjectCodegraphPathSkipsNonProjectDir(t *testing.T) {
 
 func TestRunMcpSyncsExistingCodegraphBeforeProxy(t *testing.T) {
 	binDir := t.TempDir()
-	project := t.TempDir()
+	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
