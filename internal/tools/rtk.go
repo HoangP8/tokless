@@ -906,6 +906,7 @@ var rtk = &core.ToolManifest{
 		"omp":         rtkWireOmp(),
 		"kilo":        kiloRtkWire,
 		"cline":       clineRtkWire,
+		"grok":        grokRtkWire,
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -969,6 +970,7 @@ var rtk = &core.ToolManifest{
 		},
 		"kilo":  kiloRtkUnwire,
 		"cline": clineRtkUnwire,
+		"grok":  grokRtkUnwire,
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -995,5 +997,6 @@ var rtk = &core.ToolManifest{
 		"omp":   func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
 		"kilo":  func() *bool { return core.BoolPtr(kiloRtkVerify()) },
 		"cline": func() *bool { return core.BoolPtr(clineRtkVerify()) },
+		"grok":  func() *bool { return core.BoolPtr(grokRtkVerify()) },
 	},
 }
