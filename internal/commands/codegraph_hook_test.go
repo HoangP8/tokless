@@ -50,6 +50,16 @@ func TestRunCodegraphIndexHookUsesSharedBlockingIndex(t *testing.T) {
 	}
 }
 
+func TestResolveHookProjectDirAcceptsCursorWorkspaceRoots(t *testing.T) {
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveHookProjectDirFromInput([]byte(`{"workspace_roots":["` + project + `"]}`)); got != project {
+		t.Fatalf("project dir = %q, want %q", got, project)
+	}
+}
+
 func TestRunCodegraphIndexHookSkipsExistingIndex(t *testing.T) {
 	binDir := t.TempDir()
 	project := t.TempDir()

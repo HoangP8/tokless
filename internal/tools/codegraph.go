@@ -392,9 +392,21 @@ var codegraph = &core.ToolManifest{
 	IndexProject: codegraphIndexProject,
 	IndexReady:   func() bool { return isTest() || util.ResolveCodegraphBin() != "" },
 	WireFor: map[string]core.AgentFn{
-		"claude":      codegraphWire("claude"),
-		"opencode":    codegraphWire("opencode"),
-		"codex":       codegraphWire("codex"),
+		"claude":   codegraphWire("claude"),
+		"opencode": codegraphWire("opencode"),
+		"codex":    codegraphWire("codex"),
+		"cursor": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			if changed, _ := agents.ConfigureCursorMcp("codegraph"); !changed && !agents.CursorMcpHas("codegraph") {
+				return false, nil
+			}
+			if !agents.ConfigureCursorMcpPermissions("codegraph") || !agents.InstallCursorCodegraphIndexHook() {
+				return false, nil
+			}
+			return agents.CursorMcpHas("codegraph") && agents.HasCursorMcpPermissions("codegraph") && agents.HasCursorCodegraphIndexHook(), nil
+		},
 		"antigravity": codegraphWire("antigravity"),
 		"copilot":     codegraphWire("copilot"),
 		"droid":       codegraphWire("droid"),
@@ -441,6 +453,16 @@ var codegraph = &core.ToolManifest{
 			}
 			unwireAutoIndex("codex")
 			RemoveOwner("codex", "codegraph")
+			return true, nil
+		},
+		"cursor": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			if !agents.RemoveCursorMcp("codegraph") || !agents.RemoveCursorCodegraphIndexHook() || !agents.RemoveCursorMcpPermissions("codegraph") {
+				return false, nil
+			}
+			RemoveOwner("cursor", "codegraph")
 			return true, nil
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
@@ -506,9 +528,12 @@ var codegraph = &core.ToolManifest{
 		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
-		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
-		"opencode":    func() *bool { return core.BoolPtr(codegraphVerify("opencode")) },
-		"codex":       func() *bool { return core.BoolPtr(codegraphVerify("codex")) },
+		"claude":   func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
+		"opencode": func() *bool { return core.BoolPtr(codegraphVerify("opencode")) },
+		"codex":    func() *bool { return core.BoolPtr(codegraphVerify("codex")) },
+		"cursor": func() *bool {
+			return core.BoolPtr(agents.CursorMcpHas("codegraph") && agents.HasCursorMcpPermissions("codegraph") && agents.HasCursorCodegraphIndexHook())
+		},
 		"antigravity": func() *bool { return core.BoolPtr(codegraphVerify("antigravity")) },
 		"copilot":     func() *bool { return core.BoolPtr(codegraphVerify("copilot")) },
 		"droid":       func() *bool { return core.BoolPtr(codegraphVerify("droid")) },

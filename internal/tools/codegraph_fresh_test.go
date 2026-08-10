@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/HoangP8/tokless/internal/agents"
+	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -28,6 +30,30 @@ fi
 exit 1
 `
 	os.WriteFile(path, []byte(script), 0755)
+}
+
+func TestCursorCodegraphWireVerifiesWithoutInstructionOwner(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	t.Setenv("CURSOR_CONFIG_DIR", util.CursorPathsResolved().Dir)
+	t.Setenv("WSL_DISTRO_NAME", "")
+	t.Setenv("WSL_INTEROP", "")
+	if changed, _ := agents.ConfigureCursorMcp("codegraph"); !changed || !agents.ConfigureCursorMcpPermissions("codegraph") || !agents.InstallCursorCodegraphIndexHook() {
+		t.Fatal("failed to prepare Cursor CodeGraph wiring")
+	}
+
+	_, _ = codegraph.WireFor["cursor"](core.RunOpts{})
+	if HasOwner("cursor", "codegraph") {
+		t.Fatal("Cursor CodeGraph wire wrote instruction owner")
+	}
+	verify := codegraph.VerifyFor["cursor"]()
+	t.Logf("verify=%v mcp=%v permissions=%v hook=%v", *verify, agents.CursorMcpHas("codegraph"), agents.HasCursorMcpPermissions("codegraph"), agents.HasCursorCodegraphIndexHook())
+	if verify == nil || !*verify {
+		t.Fatal("Cursor CodeGraph verification failed from MCP, permissions, and hook")
+	}
+	if !agents.CursorMcpHas("codegraph") || !agents.HasCursorMcpPermissions("codegraph") || !agents.HasCursorCodegraphIndexHook() {
+		t.Fatal("Cursor CodeGraph dependencies missing")
+	}
 }
 
 func TestCodegraphConfigureMcp(t *testing.T) {

@@ -698,9 +698,21 @@ var contextMode = &core.ToolManifest{
 	MinNodeMajor: contextModeMinNode,
 	Install:      ctxEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":      ctxWireClaude,
-		"opencode":    ctxWireOpenCode,
-		"codex":       ctxWireCodex,
+		"claude":   ctxWireClaude,
+		"opencode": ctxWireOpenCode,
+		"codex":    ctxWireCodex,
+		"cursor": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			if changed, _ := agents.ConfigureCursorMcp("context-mode"); !changed && !agents.CursorMcpHas("context-mode") {
+				return false, nil
+			}
+			if !agents.ConfigureCursorMcpPermissions("context-mode") {
+				return false, nil
+			}
+			return agents.CursorMcpHas("context-mode") && agents.HasCursorMcpPermissions("context-mode"), nil
+		},
 		"antigravity": ctxWireAntigravity,
 		"copilot":     ctxWireCopilot,
 		"droid":       ctxWireDroid,
@@ -734,9 +746,19 @@ var contextMode = &core.ToolManifest{
 		"cline": ctxWireCline,
 	},
 	UnwireFor: map[string]core.AgentFn{
-		"claude":      ctxUnwireClaude,
-		"opencode":    ctxUnwireOpenCode,
-		"codex":       ctxUnwireCodex,
+		"claude":   ctxUnwireClaude,
+		"opencode": ctxUnwireOpenCode,
+		"codex":    ctxUnwireCodex,
+		"cursor": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			if !agents.RemoveCursorMcp("context-mode") || !agents.RemoveCursorMcpPermissions("context-mode") {
+				return false, nil
+			}
+			RemoveOwner("cursor", "context-mode")
+			return true, nil
+		},
 		"antigravity": ctxUnwireAntigravity,
 		"copilot":     ctxUnwireCopilot,
 		"droid":       ctxUnwireDroid,
@@ -761,9 +783,12 @@ var contextMode = &core.ToolManifest{
 		"cline": ctxUnwireCline,
 	},
 	VerifyFor: map[string]core.VerifyFn{
-		"claude":      func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
-		"opencode":    func() *bool { return core.BoolPtr(ctxVerifyOpenCode()) },
-		"codex":       func() *bool { return core.BoolPtr(ctxVerifyCodex()) },
+		"claude":   func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
+		"opencode": func() *bool { return core.BoolPtr(ctxVerifyOpenCode()) },
+		"codex":    func() *bool { return core.BoolPtr(ctxVerifyCodex()) },
+		"cursor": func() *bool {
+			return core.BoolPtr(agents.CursorMcpHas("context-mode") && agents.HasCursorMcpPermissions("context-mode"))
+		},
 		"antigravity": func() *bool { return core.BoolPtr(ctxVerifyAntigravity()) },
 		"copilot": func() *bool {
 			return core.BoolPtr(agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook())

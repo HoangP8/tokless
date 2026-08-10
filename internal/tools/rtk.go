@@ -896,9 +896,19 @@ var rtk = &core.ToolManifest{
 	Channel:     core.ChannelGitHub,
 	Install:     rtkEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":      rtkWire("claude"),
-		"opencode":    rtkWire("opencode"),
-		"codex":       rtkWireCodex(),
+		"claude":   rtkWire("claude"),
+		"opencode": rtkWire("opencode"),
+		"codex":    rtkWireCodex(),
+		"cursor": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			if !agents.InstallCursorRtkHook() || !agents.ConfigureCursorRtkPermissions() {
+				return false, nil
+			}
+			WriteOwner("cursor", "rtk")
+			return agents.HasCursorRtkHook() && agents.HasCursorRtkPermissions() && HasOwner("cursor", "rtk"), nil
+		},
 		"antigravity": rtkWireAntigravity(),
 		"copilot":     rtkWireCopilot(),
 		"droid":       rtkWireDroid(),
@@ -931,6 +941,16 @@ var rtk = &core.ToolManifest{
 		"codex": func(core.RunOpts) (bool, error) {
 			agents.RemoveCodexRtkHook()
 			RemoveOwner("codex", "rtk")
+			return true, nil
+		},
+		"cursor": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				return true, nil
+			}
+			if !agents.RemoveCursorRtkHook() || !agents.RemoveCursorRtkPermissions() {
+				return false, nil
+			}
+			RemoveOwner("cursor", "rtk")
 			return true, nil
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
@@ -979,6 +999,9 @@ var rtk = &core.ToolManifest{
 		},
 		"codex": func() *bool {
 			return core.BoolPtr(agents.HasCodexRtkHook())
+		},
+		"cursor": func() *bool {
+			return core.BoolPtr(agents.HasCursorRtkHook() && agents.HasCursorRtkPermissions() && HasOwner("cursor", "rtk"))
 		},
 		"antigravity": func() *bool {
 			return core.BoolPtr(agents.HasAntigravityRtkHook())
