@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -334,6 +335,9 @@ func TestMCPContentLengthFramesAreAtomic(t *testing.T) {
 }
 
 func TestBoundedContextModeProxyReturnsWhenUpstreamCloses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh fixture")
+	}
 	inputReader, inputWriter := io.Pipe()
 	defer inputWriter.Close()
 	done := make(chan int, 1)

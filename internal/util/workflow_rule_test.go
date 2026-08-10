@@ -44,3 +44,13 @@ func TestCursorRulesMatchAgentInstructions(t *testing.T) {
 	}
 
 }
+
+func TestCursorProjectRuleContentNormalizesEmbeddedCRLF(t *testing.T) {
+	original := agentInstructionsTemplate
+	agentInstructionsTemplate = strings.ReplaceAll(strings.ReplaceAll(original, "\r\n", "\n"), "\n", "\r\n")
+	t.Cleanup(func() { agentInstructionsTemplate = original })
+
+	if got := CursorProjectRuleContent(CursorProjectRuleSpecs()[0]); strings.Contains(got, "\r") {
+		t.Errorf("Cursor rule content contains CRLF")
+	}
+}

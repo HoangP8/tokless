@@ -3,13 +3,49 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+func TestMain(m *testing.M) {
+	values := map[string]string{}
+	present := map[string]bool{}
+	for _, name := range []string{"CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"} {
+		values[name], present[name] = os.LookupEnv(name)
+		_ = os.Unsetenv(name)
+	}
+	util.SetHomeOverride("")
+	code := m.Run()
+	for name, value := range values {
+		if present[name] {
+			_ = os.Setenv(name, value)
+		} else {
+			_ = os.Unsetenv(name)
+		}
+	}
+	util.SetHomeOverride("")
+	os.Exit(code)
+}
+
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX executable fixture")
+	}
+}
+
+func skipUnlessLinux(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("checks Linux Cursor config paths")
+	}
+}
+
 func TestCursorDetectionAcceptsCursorAgentCLI(t *testing.T) {
+	skipOnWindows(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("TOKLESS_TEST", "0")
@@ -27,6 +63,7 @@ func TestCursorDetectionAcceptsCursorAgentCLI(t *testing.T) {
 }
 
 func TestCursorDetectionAcceptsAgentCLI(t *testing.T) {
+	skipOnWindows(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("TOKLESS_TEST", "0")
@@ -46,6 +83,7 @@ func TestCursorDetectionAcceptsAgentCLI(t *testing.T) {
 }
 
 func TestCursorDetectionRejectsUnrelatedAgentCLI(t *testing.T) {
+	skipOnWindows(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("TOKLESS_TEST", "0")
@@ -86,6 +124,7 @@ func TestCursorDetectionWindowsOfficialPaths(t *testing.T) {
 }
 
 func TestCursorDetectionWSLWindowsDesktop(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	home := filepath.Join(root, "mnt", "c", "Users", "CursorUser")
 	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
@@ -672,6 +711,7 @@ func TestCursorMcpRejectsLookalikeLegacyCodegraphCommands(t *testing.T) {
 }
 
 func TestCursorMcpMigratesLegacyNpxCodegraphFallback(t *testing.T) {
+	skipOnWindows(t)
 	withoutWSL(t)
 	for _, command := range []string{"npx", "npx.exe", "npx.cmd", "npx.bat"} {
 		t.Run(command, func(t *testing.T) {
@@ -693,6 +733,7 @@ func TestCursorMcpMigratesLegacyNpxCodegraphFallback(t *testing.T) {
 }
 
 func TestCursorDetectionWindowsKnownCLIDirs(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	local := filepath.Join(root, "local")
 	util.SetHomeOverride(filepath.Join(root, "home"))
@@ -765,6 +806,7 @@ func withoutWSL(t *testing.T) {
 }
 
 func TestCursorMcpUsesWindowsCursorConfigAndWSLBridge(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")
@@ -817,6 +859,7 @@ func TestCursorMcpUsesWindowsCursorConfigAndWSLBridge(t *testing.T) {
 }
 
 func TestCursorMcpHasValidatesNativeAndWindowsBridgeEntries(t *testing.T) {
+	skipOnWindows(t)
 	_, linuxHome, windowsHome := setupCursorMcpBridgeTest(t, true)
 	if changed, _ := ConfigureCursorMcp("context-mode"); !changed {
 		t.Fatal("MCP entry not added")
@@ -849,6 +892,7 @@ func TestCursorMcpHasValidatesNativeAndWindowsBridgeEntries(t *testing.T) {
 }
 
 func TestCursorMcpHasRejectsWindowsBridgeMismatch(t *testing.T) {
+	skipOnWindows(t)
 	_, _, windowsHome := setupCursorMcpBridgeTest(t, true)
 	if changed, _ := ConfigureCursorMcp("context-mode"); !changed {
 		t.Fatal("MCP entry not added")
@@ -867,6 +911,7 @@ func TestCursorMcpHasRejectsWindowsBridgeMismatch(t *testing.T) {
 }
 
 func TestCursorMcpHasIgnoresWindowsConfigWhenBridgeDisabled(t *testing.T) {
+	skipOnWindows(t)
 	_, linuxHome, windowsHome := setupCursorMcpBridgeTest(t, false)
 	if changed, _ := ConfigureCursorMcp("context-mode"); !changed {
 		t.Fatal("native MCP entry not added")
@@ -917,6 +962,7 @@ func setupCursorMcpBridgeTest(t *testing.T, bridge bool) (root, linuxHome, windo
 }
 
 func TestCursorMcpMigratesLegacyCodegraphToWSLBridge(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")
@@ -957,6 +1003,7 @@ func TestCursorMcpMigratesLegacyCodegraphToWSLBridge(t *testing.T) {
 }
 
 func TestCursorMcpStaysNativeInWSLWithoutWindowsCursor(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")
@@ -990,6 +1037,7 @@ func TestCursorMcpStaysNativeInWSLWithoutWindowsCursor(t *testing.T) {
 }
 
 func TestCursorMcpStaysNativeInWSLWithWindowsCursorByDefault(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")
@@ -1025,6 +1073,7 @@ func TestCursorMcpStaysNativeInWSLWithWindowsCursorByDefault(t *testing.T) {
 }
 
 func TestCursorRtkUsesWindowsCursorConfigAndWSLBridge(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")
@@ -1223,6 +1272,7 @@ func TestCursorRtkPermissionsIDEJSONCAndCLIStrict(t *testing.T) {
 }
 
 func TestCursorCLIConfigUsesLinuxOverrides(t *testing.T) {
+	skipUnlessLinux(t)
 	withoutWSL(t)
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })
@@ -1260,6 +1310,7 @@ func TestCursorCLIConfigUsesLinuxOverrides(t *testing.T) {
 }
 
 func TestCursorCLIConfigWSLWindowsPathWins(t *testing.T) {
+	skipUnlessLinux(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")
@@ -1349,6 +1400,7 @@ func TestRemoveCursorRtkPermissionsAbsentAndMixedSurfaces(t *testing.T) {
 }
 
 func TestCursorMcpPermissionsUsesWindowsCursorConfigAndWSLPath(t *testing.T) {
+	skipOnWindows(t)
 	root := t.TempDir()
 	linuxHome := filepath.Join(root, "linux-home")
 	windowsHome := filepath.Join(root, "windows-home")

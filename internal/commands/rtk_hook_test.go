@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -196,6 +197,9 @@ func TestRunRtkHookDroidPreservesToolInputFields(t *testing.T) {
 }
 
 func TestRunRtkHookCursorPreservesToolInputFields(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX executable fixture")
+	}
 	binDir := t.TempDir()
 	rtk := filepath.Join(binDir, "rtk")
 	if err := os.WriteFile(rtk, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.0.0; exit 0; fi\necho 'rtk ls'\n"), 0o755); err != nil {

@@ -114,7 +114,7 @@ func SectionMarkers(owner string) []string {
 var agentInstructionsTemplate string
 
 func instructionIndexSection() string {
-	body := strings.TrimRight(agentInstructionsTemplate, "\n")
+	body := strings.TrimRight(normalizedAgentInstructions(), "\n")
 	idx := strings.Index(body, "\n## ")
 	if idx < 0 {
 		return body
@@ -127,7 +127,7 @@ func instructionSection(owner string) string {
 	if marker == "" {
 		return ""
 	}
-	body := strings.TrimRight(agentInstructionsTemplate, "\n")
+	body := strings.TrimRight(normalizedAgentInstructions(), "\n")
 	start := strings.Index(body, marker)
 	if start < 0 {
 		return ""
@@ -140,6 +140,10 @@ func instructionSection(owner string) string {
 		return strings.TrimRight(rest[:idx+1], "\n")
 	}
 	return strings.TrimRight(rest, "\n")
+}
+
+func normalizedAgentInstructions() string {
+	return strings.ReplaceAll(agentInstructionsTemplate, "\r\n", "\n")
 }
 
 // ToklessAgentBody renders the full markdown body for the given owners.
