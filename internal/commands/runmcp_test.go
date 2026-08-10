@@ -5,7 +5,9 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func tempProjectDir(t *testing.T) string {
@@ -18,15 +20,36 @@ func tempProjectDir(t *testing.T) string {
 	return resolved
 }
 
-func TestRunMcpInitializesCodegraphBeforeProxy(t *testing.T) {
+func TestInjectCodegraphPathUsesWorkspace(t *testing.T) {
+	workspace := tempProjectDir(t)
+	if err := os.Mkdir(filepath.Join(workspace, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := injectCodegraphPath([]string{"codegraph", "serve"}, workspace)
+	want := []string{"codegraph", "serve", "--path", workspace}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestRunMcpStartsProxyBeforeSlowCodegraphIndex(t *testing.T) {
 	binDir := t.TempDir()
 	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
+	indexing := filepath.Join(project, "indexing")
+	complete := filepath.Join(project, "complete")
+	proxy := filepath.Join(project, "proxy")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
 		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
-		"if [ \"$1\" = init ]; then mkdir -p .codegraph; touch .codegraph/codegraph.db; exit 0; fi\n" +
-		"[ -f .codegraph/codegraph.db ] || exit 1\n"
+		"if [ \"$1\" = init ]; then touch \"$CODEGRAPH_INDEXING\"; sleep 1; mkdir -p .codegraph; touch .codegraph/codegraph.db \"$CODEGRAPH_COMPLETE\"; exit 0; fi\n" +
+		"touch \"$CODEGRAPH_PROXY\"\n" +
+		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -35,6 +58,9 @@ func TestRunMcpInitializesCodegraphBeforeProxy(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CODEGRAPH_LOG", log)
+	t.Setenv("CODEGRAPH_INDEXING", indexing)
+	t.Setenv("CODEGRAPH_COMPLETE", complete)
+	t.Setenv("CODEGRAPH_PROXY", proxy)
 	t.Setenv("TOKLESS_TEST", "")
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -45,13 +71,35 @@ func TestRunMcpInitializesCodegraphBeforeProxy(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldDir) })
 
+	started := time.Now()
 	if code := RunMcp([]string{"codegraph", "serve"}); code != 0 {
 		t.Fatalf("RunMcp = %d", code)
 	}
+	if elapsed := time.Since(started); elapsed >= 900*time.Millisecond {
+		t.Fatalf("RunMcp blocked for slow CodeGraph index: %s", elapsed)
+	}
+	if _, err := os.Stat(proxy); err != nil {
+		t.Fatalf("proxy did not start: %v", err)
+	}
+	if _, err := os.Stat(complete); !os.IsNotExist(err) {
+		t.Fatalf("CodeGraph index completed before proxy returned: err=%v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(complete); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("CodeGraph index did not complete")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	got, err := os.ReadFile(log)
-	want := "init -i\nserve --path " + project + "\n"
-	if err != nil || string(got) != want {
-		t.Fatalf("calls = %q, err = %v; want %q", got, err, want)
+	if err != nil {
+		t.Fatalf("read calls: %v", err)
+	}
+	if !strings.Contains(string(got), "init -i\n") || !strings.Contains(string(got), "serve --path "+project+"\n") {
+		t.Fatalf("calls = %q; want index and valid proxy launch", got)
 	}
 }
 
@@ -152,7 +200,7 @@ func TestInjectCodegraphPathSkipsNonProjectDir(t *testing.T) {
 	}
 }
 
-func TestRunMcpSyncsExistingCodegraphBeforeProxy(t *testing.T) {
+func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {
 	binDir := t.TempDir()
 	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
@@ -187,8 +235,10 @@ func TestRunMcpSyncsExistingCodegraphBeforeProxy(t *testing.T) {
 		t.Fatalf("RunMcp = %d", code)
 	}
 	got, err := os.ReadFile(log)
-	want := "sync\nserve --path " + project + "\n"
-	if err != nil || string(got) != want {
-		t.Fatalf("calls = %q, err = %v; want %q", got, err, want)
+	if err != nil {
+		t.Fatalf("read calls: %v", err)
+	}
+	if strings.Contains(string(got), "sync\n") || !strings.Contains(string(got), "serve --path "+project+"\n") {
+		t.Fatalf("calls = %q; want proxy launch without external sync", got)
 	}
 }

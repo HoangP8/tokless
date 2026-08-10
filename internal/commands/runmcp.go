@@ -11,8 +11,13 @@ import (
 
 func RunMcp(argv []string) int {
 	agent := ""
+	workspace := ""
 	if len(argv) >= 2 && argv[0] == "--agent" {
 		agent = argv[1]
+		argv = argv[2:]
+	}
+	if len(argv) >= 2 && argv[0] == "--workspace" {
+		workspace = argv[1]
 		argv = argv[2:]
 	}
 	contextMode := false
@@ -34,14 +39,19 @@ func RunMcp(argv []string) int {
 		}
 	}
 	if codegraphPath != "" {
-		_ = RunCodegraphAutoIndex()
-		argv = injectCodegraphPath(argv)
+		argv = injectCodegraphPath(argv, workspace)
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		path = argv[0]
 	}
-	return runMcpProxy(agent, path, argv, os.Environ(), contextMode)
+	var afterStart func()
+	if codegraphPath != "" {
+		afterStart = func() {
+			go func() { _ = RunCodegraphMcpBootstrap(workspace) }()
+		}
+	}
+	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), contextMode, afterStart)
 }
 
 // codegraphMcpCommand returns CodeGraph executable for direct and cmd /c forms.
@@ -61,15 +71,22 @@ func codegraphMcpCommand(argv []string) string {
 
 // injectCodegraphPath pins the CodeGraph project root with --path when the MCP
 // transport's cwd is not the project.
-func injectCodegraphPath(argv []string) []string {
+func injectCodegraphPath(argv []string, workspace ...string) []string {
 	for _, a := range argv {
 		if a == "--path" || strings.HasPrefix(a, "--path=") || a == "-p" || strings.HasPrefix(a, "-p/") {
 			return argv
 		}
 	}
-	dir, err := os.Getwd()
-	if err != nil {
-		return argv
+	dir := ""
+	if len(workspace) > 0 {
+		dir = workspace[0]
+	}
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return argv
+		}
 	}
 	dir = findProjectDir(dir)
 	if !looksLikeProject(dir) {

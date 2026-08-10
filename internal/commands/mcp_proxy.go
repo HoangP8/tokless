@@ -17,15 +17,25 @@ import (
 
 // runMcpProxy spawns the MCP server as a child and proxies stdio.
 func runMcpProxy(agent, path string, argv, env []string, filterContextMode bool) int {
-	return runMcpProxyIO(agent, path, argv, env, os.Stdin, os.Stdout, os.Stderr, filterContextMode)
+	return runMcpProxyAfterStart(agent, path, argv, env, filterContextMode, nil)
 }
 
 func runMcpProxyIO(agent, path string, argv, env []string, input io.Reader, output, stderr io.Writer, filterContextMode bool) int {
+	return runMcpProxyIOAfterStart(agent, path, argv, env, input, output, stderr, filterContextMode, nil)
+}
+
+func runMcpProxyAfterStart(agent, path string, argv, env []string, filterContextMode bool, afterStart func()) int {
+	return runMcpProxyIOAfterStart(agent, path, argv, env, os.Stdin, os.Stdout, os.Stderr, filterContextMode, afterStart)
+}
+
+func runMcpProxyIOAfterStart(agent, path string, argv, env []string, input io.Reader, output, stderr io.Writer, filterContextMode bool, afterStart func()) int {
 	exe, args := resolveMcpCommand(path, argv)
 	cmd := exec.Command(exe, args...)
 	cmd.Env = mcpChildEnv(env)
 	cmd.Stderr = stderr
 	if filterContextMode {
+		if afterStart != nil {
+		}
 		return runBoundedContextModeProxy(cmd, input, output)
 	}
 	cmd.Stdin = input
@@ -37,6 +47,9 @@ func runMcpProxyIO(agent, path string, argv, env []string, input io.Reader, outp
 	}
 	if err := cmd.Start(); err != nil {
 		return 1
+	}
+	if afterStart != nil {
+		afterStart()
 	}
 	io.Copy(output, stdout)
 	return waitExit(cmd)

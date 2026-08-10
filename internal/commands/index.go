@@ -132,14 +132,41 @@ func RunIndex(opts InitOptions, auto bool) int {
 }
 
 // RunCodegraphAutoIndex indexes only CodeGraph for MCP startup.
-func RunCodegraphAutoIndex() int {
-	dir, err := os.Getwd()
-	if err != nil {
-		util.L.Err("cannot resolve current directory: " + err.Error())
-		return 1
+func RunCodegraphAutoIndex(workspace ...string) int {
+	dir := ""
+	if len(workspace) > 0 {
+		dir = workspace[0]
+	}
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			util.L.Err("cannot resolve current directory: " + err.Error())
+			return 1
+		}
 	}
 	dir = findProjectDir(dir)
 	if !looksLikeProject(dir) {
+		return 0
+	}
+	return runCodegraphAutoIndex(dir)
+}
+
+// RunCodegraphMcpBootstrap initializes only a missing CodeGraph index.
+func RunCodegraphMcpBootstrap(workspace ...string) int {
+	dir := ""
+	if len(workspace) > 0 {
+		dir = workspace[0]
+	}
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return 0
+		}
+	}
+	dir = findProjectDir(dir)
+	if !looksLikeProject(dir) || tools.HasCodegraphIndex(dir) {
 		return 0
 	}
 	return runCodegraphAutoIndex(dir)
@@ -172,9 +199,13 @@ func resolveHookProjectDirFromInput(input []byte) string {
 	if len(input) > 0 {
 		var req struct {
 			WorkspacePaths []string `json:"workspacePaths"`
+			WorkspaceRoots []string `json:"workspace_roots"`
 			Cwd            string   `json:"cwd"`
 		}
 		if json.Unmarshal(input, &req) == nil {
+			if len(req.WorkspaceRoots) > 0 {
+				return findProjectDir(req.WorkspaceRoots[0])
+			}
 			if len(req.WorkspacePaths) > 0 {
 				return findProjectDir(req.WorkspacePaths[0])
 			}
