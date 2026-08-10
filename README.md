@@ -29,22 +29,22 @@
 <div align="center">
   <table>
     <tr>
-      <td align="center" width="140"><a href="https://github.com/anthropics/claude-code"><img src="assets/agents/claude.jpg" width="48" height="48" alt="Claude Code" /></a><br/><b>Claude Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://github.com/openai/codex"><img src="assets/agents/codex.jpg" width="48" height="48" alt="Codex" /></a><br/><b>Codex</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://antigravity.google"><img src="assets/agents/antigravity.png" width="48" height="48" alt="Antigravity" /></a><br/><b>Antigravity</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://github.com/github/copilot-cli"><img src="assets/agents/copilot.jpg" width="48" height="48" alt="GitHub Copilot" /></a><br/><b>GitHub Copilot</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://github.com/anthropics/claude-code"><img src="assets/agents/claude.jpg" width="48" height="48" alt="Claude Code" /></a><br/><b>Claude Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE-2ea44f" alt="✓ CLI + IDE" /></td>
+      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://github.com/openai/codex"><img src="assets/agents/codex.jpg" width="48" height="48" alt="Codex" /></a><br/><b>Codex</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://antigravity.google"><img src="assets/agents/antigravity.png" width="48" height="48" alt="Antigravity" /></a><br/><b>Antigravity</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE-2ea44f" alt="✓ CLI + IDE" /></td>
+      <td align="center" width="140"><a href="https://github.com/github/copilot-cli"><img src="assets/agents/copilot.jpg" width="48" height="48" alt="GitHub Copilot" /></a><br/><b>GitHub Copilot</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE-2ea44f" alt="✓ CLI + IDE" /></td>
     </tr>
     <tr>
-      <td align="center" width="140"><a href="https://factory.ai"><img src="assets/agents/factory.png" width="48" height="48" alt="Factory Droid" /></a><br/><b>Factory Droid</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://pi.dev"><img src="assets/agents/pi.png" width="48" height="48" alt="Pi" /></a><br/><b>Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://cursor.com"><img src="assets/agents/cursor.jpg" width="36" height="36" alt="Cursor" /></a><br/>Cursor<br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://x.ai/cli"><picture><source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png" /><source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" /><img src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="36" height="36" alt="Grok Build" /></picture></a><br/><b>Grok Build</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://kilo.ai/cli"><img src="https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-kilocode.png" width="36" height="36" alt="Kilo Code" /></a><br/><b>Kilo Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://factory.ai"><img src="assets/agents/factory.png" width="48" height="48" alt="Factory Droid" /></a><br/><b>Factory Droid</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://pi.dev"><img src="assets/agents/pi.png" width="48" height="48" alt="Pi" /></a><br/><b>Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://cursor.com"><img src="assets/agents/cursor.jpg" width="36" height="36" alt="Cursor" /></a><br/>Cursor<br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE-2ea44f" alt="✓ CLI + IDE" /></td>
+      <td align="center" width="140"><a href="https://x.ai/cli"><picture><source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png" /><source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" /><img src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="36" height="36" alt="Grok Build" /></picture></a><br/><b>Grok Build</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://kilo.ai/cli"><img src="https://raw.githubusercontent.com/junhoyeo/tokscale/main/.github/assets/client-kilocode.png" width="36" height="36" alt="Kilo Code" /></a><br/><b>Kilo Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
     </tr>
     <tr>
-      <td align="center" width="140"><a href="https://github.com/can1357/oh-my-pi"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="36" height="36" alt="Oh My Pi" /></a><br/><b>Oh My Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
-      <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="36" height="36" alt="Cline" /></a><br/><b>Cline</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20Supported-2ea44f" alt="✓ Supported" /></td>
+      <td align="center" width="140"><a href="https://github.com/can1357/oh-my-pi"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="36" height="36" alt="Oh My Pi" /></a><br/><b>Oh My Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="36" height="36" alt="Cline" /></a><br/><b>Cline</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
@@ -113,7 +113,7 @@ MCP Tools
 
 How each tool connects to each agent:
 
-> **Instruction** means Tokless-managed static rules.
+> **Instruction** means static markdown instructions.
 
 <table width="1500">
   <thead>
@@ -126,6 +126,7 @@ How each tool connects to each agent:
       <th width="220" nowrap>Copilot</th>
       <th width="220" nowrap>Droid</th>
       <th width="225" nowrap>Pi</th>
+      <th width="225" nowrap>Oh My Pi</th>
       <th width="185" nowrap>Grok</th>
       <th width="185" nowrap>Kilo Code</th>
       <th width="185" nowrap>Cline</th>
@@ -133,11 +134,11 @@ How each tool connects to each agent:
     </tr>
   </thead>
   <tbody>
-    <tr><td nowrap><b>rtk</b></td><td nowrap>Hook + Allow</td><td nowrap>Plugin</td><td nowrap>Hook</td><td nowrap>Hook + Allow</td><td nowrap>Hook + Allow</td><td nowrap>Hook</td><td nowrap>Extension</td><td nowrap>❌</td><td nowrap>Global Plugin</td><td nowrap>Hook</td><td nowrap>Hook</td></tr>
-    <tr><td nowrap><b>caveman</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
-    <tr><td nowrap><b>ponytail</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
-    <tr><td nowrap><b>codegraph</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td></tr>
-    <tr><td nowrap><b>context-mode</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Hook + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td></tr>
+    <tr><td nowrap><b>rtk</b></td><td nowrap>Hook + Allow</td><td nowrap>Plugin</td><td nowrap>Hook</td><td nowrap>Hook + Allow</td><td nowrap>Hook + Allow</td><td nowrap>Hook</td><td nowrap>Extension</td><td nowrap>Extension</td><td nowrap>Hook</td><td nowrap>Global Plugin</td><td nowrap>Hook</td><td nowrap>Hook</td></tr>
+    <tr><td nowrap><b>caveman</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
+    <tr><td nowrap><b>ponytail</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
+    <tr><td nowrap><b>codegraph</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td></tr>
+    <tr><td nowrap><b>context-mode</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Hook + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td></tr>
   </tbody>
 </table>
 
