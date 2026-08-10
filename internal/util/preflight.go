@@ -108,6 +108,24 @@ func WindowsHomeFromWSL() string {
 	return out
 }
 
+// WindowsCursorHomeFromWSL returns the Windows user home as a WSL path when
+// running under WSL and Cursor's Windows desktop install is present.
+func WindowsCursorHomeFromWSL() string {
+	h := WindowsHomeFromWSL()
+	if h == "" {
+		return ""
+	}
+	for _, p := range []string{
+		filepath.Join(h, "AppData", "Local", "Programs", "cursor", "Cursor.exe"),
+		filepath.Join(h, "AppData", "Local", "Programs", "Cursor", "Cursor.exe"),
+	} {
+		if Exists(p) {
+			return h
+		}
+	}
+	return ""
+}
+
 // isWindowsMount matches WSL drvfs paths (/mnt/c/...), not arbitrary /mnt dirs.
 func isWindowsMount(p string) bool {
 	return len(p) > 6 && strings.HasPrefix(p, "/mnt/") && p[6] == '/' &&

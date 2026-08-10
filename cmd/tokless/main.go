@@ -123,10 +123,16 @@ func run() int {
 			return commands.RunRtkHookCline()
 		}
 	}
+	if len(os.Args) >= 4 && os.Args[1] == "rtk" && os.Args[2] == "hook" && os.Args[3] == "cursor" {
+		return commands.RunRtkHookCursor()
+	}
 	if len(os.Args) >= 3 && os.Args[1] == "codex-perm" && os.Args[2] == "codex" {
 		return commands.RunCodexPermHook()
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "agy-hook" && os.Args[2] == "codegraph-index" {
+		return commands.RunCodegraphIndexHook()
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "cursor-hook" && os.Args[2] == "codegraph-index" {
 		return commands.RunCodegraphIndexHook()
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "copilot-hook" && os.Args[2] == "codegraph-index" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -191,6 +192,29 @@ func TestRunRtkHookDroidPreservesToolInputFields(t *testing.T) {
 	}
 	if got := resp.HookSpecificOutput.UpdatedInput["description"]; got != "keep me" {
 		t.Errorf("description=%v; want preserved field", got)
+	}
+}
+
+func TestRunRtkHookCursorPreservesToolInputFields(t *testing.T) {
+	binDir := t.TempDir()
+	rtk := filepath.Join(binDir, "rtk")
+	if err := os.WriteFile(rtk, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.0.0; exit 0; fi\necho 'rtk ls'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out := runRtkHookInput(t, `{"tool_name":"Shell","tool_input":{"command":"ls","timeout":15,"description":"keep me"}}`, RunRtkHookCursor)
+	var resp struct {
+		Permission   string         `json:"permission"`
+		UpdatedInput map[string]any `json:"updated_input"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("bad JSON %q: %v", out, err)
+	}
+	if resp.Permission != "allow" || resp.UpdatedInput["command"] != "rtk ls" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.UpdatedInput["timeout"] != float64(15) || resp.UpdatedInput["description"] != "keep me" {
+		t.Fatalf("tool input fields not preserved: %+v", resp.UpdatedInput)
 	}
 }
 

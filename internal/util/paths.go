@@ -293,6 +293,25 @@ func CopilotPathsResolved() CopilotPaths {
 	}
 }
 
+// CursorPaths holds Cursor's user configuration locations.
+type CursorPaths struct {
+	Dir, McpConfig string
+}
+
+func CursorPathsResolved() CursorPaths {
+	dir := filepath.Join(Home(), ".cursor")
+	if !IsWin && runtime.GOOS != "darwin" {
+		if env := os.Getenv("CURSOR_CONFIG_DIR"); env != "" {
+			dir = env
+		} else if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+			dir = filepath.Join(x, "cursor")
+		}
+	}
+	return CursorPaths{Dir: dir, McpConfig: filepath.Join(dir, "mcp.json")}
+}
+
+func CursorGlobalMcpPath() string { return CursorPathsResolved().McpConfig }
+
 // CopyDirMerge recursively copies src into dst, overwriting files.
 func CopyDirMerge(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {

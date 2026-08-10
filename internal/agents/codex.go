@@ -802,6 +802,7 @@ func Register() {
 	core.RegisterAgent(claude)
 	core.RegisterAgent(opencode)
 	core.RegisterAgent(codex)
+	core.RegisterAgent(cursor)
 	core.RegisterAgent(antigravity)
 	core.RegisterAgent(copilot)
 	core.RegisterAgent(grok)

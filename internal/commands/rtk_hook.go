@@ -113,6 +113,34 @@ func rtkRewrite(cmdLine string) (string, bool) {
 	return rtkRewriteOnce(cmdLine)
 }
 
+// RunRtkHookCursor handles Cursor's native preToolUse hook contract.
+func RunRtkHookCursor() int {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(input) == 0 {
+		return 0
+	}
+	var req struct {
+		ToolName  string         `json:"tool_name"`
+		ToolInput map[string]any `json:"tool_input"`
+	}
+	if json.Unmarshal(input, &req) != nil || req.ToolName != "Shell" {
+		return 0
+	}
+	cmdLine, ok := req.ToolInput["command"].(string)
+	if !ok || cmdLine == "" {
+		return 0
+	}
+	updated := cloneMap(req.ToolInput)
+	if newCmd, changed := rtkRewrite(cmdLine); changed {
+		updated["command"] = newCmd
+	}
+	resp := map[string]any{"permission": "allow", "updated_input": updated}
+	if out, err := json.Marshal(resp); err == nil {
+		fmt.Println(string(out))
+	}
+	return 0
+}
+
 // copilotRtkRewrite runs `rtk rewrite` with Copilot-specific guards:
 // unsafe-find passthrough → single rewrite → per-segment fallback → fixpoint.
 func copilotRtkRewrite(cmdLine string) (string, bool) {
