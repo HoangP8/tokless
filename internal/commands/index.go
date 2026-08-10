@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/tools"
@@ -35,6 +38,22 @@ func findProjectDir(dir string) string {
 		dir = parent
 	}
 	return dir
+}
+
+// cursorProjectDir resolves current project root like CodeGraph.
+func cursorProjectDir(explicit bool) (string, bool, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", false, err
+	}
+	root := findProjectDir(dir)
+	if looksLikeProject(root) {
+		return root, true, nil
+	}
+	if explicit {
+		return dir, true, nil
+	}
+	return "", false, nil
 }
 
 func RunIndex(opts InitOptions, auto bool) int {
@@ -195,28 +214,76 @@ func RunCodegraphIndexHook() int {
 	return runCodegraphAutoIndex(dir)
 }
 
-func resolveHookProjectDirFromInput(input []byte) string {
-	if len(input) > 0 {
-		var req struct {
-			WorkspacePaths []string `json:"workspacePaths"`
-			WorkspaceRoots []string `json:"workspace_roots"`
-			Cwd            string   `json:"cwd"`
+// RunCursorProjectRulesHook refreshes project rules on Cursor workspace startup.
+func RunCursorProjectRulesHook() int {
+	input, _ := io.ReadAll(os.Stdin)
+	for _, root := range resolveHookProjectDirs(input) {
+		project := findProjectDir(root)
+		if !looksLikeProject(project) {
+			continue
 		}
-		if json.Unmarshal(input, &req) == nil {
-			if len(req.WorkspaceRoots) > 0 {
-				return findProjectDir(req.WorkspaceRoots[0])
-			}
-			if len(req.WorkspacePaths) > 0 {
-				return findProjectDir(req.WorkspacePaths[0])
-			}
-			if req.Cwd != "" {
-				return findProjectDir(req.Cwd)
+		if ok, err := util.InstallCursorProjectRules(project, false); err != nil || !ok {
+			if err != nil {
+				util.L.Err(err.Error())
 			}
 		}
 	}
-	dir, err := os.Getwd()
-	if err != nil {
+	return 0
+}
+
+func resolveHookProjectDirs(input []byte) []string {
+	var req struct {
+		WorkspacePaths []string `json:"workspacePaths"`
+		WorkspaceRoots []string `json:"workspace_roots"`
+		Cwd            string   `json:"cwd"`
+	}
+	if len(input) > 0 {
+		_ = json.Unmarshal(input, &req)
+	}
+	paths := append(append([]string{}, req.WorkspaceRoots...), req.WorkspacePaths...)
+	if req.Cwd != "" {
+		paths = append(paths, req.Cwd)
+	}
+	if len(paths) == 0 {
+		if cwd, err := os.Getwd(); err == nil {
+			paths = append(paths, cwd)
+		}
+	}
+	seen := map[string]bool{}
+	var roots []string
+	for _, path := range paths {
+		path = normalizeCursorHookPath(path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		roots = append(roots, path)
+	}
+	return roots
+}
+
+func normalizeCursorHookPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
 		return ""
 	}
-	return findProjectDir(dir)
+	if runtime.GOOS != "linux" || os.Getenv("WSL_DISTRO_NAME") == "" || !isWindowsAbsolutePath(path) {
+		return filepath.Clean(path)
+	}
+	if converted, err := exec.Command("wslpath", "-u", path).Output(); err == nil {
+		return filepath.Clean(strings.TrimSpace(string(converted)))
+	}
+	return ""
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	return len(path) >= 3 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')
+}
+
+func resolveHookProjectDirFromInput(input []byte) string {
+	paths := resolveHookProjectDirs(input)
+	if len(paths) == 0 {
+		return ""
+	}
+	return findProjectDir(paths[0])
 }

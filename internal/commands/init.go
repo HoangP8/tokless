@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 
+	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	toolsPkg "github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
@@ -171,8 +172,33 @@ func RunInit(opts InitOptions) int {
 		util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " " + a.Label + " not installed — install it first: " + util.C.Cyan(a.Homepage))
 	}
 
+	failures := map[string][]string{}
+	wireLogs := map[string]string{}
+	if contains(requested, "cursor") {
+		workspace, _, err := cursorProjectDir(true)
+		if err != nil {
+			failures["cursor"] = []string{"project rules"}
+			wireLogs["cursor"] = err.Error()
+		} else {
+			ok, err := util.InstallCursorProjectRules(workspace, opts.DryRun)
+			if err != nil || !ok {
+				failures["cursor"] = []string{"project rules"}
+				if err != nil {
+					wireLogs["cursor"] = err.Error()
+				}
+			}
+			if !opts.DryRun && !agents.InstallCursorProjectRulesHook() {
+				failures["cursor"] = append(failures["cursor"], "project rules hook")
+			}
+		}
+	}
+
 	if len(wireIDs) == 0 {
 		util.SetQuiet(false)
+		for id, failed := range failures {
+			util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + core.GetAgent(id).Label + ": " + joinComma(failed) + " not wired.")
+			printFailureDetail(map[string]string{core.GetAgent(id).Label: wireLogs[id]})
+		}
 		if len(skipped) == 0 {
 			util.L.Raw("  " + util.C.Gray("Nothing selected. Tools are installed; re-run to wire an agent."))
 		}
@@ -180,8 +206,6 @@ func RunInit(opts InitOptions) int {
 		return 0
 	}
 
-	failures := map[string][]string{}
-	wireLogs := map[string]string{}
 	wireBar := util.NewSectionProgress("Agents")
 	wireBar.Start(len(wireIDs))
 	for _, agentID := range wireIDs {

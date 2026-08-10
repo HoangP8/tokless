@@ -578,6 +578,28 @@ func cursorCodegraphHookCommandFor(bridge bool) string {
 	return strings.Join(append([]string{path}, args...), " ")
 }
 
+func cursorProjectRulesHookCommand() string {
+	return cursorProjectRulesHookCommandFor(false)
+}
+
+func cursorProjectRulesHookCommandFor(bridge bool) string {
+	args := []string{"cursor-hook", "project-rules"}
+	if bridge {
+		wsl := []string{"--"}
+		if distro := os.Getenv("WSL_DISTRO_NAME"); distro != "" {
+			wsl = []string{"-d", cursorWindowsCommandArg(distro), "--"}
+		}
+		return strings.Join(append([]string{"wsl.exe"}, append(wsl, append([]string{cursorWindowsCommandArg(util.ToklessAbs())}, args...)...)...), " ")
+	}
+	path := util.ToklessAbs()
+	if util.IsWin {
+		path = cursorWindowsCommandArg(path)
+	} else {
+		path = cursorPOSIXCommandArg(path)
+	}
+	return strings.Join(append([]string{path}, args...), " ")
+}
+
 func cursorWindowsCommandArg(arg string) string {
 	return `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
 }
@@ -771,6 +793,188 @@ func RemoveCursorCodegraphIndexHook() bool {
 	for i, path := range paths {
 		before[i], _ = util.ReadFileSafe(path)
 		if !removeCursorCodegraphIndexHook(path) {
+			for j := 0; j < i; j++ {
+				_ = util.WriteFile(paths[j], before[j])
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func cursorOwnedProjectRulesHookEntryFor(v any, want string) bool {
+	e, ok := v.(*util.OrderedMap)
+	if !ok || e.Len() != 1 {
+		return false
+	}
+	command, ok := e.Get("command")
+	return ok && command == want
+}
+
+func HasCursorProjectRulesHook() bool {
+	for _, path := range cursorHooksFiles() {
+		if !hasCursorProjectRulesHook(path, cursorProjectRulesHookCommandFor(cursorTargetBridge(path))) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasCursorProjectRulesHook(path, want string) bool {
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	hooks, ok := cursorMcpMapReadKey(cfg, "hooks")
+	if !ok {
+		return false
+	}
+	for _, event := range []string{"sessionStart", "workspaceOpen"} {
+		v, ok := hooks.Get(event)
+		if !ok {
+			return false
+		}
+		entries, ok := v.([]any)
+		if !ok {
+			return false
+		}
+		count := 0
+		for _, entry := range entries {
+			if cursorOwnedProjectRulesHookEntryFor(entry, want) {
+				count++
+			}
+		}
+		if count != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func installCursorProjectRulesHook(path string) bool {
+	raw, exists := util.ReadFileSafe(path)
+	if exists && strings.TrimSpace(raw) != "" && hasJSONCComment(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil && exists && strings.TrimSpace(raw) != "" {
+		return false
+	}
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+	hooksValue, found := cfg.Get("hooks")
+	var hooks *util.OrderedMap
+	if found {
+		var ok bool
+		hooks, ok = hooksValue.(*util.OrderedMap)
+		if !ok {
+			return false
+		}
+	} else {
+		hooks = util.NewOrderedMap()
+		cfg.Set("hooks", hooks)
+	}
+	command := cursorProjectRulesHookCommandFor(cursorTargetBridge(path))
+	for _, event := range []string{"sessionStart", "workspaceOpen"} {
+		v, found := hooks.Get(event)
+		if found {
+			if _, ok := v.([]any); !ok {
+				return false
+			}
+		}
+		entries, _ := v.([]any)
+		kept := make([]any, 0, len(entries)+1)
+		for _, entry := range entries {
+			if !cursorOwnedProjectRulesHookEntryFor(entry, command) {
+				kept = append(kept, entry)
+			}
+		}
+		e := util.NewOrderedMap()
+		e.Set("command", command)
+		kept = append(kept, e)
+		hooks.Set(event, kept)
+	}
+	cfg.Set("version", 1)
+	next := util.StringifyJSON(cfg)
+	return next == raw || util.WriteFile(path, next) == nil
+}
+
+func InstallCursorProjectRulesHook() bool {
+	paths := cursorHooksFiles()
+	before := make([]string, len(paths))
+	for i, path := range paths {
+		before[i], _ = util.ReadFileSafe(path)
+		if !installCursorProjectRulesHook(path) {
+			for j := 0; j < i; j++ {
+				_ = util.WriteFile(paths[j], before[j])
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func removeCursorProjectRulesHook(path string) bool {
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		return true
+	}
+	if strings.TrimSpace(raw) != "" && hasJSONCComment(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	hooks, ok := cursorMcpMapReadKey(cfg, "hooks")
+	if !ok {
+		return true
+	}
+	command := cursorProjectRulesHookCommandFor(cursorTargetBridge(path))
+	changed := false
+	for _, event := range []string{"sessionStart", "workspaceOpen"} {
+		v, found := hooks.Get(event)
+		if !found {
+			continue
+		}
+		entries, ok := v.([]any)
+		if !ok {
+			return false
+		}
+		kept := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			if cursorOwnedProjectRulesHookEntryFor(entry, command) {
+				changed = true
+			} else {
+				kept = append(kept, entry)
+			}
+		}
+		if len(kept) == 0 {
+			hooks.Delete(event)
+		} else {
+			hooks.Set(event, kept)
+		}
+	}
+	if hooks.Len() == 0 {
+		cfg.Delete("hooks")
+	}
+	if !changed {
+		return true
+	}
+	return util.WriteFile(path, util.StringifyJSON(cfg)) == nil
+}
+
+func RemoveCursorProjectRulesHook() bool {
+	paths := cursorHooksFiles()
+	before := make([]string, len(paths))
+	for i, path := range paths {
+		before[i], _ = util.ReadFileSafe(path)
+		if !removeCursorProjectRulesHook(path) {
 			for j := 0; j < i; j++ {
 				_ = util.WriteFile(paths[j], before[j])
 			}

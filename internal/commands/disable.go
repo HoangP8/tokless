@@ -90,7 +90,6 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		util.L.Raw("")
 		return 0
 	}
-
 	// Stage 2: which of the 4 tools to remove (default: all → complete removal).
 	allTools := core.ListTools()
 	tools := pickTools(opts, allTools, verb)
@@ -98,6 +97,12 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		util.L.Raw("  " + util.C.Gray("Nothing selected."))
 		util.L.Raw("")
 		return 0
+	}
+	cursorRulesFailed := false
+	if removeTools && !opts.DryRun && contains(agentIDs, "cursor") && len(tools) == len(allTools) {
+		if !agents.RemoveCursorProjectRulesHook() {
+			cursorRulesFailed = true
+		}
 	}
 
 	bar := util.NewProgress("")
@@ -134,6 +139,9 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + verb + " " + util.C.Bold(joinComma(toolLabels)) +
 		util.C.Gray(" from ") + util.C.Bold(joinComma(labels)) + ".")
 	util.L.Raw("")
+	if cursorRulesFailed {
+		return 1
+	}
 	return 0
 }
 

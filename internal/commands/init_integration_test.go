@@ -1,6 +1,7 @@
 package commands_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -297,6 +298,71 @@ func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".agents", "rules", "antigravity-rtk-rules.md")); err == nil {
 		t.Errorf("antigravity rtk instruction rule should NOT be written")
+	}
+}
+
+func TestInitCursorProjectRulesFromCurrentDirectory(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	t.Setenv("TOKLESS_INSTALLER_RUN", "1")
+	home := t.TempDir()
+	project := filepath.Join(home, "project with spaces")
+	if err := os.MkdirAll(project, 0755); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(home, "cursor-config"))
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatalf("change working directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	opts := commands.InitOptions{Agents: []string{"cursor"}, Tools: []string{"caveman", "ponytail"}}
+	if code := commands.RunInit(opts); code != 0 {
+		t.Fatalf("RunInit returned non-zero code: %d", code)
+	}
+
+	rulesDir := filepath.Join(project, ".cursor", "rules")
+	paths := make([]string, 0, len(util.CursorProjectRuleSpecs()))
+	contents := make([][]byte, 0, len(util.CursorProjectRuleSpecs()))
+	for _, spec := range util.CursorProjectRuleSpecs() {
+		path := filepath.Join(rulesDir, spec.Filename)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("missing Cursor rule %s: %v", spec.Filename, err)
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read Cursor rule %s: %v", spec.Filename, err)
+		}
+		paths = append(paths, path)
+		contents = append(contents, content)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "rules")); !os.IsNotExist(err) {
+		t.Fatalf("Cursor rules unexpectedly created under isolated home: %v", err)
+	}
+
+	if code := commands.RunInit(opts); code != 0 {
+		t.Fatalf("second RunInit returned non-zero code: %d", code)
+	}
+	for i, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read Cursor rule after rerun %s: %v", filepath.Base(path), err)
+		}
+		if !bytes.Equal(content, contents[i]) {
+			t.Errorf("Cursor rule changed after rerun: %s", filepath.Base(path))
+		}
 	}
 }
 

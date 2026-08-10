@@ -56,7 +56,7 @@ func helpText() string {
 		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
 		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline\n" +
+		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor\n" +
 		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
 		"  --verbose           Show every step\n\n" +
@@ -134,6 +134,9 @@ func run() int {
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "cursor-hook" && os.Args[2] == "codegraph-index" {
 		return commands.RunCodegraphIndexHook()
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "cursor-hook" && os.Args[2] == "project-rules" {
+		return commands.RunCursorProjectRulesHook()
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "copilot-hook" && os.Args[2] == "codegraph-index" {
 		return commands.RunCodegraphIndexHook()

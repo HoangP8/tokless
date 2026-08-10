@@ -2,6 +2,9 @@ package util
 
 import (
 	_ "embed"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,6 +24,63 @@ var SectionsByOwner = map[string]string{
 	"ponytail":     "## Build Discipline (ponytail)",
 	"codegraph":    "## Code Index (codegraph)",
 	"context-mode": "## Context Tools (context-mode)",
+}
+
+// CursorProjectRuleSpec describes one checked-in Cursor project rule.
+type CursorProjectRuleSpec struct {
+	Filename    string
+	Description string
+	Owner       string
+}
+
+var cursorProjectRuleSpecs = []CursorProjectRuleSpec{
+	{Filename: "principles.mdc", Description: "This rule guides software work toward simple, correct, and purposeful solutions.", Owner: "principles"},
+	{Filename: "response-style.mdc", Description: "This rule provides standards for concise, direct, and technically accurate communication.", Owner: "caveman"},
+	{Filename: "build-discipline.mdc", Description: "This rule guides simple, focused implementations that reuse existing solutions and avoid unnecessary work.", Owner: "ponytail"},
+	{Filename: "code-index.mdc", Description: "This rule guides codebase exploration through relevant symbols, flows, dependencies, and affected areas.", Owner: "codegraph"},
+	{Filename: "context-tools.mdc", Description: "This rule guides efficient context collection, analysis, and retrieval while keeping raw data focused.", Owner: "context-mode"},
+}
+
+// CursorProjectRuleSpecs returns the Cursor project rule specifications.
+func CursorProjectRuleSpecs() []CursorProjectRuleSpec {
+	return append([]CursorProjectRuleSpec(nil), cursorProjectRuleSpecs...)
+}
+
+// CursorProjectRuleContent renders one Cursor project rule from embedded instructions.
+func CursorProjectRuleContent(spec CursorProjectRuleSpec) string {
+	return "---\ndescription: " + spec.Description + "\nalwaysApply: true\n---\n" + instructionSection(spec.Owner) + "\n"
+}
+
+// InstallCursorProjectRules installs Cursor rules in workspace, never overwriting
+// existing files.
+func InstallCursorProjectRules(workspace string, dryRun bool) (bool, error) {
+	if workspace == "" {
+		return false, fmt.Errorf("Cursor project rules require non-empty workspace")
+	}
+	info, err := os.Stat(workspace)
+	if err != nil {
+		return false, fmt.Errorf("stat Cursor workspace: %w", err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("Cursor workspace is not a directory: %s", workspace)
+	}
+	if dryRun {
+		return true, nil
+	}
+	rulesDir := filepath.Join(workspace, ".cursor", "rules")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		return false, fmt.Errorf("create Cursor rules directory: %w", err)
+	}
+	for _, spec := range cursorProjectRuleSpecs {
+		path := filepath.Join(rulesDir, spec.Filename)
+		if _, err := os.Stat(path); err == nil {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(CursorProjectRuleContent(spec)), 0o644); err != nil {
+			return false, fmt.Errorf("write Cursor rule %s: %w", spec.Filename, err)
+		}
+	}
+	return true, nil
 }
 
 var legacySectionsByOwner = map[string][]string{
@@ -112,7 +172,6 @@ func ToklessAgentBody(owners []string) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
-
 
 // TokenizeBody infers active owners from section headings present in body.
 func TokenizeBody(body string) []string {
