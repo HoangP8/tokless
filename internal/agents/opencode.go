@@ -26,7 +26,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.PickMcpSpawn("context-mode")
+		spawn = util.McpSpawnFor(toolID)
 	}
 	command := append([]string{spawn.Command}, spawn.Args...)
 	desired := util.NewOrderedMap()

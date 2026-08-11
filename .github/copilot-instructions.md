@@ -9,6 +9,7 @@ Apply on every coding task:
 - **Context Tools (context-mode)** — keep raw bytes out, derive answers in-sandbox.
 - **Headroom (headroom)** — explicitly compress large self-contained text when useful.
 
+
 ## Principles
 
 Behavioral guidelines to reduce common LLM coding mistakes.
@@ -140,31 +141,6 @@ Examples:
 - `codegraph_explore("how does auth middleware validate a JWT")`
 - `codegraph_explore("flow from HTTP request to DB query")`
 - `codegraph_explore("OrderService.createOrder callers and blast radius")`
-
-## Context Tools (context-mode)
-
-Sandbox-first tools. Derive answers. Keep raw bytes out, print only needed results.
-
-```
-Use ctx?
-├─ YES → source >~200 lines/KB, multi-source, or worth re-querying → prioritize ctx tools
-└─ NO  → small file, single section, or verbatim-read for editing → Read directly
-```
-
-| Tool | Role | Replaces |
-|------|------|----------|
-| `ctx_execute` | Run code in sandbox. Only stdout enters context. | Bash for analysis tasks |
-| `ctx_execute_file` | Process file in sandbox. Raw bytes never leave. | Read on large files (>200 lines) |
-| `ctx_batch_execute` | Run N commands + auto-index output. Search in same call. Concurrency 1-8. | Multiple Bash + grep |
-| `ctx_index` | Chunk markdown/text into FTS5. Queryable via `ctx_search`. | Manual grep over pasted content |
-| `ctx_search` | Multi-strategy search across indexed content + session memory. Typo correction. | Re-asking user, re-deriving |
-| `ctx_fetch_and_index` | Fetch URL → markdown → index. Cache 24h (override `ttl`). Batch with `requests`+`concurrency`. | WebFetch + re-read |
-
-Examples:
-
-```
-ctx_execute(language:"shell", code:"grep -rn 'TODO' src/ | head -20")
-```
 
 ## Headroom (headroom)
 

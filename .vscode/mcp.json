@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "headroom": {
+      "type": "stdio",
+      "command": "/home/hoangp8/.local/bin/tokless",
+      "args": [
+        "run-mcp",
+        "--tool",
+        "headroom",
+        "/home/hoangp8/.local/share/tokless/headroom/bin/headroom",
+        "mcp",
+        "serve"
+      ]
+    }
+  }
+}

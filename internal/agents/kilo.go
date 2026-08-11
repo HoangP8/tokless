@@ -222,9 +222,15 @@ func kiloExpectedCommand(toolID string, command []string) bool {
 		return len(command) >= 4 && command[2] == "--context-mode" && kiloContextServer(command[3:])
 	case "codegraph":
 		return len(command) >= 7 && command[2] == "--agent" && command[3] == "kilo" && kiloCodegraphServer(command[4:])
+	case "headroom":
+		return len(command) == 7 && command[2] == "--tool" && command[3] == "headroom" && kiloHeadroomServer(command[4:])
 	default:
 		return false
 	}
+}
+
+func kiloHeadroomServer(command []string) bool {
+	return len(command) == 3 && kiloCommandBase(command[0]) == "headroom" && command[1] == "mcp" && command[2] == "serve"
 }
 
 func kiloContextServer(command []string) bool {

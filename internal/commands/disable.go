@@ -64,6 +64,7 @@ func runPurge() int {
 			}
 		}
 	}
+	_ = os.RemoveAll(util.HeadroomPathsResolved().Root)
 	return n
 }
 

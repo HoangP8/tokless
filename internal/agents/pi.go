@@ -407,6 +407,9 @@ func PiUpdatePackages() {
 
 func ConfigurePiMcp(toolID string) (changed bool, file string) {
 	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
+	if toolID == "headroom" {
+		spawn = util.McpSpawnFor(toolID)
+	}
 	f := piMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)

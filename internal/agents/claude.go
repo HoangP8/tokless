@@ -27,7 +27,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.PickMcpSpawn("context-mode")
+		spawn = util.McpSpawnFor(toolID)
 	}
 	desired := util.NewOrderedMap()
 	desired.Set("type", "stdio")
@@ -66,6 +66,8 @@ func claudeMcpToolNames(toolID string) []string {
 	switch toolID {
 	case "context-mode":
 		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
+	case "headroom":
+		return []string{"headroom_compress", "headroom_retrieve"}
 	case "codegraph":
 		return []string{"codegraph_explore"}
 	}

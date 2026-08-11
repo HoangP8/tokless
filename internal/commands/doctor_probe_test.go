@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -144,6 +145,13 @@ func TestUnwrapRunMcp(t *testing.T) {
 	cmd, args = unwrapRunMcp("codegraph", []string{"serve", "--mcp"})
 	if cmd != "codegraph" || len(args) != 2 {
 		t.Fatalf("passthrough = %q %v", cmd, args)
+	}
+}
+
+func TestUnwrapRunMcpHeadroom(t *testing.T) {
+	command, args := unwrapRunMcp("tokless", []string{"run-mcp", "--tool", "headroom", "/managed/headroom", "mcp", "serve"})
+	if command != "/managed/headroom" || !reflect.DeepEqual(args, []string{"mcp", "serve"}) {
+		t.Fatalf("unwrap = %q %v", command, args)
 	}
 }
 

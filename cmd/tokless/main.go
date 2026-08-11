@@ -57,7 +57,7 @@ func helpText() string {
 		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n\n" +
 		util.C.Bold("Flags:") + "\n" +
 		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor\n" +
-		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode\n" +
+		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode,headroom\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
 		"  --verbose           Show every step\n\n" +
 		util.C.Gray("Docs: https://github.com/HoangP8/tokless")

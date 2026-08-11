@@ -12,18 +12,34 @@ import (
 func RunMcp(argv []string) int {
 	agent := ""
 	workspace := ""
-	if len(argv) >= 2 && argv[0] == "--agent" {
-		agent = argv[1]
-		argv = argv[2:]
-	}
-	if len(argv) >= 2 && argv[0] == "--workspace" {
-		workspace = argv[1]
-		argv = argv[2:]
-	}
 	contextMode := false
-	if len(argv) > 0 && argv[0] == "--context-mode" {
-		contextMode = true
-		argv = argv[1:]
+	tool := ""
+	for len(argv) > 0 {
+		switch argv[0] {
+		case "--agent", "--workspace", "--tool":
+			if len(argv) < 2 || argv[1] == "" || strings.HasPrefix(argv[1], "--") {
+				return 1
+			}
+			switch argv[0] {
+			case "--agent":
+				agent = argv[1]
+			case "--workspace":
+				workspace = argv[1]
+			case "--tool":
+				tool = argv[1]
+			}
+			argv = argv[2:]
+		case "--context-mode":
+			contextMode = true
+			argv = argv[1:]
+		default:
+			goto command
+		}
+	}
+
+command:
+	if contextMode && tool == "" {
+		tool = "context-mode"
 	}
 	if len(argv) == 0 {
 		return 1
@@ -51,7 +67,7 @@ func RunMcp(argv []string) int {
 			go func() { _ = RunCodegraphMcpBootstrap(workspace) }()
 		}
 	}
-	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), contextMode, afterStart)
+	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), tool, afterStart)
 }
 
 // codegraphMcpCommand returns CodeGraph executable for direct and cmd /c forms.

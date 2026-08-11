@@ -664,7 +664,7 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
 		RemoveAntigravityCodegraphToolDefs()
 	} else {
-		spawn = util.PickMcpSpawn(toolID)
+		spawn = util.McpSpawnFor(toolID)
 	}
 	allConfigured := true
 	for _, f := range antigravityMcpConfigFiles() {

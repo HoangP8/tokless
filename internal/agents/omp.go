@@ -172,7 +172,10 @@ func ompMcpManaged(toolID string, existing any) bool {
 	if toolID == "codegraph" {
 		return len(values) >= 6 && values[0] == "run-mcp" && values[1] == "--agent" && values[2] == "omp" && ompCodegraphTarget(values[3:])
 	}
-	return len(values) >= 3 && values[0] == "run-mcp" && values[1] == "--context-mode" && ompContextModeTarget(values[2:])
+	if toolID == "context-mode" {
+		return len(values) >= 3 && values[0] == "run-mcp" && values[1] == "--context-mode" && ompContextModeTarget(values[2:])
+	}
+	return toolID == "headroom" && len(values) == 5 && values[0] == "run-mcp" && values[1] == "--tool" && values[2] == "headroom" && ompHeadroomTarget(values[3:])
 }
 
 func ompCodegraphTarget(args []string) bool {
@@ -197,6 +200,10 @@ func ompContextModeTarget(args []string) bool {
 	}
 	return len(args) == 3 && isOmpBinary(args[0], "npx") && args[1] == "--no-install" && args[2] == "context-mode" ||
 		len(args) == 5 && isOmpCmd(args[0]) && args[1] == "/c" && isOmpBinary(args[2], "npx") && args[3] == "--no-install" && args[4] == "context-mode"
+}
+
+func ompHeadroomTarget(args []string) bool {
+	return len(args) == 3 && isOmpBinary(args[0], "headroom") && args[1] == "mcp" && args[2] == "serve"
 }
 
 func isOmpCmd(command string) bool { return isOmpBinary(command, "cmd") }
@@ -282,7 +289,7 @@ func ompMcpEntry(toolID string) *util.OrderedMap {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("omp", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.PickMcpSpawn("context-mode")
+		spawn = util.McpSpawnFor(toolID)
 	}
 	entry := util.NewOrderedMap()
 	entry.Set("type", "stdio")

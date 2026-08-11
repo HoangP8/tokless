@@ -24,7 +24,7 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("codex", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.PickMcpSpawn(toolID)
+		spawn = util.McpSpawnFor(toolID)
 	}
 	block := util.NewTomlBlock("mcp_servers." + toolID)
 	block.Set("command", spawn.Command)
