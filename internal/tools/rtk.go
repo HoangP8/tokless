@@ -532,8 +532,26 @@ func rtkWirePi() core.AgentFn {
 			util.L.Debug("rtk init --agent pi exited " + clip(r.Stderr))
 			return false, nil
 		}
-		return agents.HasPiRtkExtension(), nil
+		return normalizePiRtkExtension() && agents.HasPiRtkExtension(), nil
 	}
+}
+
+// normalizePiRtkExtension removes imports from RTK's generated Pi extension.
+func normalizePiRtkExtension() bool {
+	path := filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		return false
+	}
+	next := strings.ReplaceAll(raw, `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"`+"\n", "")
+	next = strings.ReplaceAll(next, `import { isToolCallEventType } from "@earendil-works/pi-coding-agent"`+"\n", "")
+	next = strings.ReplaceAll(next, "pi: ExtensionAPI", "pi: any")
+	next = strings.ReplaceAll(next, `if (!isToolCallEventType("bash", event)) return`, `if (event.toolName !== "bash") return`)
+	next = strings.ReplaceAll(next, `      if (cmd.startsWith("rtk ")) return`+"\n", "")
+	if next == raw {
+		return true
+	}
+	return util.WriteFile(path, next) == nil
 }
 
 func claudeSettingsHasRtkHook(settingsPath string) bool {
@@ -824,6 +842,7 @@ func rtkWireCodex() core.AgentFn {
 			util.L.Sub("[dry-run] would install codex PreToolUse hook (~/.codex/hooks.json) routing shell commands through rtk, pre-trusted in config.toml")
 			return true, nil
 		}
+		agents.RemoveCodexRtkInstruction()
 		agents.InstallCodexRtkHook()
 		return true, nil
 	}

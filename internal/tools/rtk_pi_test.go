@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -52,6 +53,41 @@ func TestRtkPiDryRun(t *testing.T) {
 	}
 	if util.Exists(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")) {
 		t.Error("dry-run must not write rtk.ts")
+	}
+}
+
+func TestNormalizePiRtkExtension(t *testing.T) {
+	piRtkTestHome(t)
+	path := filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const source = `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent"
+function rewrite(pi: ExtensionAPI) {}
+export default function (pi: ExtensionAPI) {
+  if (!isToolCallEventType("bash", event)) return
+      if (cmd.startsWith("rtk ")) return
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !normalizePiRtkExtension() {
+		t.Fatal("normalize failed")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, unwanted := range []string{"pi-coding-agent", "ExtensionAPI", "isToolCallEventType", `cmd.startsWith("rtk ")`} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("extension retains %q: %s", unwanted, got)
+		}
+	}
+	if !strings.Contains(got, `event.toolName !== "bash"`) {
+		t.Errorf("extension did not use stable bash check: %s", got)
 	}
 }
 

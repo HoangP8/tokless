@@ -92,6 +92,28 @@ func codexHooksFile() string {
 	return filepath.Join(util.CodexPathsResolved().Dir, "hooks.json")
 }
 
+// RemoveCodexRtkInstruction removes the legacy RTK include from AGENTS.md.
+func RemoveCodexRtkInstruction() {
+	p := util.CodexPathsResolved()
+	raw, ok := util.ReadFileSafe(p.Instructions)
+	if !ok {
+		return
+	}
+	legacy := "@" + filepath.Join(p.Dir, "RTK.md")
+	var out strings.Builder
+	changed := false
+	for _, line := range strings.SplitAfter(raw, "\n") {
+		if strings.TrimSpace(strings.TrimRight(line, "\r\n")) == legacy {
+			changed = true
+			continue
+		}
+		out.WriteString(line)
+	}
+	if changed {
+		_ = util.WriteFile(p.Instructions, out.String())
+	}
+}
+
 // codexHookCommand is the command Codex runs for every Bash tool call.
 func codexHookCommand() string {
 	return toklessCommand("rtk-hook", "codex")

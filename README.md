@@ -134,13 +134,15 @@ How each tool connects to each agent:
     </tr>
   </thead>
   <tbody>
-    <tr><td nowrap><b>rtk</b></td><td nowrap>Hook + Allow</td><td nowrap>Plugin</td><td nowrap>Hook</td><td nowrap>Hook + Allow</td><td nowrap>Hook + Allow</td><td nowrap>Hook</td><td nowrap>Extension</td><td nowrap>Extension</td><td nowrap>Hook</td><td nowrap>Global Plugin</td><td nowrap>Hook</td><td nowrap>Hook</td></tr>
+    <tr><td nowrap><b>rtk</b></td><td nowrap>Hook + Allow</td><td nowrap>Plugin</td><td nowrap>Hook</td><td nowrap>Hook + Allow</td><td nowrap>Hook + Allow</td><td nowrap>Hook</td><td nowrap>Extension</td><td nowrap>Extension</td><td nowrap>❌</td><td nowrap>Global Plugin</td><td nowrap>Hook</td><td nowrap>Hook</td></tr>
     <tr><td nowrap><b>caveman</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
     <tr><td nowrap><b>ponytail</b></td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td><td nowrap>Instruction</td></tr>
     <tr><td nowrap><b>codegraph</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td></tr>
     <tr><td nowrap><b>context-mode</b></td><td nowrap>MCP + Allow + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>Hook + MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Hook + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Extension + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td><td nowrap>MCP + Instruction</td></tr>
   </tbody>
 </table>
+
+**Note:** ❌ Grok Build does not support RTK command rewriting yet.
 
 ## Usage
 

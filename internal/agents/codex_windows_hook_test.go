@@ -2,6 +2,7 @@ package agents
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -129,5 +130,29 @@ func TestCodexPermissionHookManagedOwnership(t *testing.T) {
 	raw, _ = os.ReadFile(codexHooksFile())
 	if strings.Contains(string(raw), `"command": "`+codexPermHookCommand()+`"`) || !strings.Contains(string(raw), "custom-wrapper codex-perm codex") {
 		t.Fatalf("unexpected hooks after remove: %s", raw)
+	}
+}
+
+func TestRemoveCodexRtkInstructionPreservesUserContent(t *testing.T) {
+	setTestHome(t)
+	p := util.CodexPathsResolved()
+	raw := "@" + filepath.Join(p.Dir, "RTK.md") + "\n\n# User instructions\nkeep this\n"
+	if err := util.WriteFile(p.Instructions, raw); err != nil {
+		t.Fatal(err)
+	}
+
+	RemoveCodexRtkInstruction()
+	got, ok := util.ReadFileSafe(p.Instructions)
+	if !ok {
+		t.Fatal("AGENTS.md removed")
+	}
+	if strings.Contains(got, "RTK.md") || !strings.Contains(got, "keep this") {
+		t.Fatalf("legacy include or user content incorrect: %q", got)
+	}
+
+	RemoveCodexRtkInstruction()
+	again, _ := util.ReadFileSafe(p.Instructions)
+	if again != got {
+		t.Fatalf("cleanup is not idempotent: first=%q second=%q", got, again)
 	}
 }
