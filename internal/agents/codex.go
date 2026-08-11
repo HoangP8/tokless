@@ -815,7 +815,7 @@ var codex = &core.AgentManifest{
 	CLIBin:    "codex",
 	ConfigDir: func() string { return util.CodexPathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("codex", util.CodexPathsResolved().Dir, codexKnownBinDirs(), nil)
+		return detectVSCodeAgent("codex", util.CodexPathsResolved().Dir, codexKnownBinDirs(), "openai.chatgpt")
 	},
 }
 

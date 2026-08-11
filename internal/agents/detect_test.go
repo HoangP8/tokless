@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -63,6 +64,135 @@ func TestDetectAgentBothSurfaces(t *testing.T) {
 	d := detectAgent("fakecli", t.TempDir(), []string{binDir}, []string{app})
 	if !d.Installed || d.Source != "cli+desktop" {
 		t.Fatalf("both surfaces present should report cli+desktop, got %+v", d)
+	}
+}
+
+func TestAgentsDetectVSCodeExtensions(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	restrictPath(t)
+	for _, test := range []struct {
+		name       string
+		extensions []string
+		detect     func() core.Detection
+	}{
+		{"Copilot", []string{"github.copilot-chat"}, copilot.Detect},
+		{"Kilo", []string{"kilocode.kilo-code"}, kilo.Detect},
+		{"Codex", []string{"openai.chatgpt"}, codex.Detect},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, extension := range test.extensions {
+				dir := filepath.Join(home, ".vscode", "extensions", extension+"-1.0.0")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := test.detect(); !got.Installed || got.Source != "ide" {
+				t.Fatalf("IDE detection = %+v, want ide", got)
+			}
+		})
+	}
+}
+
+func TestDetectCopilotChatExtensionWithoutCompletion(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	restrictPath(t)
+	if err := os.MkdirAll(filepath.Join(home, ".vscode", "extensions", "github.copilot-chat-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := copilot.Detect(); !got.Installed || got.Source != "ide" {
+		t.Fatalf("Copilot Chat without completion = %+v, want ide", got)
+	}
+}
+
+func TestVSCodeExtensionInstalledPathsAndExactMatch(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	t.Setenv("VSCODE_EXTENSIONS", "")
+	t.Setenv("XDG_DATA_HOME", "")
+
+	for _, dir := range vscodeExtensionDirs() {
+		if err := os.MkdirAll(filepath.Join(dir, "Publisher.Extension-1.0.0"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !vscodeExtensionInstalled("publisher.extension") {
+			t.Fatalf("extension in %s was not detected", dir)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(vscodeExtensionDirs()[0], "publisher.extensionx-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if vscodeExtensionInstalled("publisher.extension") {
+		t.Fatal("near-match extension was detected")
+	}
+}
+
+func TestVSCodeExtensionInstalledUsesEnvironmentRoot(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("VSCODE_EXTENSIONS", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "publisher.extension-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !vscodeExtensionInstalled("publisher.extension") {
+		t.Fatal("extension in VSCODE_EXTENSIONS was not detected")
+	}
+}
+
+func TestVSCodeExtensionInstalledIgnoresObsoleteExtension(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	dir := t.TempDir()
+	t.Setenv("VSCODE_EXTENSIONS", dir)
+	name := "publisher.extension-1.0.0"
+	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".obsolete"), []byte(`{"`+name+`":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if vscodeExtensionInstalled("publisher.extension") {
+		t.Fatal("obsolete extension was detected")
+	}
+}
+
+func TestVSCodeExtensionInstalledUsesXDGCodeServerRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataDir)
+	dir := filepath.Join(dataDir, "code-server", "extensions", "publisher.extension-1.0.0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !vscodeExtensionInstalled("publisher.extension") {
+		t.Fatal("extension in XDG code-server root was not detected")
+	}
+}
+
+func TestDetectVSCodeAgentCombinesCLIAndIDE(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	restrictPath(t)
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "fakecli")
+	if util.IsWin {
+		bin += ".exe"
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".vscode", "extensions", "publisher.extension-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := detectVSCodeAgent("fakecli", t.TempDir(), []string{binDir}, "publisher.extension"); !got.Installed || got.Source != "cli+ide" {
+		t.Fatalf("CLI + VS Code detection = %+v, want cli+ide", got)
 	}
 }
 
@@ -257,7 +387,6 @@ func TestConfigureAntigravityMcpPreservesMalformedConfigAndLegacyEntry(t *testin
 		t.Fatal("AntigravityMcpHas should find codegraph despite malformed CLI config")
 	}
 }
-
 
 func TestAntigravityMcpHasAnySemantics(t *testing.T) {
 	home := t.TempDir()

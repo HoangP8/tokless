@@ -484,6 +484,6 @@ var copilot = &core.AgentManifest{
 	CLIBin:    "copilot",
 	ConfigDir: func() string { return util.CopilotPathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("copilot", util.CopilotPathsResolved().Dir, copilotKnownBinDirs(), nil)
+		return detectVSCodeAgent("copilot", util.CopilotPathsResolved().Dir, copilotKnownBinDirs(), "github.copilot-chat")
 	},
 }

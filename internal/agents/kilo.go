@@ -466,6 +466,6 @@ var kilo = &core.AgentManifest{
 	CLIBin:    "kilo",
 	ConfigDir: func() string { return util.KiloPathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("kilo", util.KiloPathsResolved().Dir, kiloKnownBinDirs(), nil)
+		return detectVSCodeAgent("kilo", util.KiloPathsResolved().Dir, kiloKnownBinDirs(), "kilocode.kilo-code")
 	},
 }

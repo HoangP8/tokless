@@ -239,13 +239,6 @@ func runPostinstallInOpenCodeCache() {
 // --- Codex ---
 
 func ctxWireCodex(opts core.RunOpts) (bool, error) {
-	if isTest() {
-		return wireCodexManual(), nil
-	}
-	if util.Which("codex") == "" {
-		util.L.Err("codex CLI not on PATH — install codex first.")
-		return false, nil
-	}
 	return wireCodexManual(), nil
 }
 

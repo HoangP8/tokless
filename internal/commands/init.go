@@ -29,6 +29,15 @@ func contains(ss []string, s string) bool {
 	return false
 }
 
+func hasToolForAgent(tools []*core.ToolManifest, agentID string) bool {
+	for _, tool := range tools {
+		if _, ok := tool.WireFor[agentID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func RunInit(opts InitOptions) int {
 	util.SetQuiet(!opts.Verbose)
 	if os.Getenv("TOKLESS_INSTALLER_RUN") == "1" {
@@ -119,17 +128,16 @@ func RunInit(opts InitOptions) int {
 	case len(opts.Agents) > 0:
 		requested = opts.Agents
 	case !util.IsInteractive():
-		// Non-interactive shell: can't prompt, so wire every installed agent
-		// and say so explicitly (otherwise it looks like nothing happened).
+		// Non-interactive shell: wire each detected agent supported by a selected tool.
 		for _, a := range allAgents {
-			if installedIDs[a.ID] {
+			if installedIDs[a.ID] && hasToolForAgent(tools, a.ID) {
 				requested = append(requested, a.ID)
 			}
 		}
 		util.SetQuiet(false)
 		util.L.Raw("")
 		if len(requested) == 0 {
-			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " Non-interactive shell and no agents detected — nothing to wire.")
+			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " Non-interactive shell and no compatible agents detected — nothing to wire.")
 			util.L.Raw("  " + util.C.Gray("Run tokless in a terminal to pick agents, or: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
 			util.L.Raw("")
 			return 0
@@ -143,15 +151,21 @@ func RunInit(opts InitOptions) int {
 	default:
 		var optsList []util.MultiSelectOption
 		for _, a := range allAgents {
+			if !installedIDs[a.ID] || !hasToolForAgent(tools, a.ID) {
+				continue
+			}
 			opt := util.MultiSelectOption{Value: a.ID, Label: a.Label}
-			if !installedIDs[a.ID] {
-				opt.Disabled = true
-				opt.DisabledReason = "not installed"
-				opt.Hint = a.Homepage
-			} else if s := detectedSource[a.ID]; s != "" && s != "config" {
+			if s := detectedSource[a.ID]; s != "" && s != "config" {
 				opt.Hint = s
 			}
 			optsList = append(optsList, opt)
+		}
+		if len(optsList) == 0 {
+			util.L.Raw("")
+			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " No compatible agents detected — nothing to wire.")
+			util.L.Raw("  " + util.C.Gray("Install an agent, then re-run tokless; or select one explicitly: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
+			util.L.Raw("")
+			return 0
 		}
 		requested = util.MultiSelect("Select agents to install tokless", optsList)
 	}

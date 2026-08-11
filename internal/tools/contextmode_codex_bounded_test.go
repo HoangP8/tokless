@@ -143,6 +143,21 @@ func TestWireCodexManual_BoundedShape(t *testing.T) {
 	}
 }
 
+func TestCtxWireCodexWithoutCLI(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("TOKLESS_TEST", "")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	if ok, err := ctxWireCodex(core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("ctxWireCodex without CLI = %v, %v; want true, nil", ok, err)
+	}
+	if !ctxVerifyCodex() {
+		t.Fatal("Codex shared config was not wired")
+	}
+}
+
 // TestWireCodexManual_Idempotent verifies that running wireCodexManual twice
 // produces the same output (no duplicate entries, no drift).
 func TestWireCodexManual_Idempotent(t *testing.T) {
