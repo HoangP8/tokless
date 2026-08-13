@@ -54,6 +54,31 @@ func TestParseListAcceptsNonemptyLists(t *testing.T) {
 	}
 }
 
+func TestProxyAgentFlagValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "bare agent", args: []string{"up", "--agent"}, want: 2},
+		{name: "empty agent", args: []string{"up", "--agent="}, want: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if code := runProxyCli(tt.args); code != tt.want {
+				t.Fatalf("runProxyCli(%q) exit = %d, want %d", tt.args, code, tt.want)
+			}
+		})
+	}
+}
+
+func TestProxyAgentFlagAcceptsValue(t *testing.T) {
+	p := parseArgs([]string{"up", "--agent", "claude"})
+	got, err := parseList(p.flags["agent"], true, []string{"claude"})
+	if err != nil || len(got) != 1 || got[0] != "claude" {
+		t.Fatalf("proxy agent value rejected: got %v, err %v", got, err)
+	}
+}
+
 func TestHelpWinsOverIncompleteListFlag(t *testing.T) {
 	oldArgs := os.Args
 	os.Args = []string{"tokless", "--help", "--agents"}

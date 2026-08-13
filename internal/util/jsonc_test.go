@@ -128,3 +128,12 @@ func TestTryParseJsoncBadInput(t *testing.T) {
 		t.Errorf("expected nil for bad json, got: %v", got)
 	}
 }
+
+func TestHasJSONCComments(t *testing.T) {
+	if HasJSONCComments(`{"url":"https://example.test/a//b", "x":"/* not comment */"}`) {
+		t.Fatal("string markers must not count as comments")
+	}
+	if !HasJSONCComments("{\"url\":\"https://example.test/a\" // comment\n}") {
+		t.Fatal("expected comment marker outside string")
+	}
+}

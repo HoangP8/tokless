@@ -18,6 +18,12 @@ type parsedArgs struct {
 	bools map[string]bool
 }
 
+var (
+	registerAgents    = agents.Register
+	registerTools     = tools.Register
+	ensureProcessPath = util.EnsureProcessPath
+)
+
 // parseArgs mirrors the TS parser: --k=v, --k v, --k, -x short bool.
 func parseArgs(argv []string) parsedArgs {
 	p := parsedArgs{flags: map[string]string{}, bools: map[string]bool{}}
@@ -30,7 +36,7 @@ func parseArgs(argv []string) parsedArgs {
 				p.flags[a[2:]] = argv[i+1]
 				i++
 			} else {
-				if a[2:] == "agents" || a[2:] == "tools" {
+				if a[2:] == "agents" || a[2:] == "tools" || a[2:] == "agent" {
 					p.flags[a[2:]] = ""
 				} else {
 					p.bools[a[2:]] = true
@@ -54,7 +60,8 @@ func helpText() string {
 		"  " + cy("tokless doctor") + "       Show what's wired up; warn about anything broken\n" +
 		"  " + cy("tokless info") + "         Show how tokless was installed, plus paths and config locations\n" +
 		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
-		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n\n" +
+		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n" +
+		"  " + cy("tokless proxy") + "      Manage the headroom HTTP proxy: up|down|status\n\n" +
 		util.C.Bold("Flags:") + "\n" +
 		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor\n" +
 		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode,headroom\n" +
@@ -95,6 +102,49 @@ func parseList(raw string, ok bool, allowed []string) ([]string, error) {
 	return items, nil
 }
 
+// proxyHelpText prints usage for `tokless proxy <subcommand>`.
+func proxyHelpText() string {
+	cy := util.C.Cyan
+	return util.C.Bold(util.C.Cyan("tokless proxy")) + " — headroom HTTP-proxy daemon (cache mode)\n\n" +
+		util.C.Bold("Usage:") + "\n" +
+		"  " + cy("tokless proxy up") + "       Start the proxy daemon and point agents at it\n" +
+		"  " + cy("tokless proxy down") + "     Unwire agents and stop the proxy daemon\n" +
+		"  " + cy("tokless proxy status") + "   Show daemon + per-agent wiring state\n\n" +
+		util.C.Bold("Flags:") + "\n" +
+		"  --agent <list>     Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity (default: all)\n" +
+		"  --help             Show this help\n"
+}
+
+// runProxyCli dispatches `tokless proxy up|down|status [--agent ...]`.
+func runProxyCli(argv []string) int {
+	p := parseArgs(argv)
+	if p.bools["verbose"] {
+		util.SetVerbose(true)
+	}
+	if p.bools["help"] || p.bools["h"] || p.cmd == "help" {
+		fmt.Println(proxyHelpText())
+		return 0
+	}
+	agentRaw, agentOK := p.flags["agent"]
+	agentList, err := parseList(agentRaw, agentOK, commands.ProxyAgentIDs())
+	if err != nil {
+		util.L.Err(err.Error())
+		return 2
+	}
+	opts := commands.InitOptions{Agents: agentList}
+	switch p.cmd {
+	case "up":
+		return commands.RunProxyUp(opts)
+	case "down":
+		return commands.RunProxyDown(opts)
+	case "status":
+		return commands.RunProxyStatus(opts)
+	}
+	util.L.Err("Unknown proxy subcommand: " + p.cmd)
+	fmt.Println(proxyHelpText())
+	return 1
+}
+
 func main() {
 	code := run()
 	util.RestoreConsoleCP()
@@ -102,10 +152,9 @@ func main() {
 }
 
 func run() int {
-	agents.Register()
-	tools.Register()
-	util.EnsureProcessPath()
-
+	registerAgents()
+	registerTools()
+	ensureProcessPath()
 	if len(os.Args) >= 3 && os.Args[1] == "run-mcp" {
 		return commands.RunMcp(os.Args[2:])
 	}
@@ -140,6 +189,9 @@ func run() int {
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "copilot-hook" && os.Args[2] == "codegraph-index" {
 		return commands.RunCodegraphIndexHook()
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "proxy" {
+		return runProxyCli(os.Args[2:])
 	}
 
 	p := parseArgs(os.Args[1:])

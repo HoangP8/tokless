@@ -113,11 +113,30 @@ func ReadFileSafe(p string) (string, bool) {
 	return string(b), true
 }
 
+var writeFileOverride func(string, string) error
+
+// SetWriteFileOverride installs a narrow persistence seam for tests.
+func SetWriteFileOverride(fn func(string, string) error) { writeFileOverride = fn }
+
 func WriteFile(p, content string) error {
+	if writeFileOverride != nil {
+		return writeFileOverride(p, content)
+	}
 	if err := EnsureDir(filepath.Dir(p)); err != nil {
 		return err
 	}
 	return os.WriteFile(p, []byte(content), 0o644)
+}
+
+// WriteFileMode writes content, using mode for new files.
+func WriteFileMode(p, content string, mode os.FileMode) error {
+	if writeFileOverride != nil {
+		return writeFileOverride(p, content)
+	}
+	if err := EnsureDir(filepath.Dir(p)); err != nil {
+		return err
+	}
+	return os.WriteFile(p, []byte(content), mode)
 }
 
 func Exists(p string) bool {

@@ -460,3 +460,147 @@ func argsEq(a any, b []string) bool {
 	}
 	return true
 }
+
+// --- Droid headroom HTTP proxy ---
+
+const (
+	droidProxyModel        = "headroom"
+	droidProxyDisplayName  = "Headroom Proxy"
+	droidProxyProviderKind = "generic-chat-completion-api"
+)
+
+func droidSettingsFile() string { return filepath.Join(droidDir(), "settings.json") }
+
+// droidProxyEntry builds the customModels entry pointing at the headroom daemon.
+func droidProxyEntry(endpoint string) *util.OrderedMap {
+	entry := util.NewOrderedMap()
+	entry.Set("model", droidProxyModel)
+	entry.Set("displayName", droidProxyDisplayName)
+	entry.Set("baseUrl", endpoint)
+	entry.Set("provider", droidProxyProviderKind)
+	return entry
+}
+
+// ConfigureDroidProxy appends the headroom entry to customModels in
+// settings.json, pointing at the OpenAI-compatible headroom daemon endpoint.
+func ConfigureDroidProxy() (changed bool, file string) {
+	f := droidSettingsFile()
+	_ = util.EnsureDir(droidDir())
+	raw, ok := util.ReadFileSafe(f)
+	if util.HasJSONCComments(raw) {
+		return false, f
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		if ok {
+			return false, f
+		}
+		cfg = util.NewOrderedMap()
+	}
+	endpoint := ProxyEndpointFor("droid")
+	var models []any
+	if v, ok := cfg.Get("customModels"); ok {
+		arr, isArr := v.([]any)
+		if !isArr {
+			return false, f
+		}
+		models = arr
+	}
+	for _, existing := range models {
+		em, isMap := existing.(*util.OrderedMap)
+		if !isMap {
+			continue
+		}
+		model, _ := em.Get("model")
+		display, _ := em.Get("displayName")
+		if model == droidProxyModel && display == droidProxyDisplayName {
+			return false, f
+		}
+	}
+	cfg.Set("customModels", append(models, droidProxyEntry(endpoint)))
+	if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+		return false, f
+	}
+	return true, f
+}
+
+// RemoveDroidProxy drops any customModels entry pointing at our endpoint,
+// keeping every other entry.
+func RemoveDroidProxy() bool {
+	f := droidSettingsFile()
+	raw, ok := util.ReadFileSafe(f)
+	if !ok {
+		return false
+	}
+	if util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	v, ok := cfg.Get("customModels")
+	if !ok {
+		return false
+	}
+	models, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	endpoint := ProxyEndpointFor("droid")
+	kept := make([]any, 0, len(models))
+	dropped := false
+	for _, entry := range models {
+		em, isMap := entry.(*util.OrderedMap)
+		if !isMap {
+			kept = append(kept, entry)
+			continue
+		}
+		if jsonEqual(em, droidProxyEntry(endpoint)) {
+			dropped = true
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if !dropped {
+		return false
+	}
+	if len(kept) == 0 {
+		cfg.Delete("customModels")
+	} else {
+		cfg.Set("customModels", kept)
+	}
+	return util.WriteFile(f, util.StringifyJSON(cfg)) == nil
+}
+
+// DroidProxyWired reports whether any customModels entry points at the
+// headroom daemon endpoint.
+func DroidProxyWired() bool {
+	raw, ok := util.ReadFileSafe(droidSettingsFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	v, ok := cfg.Get("customModels")
+	if !ok {
+		return false
+	}
+	models, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	endpoint := ProxyEndpointFor("droid")
+	for _, entry := range models {
+		em, isMap := entry.(*util.OrderedMap)
+		if !isMap {
+			continue
+		}
+		if jsonEqual(em, droidProxyEntry(endpoint)) {
+			return true
+		}
+	}
+	return false
+}

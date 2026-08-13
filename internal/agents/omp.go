@@ -301,3 +301,204 @@ func ompMcpEntry(toolID string) *util.OrderedMap {
 func HasOmpRtkExtension() bool {
 	return util.Exists(filepath.Join(ompExtensionsDir(), "tokless-rtk.ts"))
 }
+
+// --- Oh My Pi (omp) headroom HTTP proxy ---
+
+func ompModelsFile() string { return filepath.Join(OmpAgentDirResolved(), "models.yml") }
+
+var ompWriteFile = util.WriteFile
+
+// ConfigureOmpProxy points providers.anthropic.baseUrl at the proxy via a
+// careful text edit that preserves the rest of models.yml.
+func ConfigureOmpProxy() (changed bool, file string) {
+	baseURL := ProxyEndpointFor("omp")
+	p := ompModelsFile()
+	raw, ok := util.ReadFileSafe(p)
+	if !ok {
+		return false, p
+	}
+	next, ok := ompYamlWriteBaseURL(raw, baseURL)
+	if !ok || next == raw {
+		return false, p
+	}
+	if err := ompWriteFile(p, next); err != nil {
+		return false, p
+	}
+	return true, p
+}
+
+// RemoveOmpProxy deletes providers.anthropic.baseUrl only when it still equals
+// the url tokless set.
+func RemoveOmpProxy() bool {
+	baseURL := ProxyEndpointFor("omp")
+	p := ompModelsFile()
+	raw, ok := util.ReadFileSafe(p)
+	if !ok {
+		return false
+	}
+	next, ok := ompYamlRemoveBaseURL(raw, baseURL)
+	if !ok || next == raw {
+		return false
+	}
+	if err := ompWriteFile(p, next); err != nil {
+		return false
+	}
+	return true
+}
+
+// OmpProxyWired reports whether providers.anthropic.baseUrl is set to baseURL.
+func OmpProxyWired() bool {
+	baseURL := ProxyEndpointFor("omp")
+	raw, ok := util.ReadFileSafe(ompModelsFile())
+	if !ok {
+		return false
+	}
+	return ompYamlBaseURL(raw) == baseURL
+}
+
+// ompYamlKeyRe matches a YAML mapping-key line: indent, key, then anything.
+var ompYamlKeyRe = regexp.MustCompile(`^(\s*)([A-Za-z0-9_.-]+):(\s*)(.*)$`)
+
+// ompYamlKeyLine parses a mapping-key line. (indent, key, hasValue, value).
+func ompYamlKeyLine(line string) (int, string, bool, string) {
+	m := ompYamlKeyRe.FindStringSubmatch(line)
+	if m == nil {
+		return -1, "", false, ""
+	}
+	rest := strings.TrimSpace(m[4])
+	if rest != "" {
+		if i := strings.Index(rest, " #"); i >= 0 {
+			rest = strings.TrimSpace(rest[:i])
+		}
+		if rest != "" {
+			return len(m[1]), m[2], true, rest
+		}
+	}
+	return len(m[1]), m[2], false, ""
+}
+
+// ompYamlRef locates the providers → anthropic → baseUrl chain in models.yml.
+type ompYamlRef struct {
+	prov, provEnd, ant, antIndent, antEnd, base int // line indexes; -1 when absent
+}
+
+func ompYamlScan(raw string) ompYamlRef {
+	ref := ompYamlRef{prov: -1, ant: -1, antIndent: 0, antEnd: -1, base: -1}
+	lines := strings.Split(raw, "\n")
+	for i, l := range lines {
+		if ind, key, _, _ := ompYamlKeyLine(l); ind == 0 && key == "providers" {
+			ref.prov = i
+			break
+		}
+	}
+	if ref.prov == -1 {
+		return ref
+	}
+	ref.provEnd = len(lines)
+	for i := ref.prov + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind == 0 {
+			ref.provEnd = i
+			break
+		}
+	}
+	directIndent := -1
+	for i := ref.prov + 1; i < ref.provEnd; i++ {
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind > 0 {
+			directIndent = ind
+			break
+		}
+	}
+	for i := ref.prov + 1; i < ref.provEnd; i++ {
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == "anthropic" && ind == directIndent {
+			ref.ant, ref.antIndent = i, ind
+			break
+		}
+	}
+	if ref.ant == -1 {
+		ref.antIndent = 2
+		ref.antEnd = ref.provEnd
+		return ref
+	}
+	ref.antEnd = ref.provEnd
+	for i := ref.ant + 1; i < ref.provEnd; i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind >= 0 && ind <= ref.antIndent {
+			ref.antEnd = i
+			break
+		}
+	}
+	for i := ref.ant + 1; i < ref.antEnd; i++ {
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == "baseUrl" && ind == ref.antIndent+2 {
+			ref.base = i
+			break
+		}
+	}
+	return ref
+}
+
+// ompYamlBaseURL returns the current providers.anthropic.baseUrl value.
+func ompYamlBaseURL(raw string) string {
+	ref := ompYamlScan(raw)
+	if ref.base == -1 {
+		return ""
+	}
+	_, _, _, v := ompYamlKeyLine(strings.Split(raw, "\n")[ref.base])
+	return v
+}
+
+// ompYamlWriteBaseURL sets providers.anthropic.baseUrl = url, preserving the
+// rest byte-for-byte. ok=false when a differing value blocks the edit.
+func ompYamlWriteBaseURL(raw, url string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	ref := ompYamlScan(raw)
+	switch {
+	case ref.base >= 0:
+		if _, _, _, have := ompYamlKeyLine(lines[ref.base]); have == url {
+			return raw, true
+		} else if have != "" {
+			return raw, false
+		}
+		lines[ref.base] = strings.Repeat(" ", ref.antIndent+2) + "baseUrl: " + url
+	case ref.ant >= 0:
+		line := strings.Repeat(" ", ref.antIndent+2) + "baseUrl: " + url
+		lines = ompYamlInsertLine(lines, ref.antEnd, line)
+	case ref.prov >= 0:
+		lines = ompYamlInsertLines(lines, ref.provEnd, "  anthropic:", "    baseUrl: "+url)
+	default:
+		out := raw
+		if out != "" && !strings.HasSuffix(out, "\n") {
+			out += "\n"
+		}
+		out += "providers:" + "\n" + "  anthropic:" + "\n" + "    baseUrl: " + url + "\n"
+		return out, true
+	}
+	return strings.Join(lines, "\n"), true
+}
+
+// ompYamlRemoveBaseURL deletes providers.anthropic.baseUrl only when it still
+// equals url; ok=false when absent or differing.
+func ompYamlRemoveBaseURL(raw, url string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	ref := ompYamlScan(raw)
+	if ref.base == -1 {
+		return raw, false
+	}
+	if _, _, _, have := ompYamlKeyLine(lines[ref.base]); have != url {
+		return raw, false
+	}
+	lines = append(lines[:ref.base], lines[ref.base+1:]...)
+	return strings.Join(lines, "\n"), true
+}
+
+func ompYamlInsertLine(lines []string, at int, line string) []string {
+	return append(lines[:at], append([]string{line}, lines[at:]...)...)
+}
+
+func ompYamlInsertLines(lines []string, at int, inserted ...string) []string {
+	return append(lines[:at], append(inserted, lines[at:]...)...)
+}
