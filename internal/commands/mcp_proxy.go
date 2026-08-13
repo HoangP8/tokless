@@ -16,27 +16,25 @@ import (
 )
 
 // runMcpProxy spawns the MCP server as a child and proxies stdio.
-func runMcpProxy(agent, path string, argv, env []string, filterContextMode bool) int {
-	return runMcpProxyAfterStart(agent, path, argv, env, filterContextMode, nil)
+func runMcpProxy(agent, path string, argv, env []string, tool string) int {
+	return runMcpProxyAfterStart(agent, path, argv, env, tool, nil)
 }
 
-func runMcpProxyIO(agent, path string, argv, env []string, input io.Reader, output, stderr io.Writer, filterContextMode bool) int {
-	return runMcpProxyIOAfterStart(agent, path, argv, env, input, output, stderr, filterContextMode, nil)
+func runMcpProxyIO(agent, path string, argv, env []string, input io.Reader, output, stderr io.Writer, tool string) int {
+	return runMcpProxyIOAfterStart(agent, path, argv, env, input, output, stderr, tool, nil)
 }
 
-func runMcpProxyAfterStart(agent, path string, argv, env []string, filterContextMode bool, afterStart func()) int {
-	return runMcpProxyIOAfterStart(agent, path, argv, env, os.Stdin, os.Stdout, os.Stderr, filterContextMode, afterStart)
+func runMcpProxyAfterStart(agent, path string, argv, env []string, tool string, afterStart func()) int {
+	return runMcpProxyIOAfterStart(agent, path, argv, env, os.Stdin, os.Stdout, os.Stderr, tool, afterStart)
 }
 
-func runMcpProxyIOAfterStart(agent, path string, argv, env []string, input io.Reader, output, stderr io.Writer, filterContextMode bool, afterStart func()) int {
+func runMcpProxyIOAfterStart(agent, path string, argv, env []string, input io.Reader, output, stderr io.Writer, tool string, afterStart func()) int {
 	exe, args := resolveMcpCommand(path, argv)
 	cmd := exec.Command(exe, args...)
 	cmd.Env = mcpChildEnv(env)
 	cmd.Stderr = stderr
-	if filterContextMode {
-		if afterStart != nil {
-		}
-		return runBoundedContextModeProxy(cmd, input, output)
+	if allowed := mcpToolPolicies[tool]; len(allowed) > 0 {
+		return runBoundedMcpProxy(cmd, input, output, allowed, afterStart)
 	}
 	cmd.Stdin = input
 	stdout, err := cmd.StdoutPipe()
@@ -64,9 +62,13 @@ var contextModeTools = []string{
 	"ctx_fetch_and_index",
 }
 
-// runBoundedContextModeProxy forwards MCP traffic unchanged except tools/list
-// responses, whose tools are reduced to contextModeTools.
-func runBoundedContextModeProxy(cmd *exec.Cmd, input io.Reader, output io.Writer) int {
+var mcpToolPolicies = map[string][]string{
+	"context-mode": contextModeTools,
+	"headroom":     {"headroom_compress", "headroom_retrieve"},
+}
+
+// runBoundedMcpProxy forwards MCP traffic unchanged except an explicit tool allowlist.
+func runBoundedMcpProxy(cmd *exec.Cmd, input io.Reader, output io.Writer, allowed []string, afterStart func()) int {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return 1
@@ -78,14 +80,17 @@ func runBoundedContextModeProxy(cmd *exec.Cmd, input io.Reader, output io.Writer
 	if err := cmd.Start(); err != nil {
 		return 1
 	}
+	if afterStart != nil {
+		afterStart()
+	}
 	listIDs := &mcpRequestIDs{ids: map[string]bool{}}
 	lockedOutput := &mcpLockedWriter{writer: output}
 	inputDone := make(chan error, 1)
 	go func() {
 		defer stdin.Close()
-		inputDone <- scanMcpInput(input, stdin, lockedOutput, listIDs)
+		inputDone <- scanMcpInput(input, stdin, lockedOutput, listIDs, allowed)
 	}()
-	outputErr := scanMcpOutput(stdout, lockedOutput, listIDs)
+	outputErr := scanMcpOutput(stdout, lockedOutput, listIDs, allowed)
 	_ = stdin.Close() // Upstream EOF must not wait for a client that keeps stdin open.
 	code := waitExit(cmd)
 	if outputErr != nil || code != 0 {
@@ -132,7 +137,7 @@ const (
 	mcpContentLength
 )
 
-func scanMcpInput(input io.Reader, upstream, output io.Writer, listIDs *mcpRequestIDs) error {
+func scanMcpInput(input io.Reader, upstream, output io.Writer, listIDs *mcpRequestIDs, allowed []string) error {
 	reader := bufio.NewReader(input)
 	for {
 		line, framing, err := readMCPMessage(reader)
@@ -162,9 +167,11 @@ func scanMcpInput(input io.Reader, upstream, output io.Writer, listIDs *mcpReque
 				listIDs.mu.Unlock()
 			}
 		}
-		if request.Method == "tools/call" && !isContextModeTool(request.Params.Name) {
-			if err := writeMCPMessage(output, framing, mcpToolDeniedResponse(request.ID, request.Params.Name)); err != nil {
-				return err
+		if request.Method == "tools/call" && !isAllowedMcpTool(request.Params.Name, allowed) {
+			if _, ok := canonicalMCPID(request.ID); ok {
+				if err := writeMCPMessage(output, framing, mcpToolDeniedResponse(request.ID, request.Params.Name)); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -174,7 +181,7 @@ func scanMcpInput(input io.Reader, upstream, output io.Writer, listIDs *mcpReque
 	}
 }
 
-func scanMcpOutput(upstream io.Reader, output io.Writer, listIDs *mcpRequestIDs) error {
+func scanMcpOutput(upstream io.Reader, output io.Writer, listIDs *mcpRequestIDs, allowed []string) error {
 	reader := bufio.NewReader(upstream)
 	for {
 		line, framing, err := readMCPMessage(reader)
@@ -184,8 +191,8 @@ func scanMcpOutput(upstream io.Reader, output io.Writer, listIDs *mcpRequestIDs)
 		if err != nil {
 			return err
 		}
-		if filterContextModeTools(line, listIDs) {
-			line = filterContextModeToolsResponse(line)
+		if filterMcpTools(line, listIDs) {
+			line = filterMcpToolsResponse(line, allowed)
 		}
 		if err := writeMCPMessage(output, framing, line); err != nil {
 			return err
@@ -193,7 +200,7 @@ func scanMcpOutput(upstream io.Reader, output io.Writer, listIDs *mcpRequestIDs)
 	}
 }
 
-func filterContextModeTools(line []byte, listIDs *mcpRequestIDs) bool {
+func filterMcpTools(line []byte, listIDs *mcpRequestIDs) bool {
 	var response map[string]json.RawMessage
 	if json.Unmarshal(line, &response) != nil {
 		return false
@@ -268,8 +275,8 @@ func canonicalMCPNumber(number string) (string, bool) {
 	return "number:" + sign + number + "e" + strconv.Itoa(exponent), true
 }
 
-func isContextModeTool(name string) bool {
-	for _, allowed := range contextModeTools {
+func isAllowedMcpTool(name string, allowedTools []string) bool {
+	for _, allowed := range allowedTools {
 		if name == allowed {
 			return true
 		}
@@ -378,7 +385,7 @@ func writeMCPMessageUnlocked(writer io.Writer, framing mcpFraming, message []byt
 	return err
 }
 
-func filterContextModeToolsResponse(line []byte) []byte {
+func filterMcpToolsResponse(line []byte, allowedTools []string) []byte {
 	var response map[string]json.RawMessage
 	if json.Unmarshal(line, &response) != nil {
 		return line
@@ -400,8 +407,8 @@ func filterContextModeToolsResponse(line []byte) []byte {
 			byName[item.Name] = tool
 		}
 	}
-	filtered := make([]json.RawMessage, 0, len(contextModeTools))
-	for _, name := range contextModeTools {
+	filtered := make([]json.RawMessage, 0, len(allowedTools))
+	for _, name := range allowedTools {
 		if tool, ok := byName[name]; ok {
 			filtered = append(filtered, tool)
 		}

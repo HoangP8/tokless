@@ -24,7 +24,7 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("codex", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.PickMcpSpawn(toolID)
+		spawn = util.McpSpawnFor(toolID)
 	}
 	block := util.NewTomlBlock("mcp_servers." + toolID)
 	block.Set("command", spawn.Command)
@@ -77,6 +77,89 @@ func sweepStaleHookStateEntries(raw string) string {
 		i = j
 	}
 	return out.String()
+}
+
+// --- Codex headroom HTTP proxy ---
+
+// Codex routing follows headroom's persistent-provider mechanism
+// (headroom/providers/codex/install.py apply_provider_scope).
+const codexProxyProvider = "model_providers.headroom"
+
+func codexProxyBlock(endpoint string) *util.TomlBlock {
+	block := util.NewTomlBlock(codexProxyProvider)
+	block.Set("name", "Headroom persistent proxy")
+	block.Set("base_url", endpoint)
+	block.Set("supports_websockets", true)
+	return block
+}
+
+func codexProxyWritable(raw, endpoint string) bool {
+	for _, kv := range [][2]string{{"model_provider", "headroom"}, {"openai_base_url", endpoint}} {
+		if have := util.GetTomlTopKey(raw, kv[0]); have != "" && have != kv[1] {
+			return false
+		}
+	}
+	return !util.HasBlock(raw, codexProxyProvider) || strings.Contains(raw, util.RenderBlock(codexProxyBlock(endpoint)))
+}
+
+// ConfigureCodexProxy injects headroom's persistent-provider scope into
+// config.toml.
+func ConfigureCodexProxy() (changed bool, file string) {
+	p := util.CodexPathsResolved()
+	raw, ok := util.ReadFileSafe(p.Config)
+	if !ok {
+		return false, p.Config
+	}
+	endpoint := ProxyEndpointFor("codex")
+	if !codexProxyWritable(raw, endpoint) {
+		return false, p.Config
+	}
+	next := util.UpsertBlock(raw, codexProxyBlock(endpoint), false)
+	next = util.SetTomlTopKey(next, "model_provider", "headroom")
+	next = util.SetTomlTopKey(next, "openai_base_url", endpoint)
+	if next == raw {
+		return false, p.Config
+	}
+	_ = util.WriteFile(p.Config, next)
+	return true, p.Config
+}
+
+// RemoveCodexProxy drops the provider scope only while its values still match
+// what tokless set.
+func RemoveCodexProxy() bool {
+	p := util.CodexPathsResolved()
+	raw, ok := util.ReadFileSafe(p.Config)
+	if !ok {
+		return false
+	}
+	endpoint := ProxyEndpointFor("codex")
+	if !codexProxyWritable(raw, endpoint) {
+		return false
+	}
+	next := util.RemoveBlock(raw, codexProxyProvider)
+	next = util.RemoveTomlTopKey(next, "model_provider")
+	next = util.RemoveTomlTopKey(next, "openai_base_url")
+	if next == raw {
+		return false
+	}
+	_ = util.WriteFile(p.Config, next)
+	return true
+}
+
+// CodexProxyWired reports whether config.toml routes through the proxy.
+func CodexProxyWired() bool {
+	raw, ok := util.ReadFileSafe(util.CodexPathsResolved().Config)
+	if !ok {
+		return false
+	}
+	endpoint := ProxyEndpointFor("codex")
+	if util.GetTomlTopKey(raw, "model_provider") != "headroom" {
+		return false
+	}
+	if util.GetTomlTopKey(raw, "openai_base_url") != endpoint {
+		return false
+	}
+	return strings.Contains(raw, util.RenderBlock(codexProxyBlock(endpoint)))
 }
 
 // --- Codex rtk PreToolUse hook ---

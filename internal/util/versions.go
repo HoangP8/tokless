@@ -244,6 +244,7 @@ func gatherVersions(force bool) map[string]VersionInfo {
 			"rtk":          {Installed: strp("0.43.0"), Latest: strp("0.43.0"), Channel: "github", Present: false},
 			"codegraph":    {Installed: nil, Latest: strp("1.1.6"), Channel: "npm", Present: false},
 			"context-mode": {Installed: nil, Latest: strp("1.0.169"), Channel: "npm", Present: false},
+			"headroom":     {Channel: "uv", Present: HeadroomInstalled()},
 			"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm", Present: false},
 		}
 	}
@@ -253,6 +254,7 @@ func gatherVersions(force bool) map[string]VersionInfo {
 	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github", Present: rtkInstalledVersion() != nil}
 	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm", Present: npmInstalledVersion("@colbymchenry/codegraph") != nil}
 	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm", Present: npmInstalledVersion("context-mode") != nil}
+	out["headroom"] = VersionInfo{Channel: "uv", Present: HeadroomInstalled()}
 	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm", Present: npmInstalledVersion("tokless") != nil}
 	return out
 }
@@ -313,7 +315,6 @@ func npmPkgDir(pkg string) string {
 	}
 	return ""
 }
-
 
 var toolIDs = []string{"rtk", "codegraph", "context-mode", "tokless"}
 
@@ -459,4 +460,3 @@ func CountOutdated(m map[string]VersionInfo) int {
 func BustVersionCache() {
 	_ = os.Remove(cachePath())
 }
-

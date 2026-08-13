@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -222,9 +223,15 @@ func kiloExpectedCommand(toolID string, command []string) bool {
 		return len(command) >= 4 && command[2] == "--context-mode" && kiloContextServer(command[3:])
 	case "codegraph":
 		return len(command) >= 7 && command[2] == "--agent" && command[3] == "kilo" && kiloCodegraphServer(command[4:])
+	case "headroom":
+		return len(command) == 7 && command[2] == "--tool" && command[3] == "headroom" && kiloHeadroomServer(command[4:])
 	default:
 		return false
 	}
+}
+
+func kiloHeadroomServer(command []string) bool {
+	return len(command) == 3 && kiloCommandBase(command[0]) == "headroom" && command[1] == "mcp" && command[2] == "serve"
 }
 
 func kiloContextServer(command []string) bool {
@@ -468,4 +475,137 @@ var kilo = &core.AgentManifest{
 	Detect: func() core.Detection {
 		return detectVSCodeAgent("kilo", util.KiloPathsResolved().Dir, kiloKnownBinDirs(), "kilocode.kilo-code")
 	},
+}
+
+// --- Kilo headroom HTTP proxy ---
+
+const kiloProxyProvider = "tokless-headroom"
+
+// kiloProxyProviderEntry builds the opencode-style provider entry injected
+// into provider.<id>.
+func kiloProxyProviderEntry(endpoint string) *util.OrderedMap {
+	entry := util.NewOrderedMap()
+	entry.Set("npm", "@ai-sdk/openai-compatible")
+	entry.Set("name", "Headroom Proxy")
+	options := util.NewOrderedMap()
+	options.Set("baseURL", endpoint)
+	entry.Set("options", options)
+	model := util.NewOrderedMap()
+	model.Set("name", "Headroom")
+	model.Set("tool_call", true)
+	limit := util.NewOrderedMap()
+	limit.Set("context", 128000)
+	limit.Set("output", 16384)
+	model.Set("limit", limit)
+	models := util.NewOrderedMap()
+	models.Set("headroom", model)
+	entry.Set("models", models)
+	return entry
+}
+
+// ConfigureKiloProxy injects provider.tokless-headroom into kilo.jsonc,
+// pointing at the OpenAI-compatible headroom daemon endpoint.
+func ConfigureKiloProxy() (changed bool, file string) {
+	p := util.KiloPathsResolved()
+	_ = util.EnsureDir(p.Dir)
+	raw, ok := util.ReadFileSafe(p.Config)
+	if util.HasJSONCComments(raw) {
+		return false, p.Config
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		if ok {
+			return false, p.Config
+		}
+		cfg = util.NewOrderedMap()
+	}
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		if _, present := cfg.Get("provider"); present {
+			return false, p.Config
+		}
+		providers = util.NewOrderedMap()
+		cfg.Set("provider", providers)
+	}
+	desired := kiloProxyProviderEntry(ProxyEndpointFor("kilo"))
+	if existing, ok := providers.Get(kiloProxyProvider); ok {
+		if jsonEqual(existing, desired) {
+			return false, p.Config
+		}
+		return false, p.Config
+	}
+	providers.Set(kiloProxyProvider, desired)
+	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
+		return false, p.Config
+	}
+	return true, p.Config
+}
+
+// RemoveKiloProxy deletes provider.tokless-headroom only while its value still
+// equals what tokless injected.
+func RemoveKiloProxy() bool {
+	p := util.KiloPathsResolved()
+	raw, ok := util.ReadFileSafe(p.Config)
+	if !ok {
+		return false
+	}
+	if util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		return false
+	}
+	existing, ok := providers.Get(kiloProxyProvider)
+	if !ok || !jsonEqual(existing, kiloProxyProviderEntry(ProxyEndpointFor("kilo"))) {
+		return false
+	}
+	providers.Delete(kiloProxyProvider)
+	if providers.Len() == 0 {
+		cfg.Delete("provider")
+	}
+	return util.WriteFile(p.Config, util.StringifyJSON(cfg)) == nil
+}
+
+// KiloProxyWired reports whether provider.tokless-headroom points at the
+// headroom daemon endpoint.
+func KiloProxyWired() bool {
+	raw, ok := util.ReadFileSafe(util.KiloPathsResolved().Config)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		return false
+	}
+	existing, ok := providers.Get(kiloProxyProvider)
+	return ok && jsonEqual(existing, kiloProxyProviderEntry(ProxyEndpointFor("kilo")))
+}
+
+// jsonEqual compares two JSON values by canonical form.
+func jsonEqual(a, b any) bool {
+	return canonicalJSON(a) == canonicalJSON(b)
+}
+
+func canonicalJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	var m any
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	if err := dec.Decode(&m); err != nil {
+		return string(b)
+	}
+	b2, _ := json.Marshal(m)
+	return string(b2)
 }

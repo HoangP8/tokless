@@ -275,3 +275,10 @@ func WrapContextMode(s McpSpawn) McpSpawn {
 	args = append(args, s.Args...)
 	return McpSpawn{Command: self, Args: args}
 }
+
+// WrapBoundedTool routes an MCP server through Tokless's allowlist proxy.
+func WrapBoundedTool(toolID string, s McpSpawn) McpSpawn {
+	self := toklessRunMcpCommand()
+	args := append([]string{"run-mcp", "--tool", toolID, s.Command}, s.Args...)
+	return McpSpawn{Command: self, Args: args}
+}

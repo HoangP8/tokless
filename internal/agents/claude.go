@@ -27,7 +27,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.PickMcpSpawn("context-mode")
+		spawn = util.McpSpawnFor(toolID)
 	}
 	desired := util.NewOrderedMap()
 	desired.Set("type", "stdio")
@@ -66,6 +66,8 @@ func claudeMcpToolNames(toolID string) []string {
 	switch toolID {
 	case "context-mode":
 		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
+	case "headroom":
+		return []string{"headroom_compress", "headroom_retrieve"}
 	case "codegraph":
 		return []string{"codegraph_explore"}
 	}
@@ -174,6 +176,9 @@ func removeClaudeContextModeWildcard(entries []any) []any {
 func DisallowClaudeMcpTool(toolID string) {
 	p := util.ClaudeCodePaths()
 	raw, ok := util.ReadFileSafe(p.Settings)
+	if util.HasJSONCComments(raw) {
+		return
+	}
 	if !ok {
 		return
 	}
@@ -340,6 +345,106 @@ func RemoveClaudeMcp(toolID string) bool {
 	}
 	DisallowClaudeMcpTool(toolID)
 	return removed
+}
+
+// --- Claude headroom HTTP proxy ---
+
+const claudeProxyEnvKey = "ANTHROPIC_BASE_URL"
+
+func ConfigureClaudeProxy() (changed bool, file string) {
+	url := ProxyEndpointFor("claude")
+	p := util.ClaudeCodePaths()
+	_ = util.EnsureDir(p.Dir)
+	raw, ok := util.ReadFileSafe(p.Settings)
+	if util.HasJSONCComments(raw) {
+		return false, p.Settings
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		if ok {
+			return false, p.Settings
+		}
+		cfg = util.NewOrderedMap()
+	}
+	env := util.NewOrderedMap()
+	if v, ok := cfg.Get("env"); ok {
+		em, isMap := v.(*util.OrderedMap)
+		if !isMap {
+			return false, p.Settings
+		}
+		env = em
+	} else {
+		cfg.Set("env", env)
+	}
+	if v, ok := env.Get(claudeProxyEnvKey); ok {
+		if s, ok := v.(string); ok && s == url {
+			return false, p.Settings
+		}
+		return false, p.Settings
+	}
+	env.Set(claudeProxyEnvKey, url)
+	if err := util.WriteFile(p.Settings, util.StringifyJSON(cfg)); err != nil {
+		return false, p.Settings
+	}
+	return true, p.Settings
+}
+
+// RemoveClaudeProxy deletes env.ANTHROPIC_BASE_URL only when it still equals
+// the url tokless set.
+func RemoveClaudeProxy() bool {
+	url := ProxyEndpointFor("claude")
+	p := util.ClaudeCodePaths()
+	raw, ok := util.ReadFileSafe(p.Settings)
+	if !ok {
+		return false
+	}
+	if util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	env, ok := mapChild(cfg, "env")
+	if !ok {
+		return false
+	}
+	v, ok := env.Get(claudeProxyEnvKey)
+	if !ok {
+		return false
+	}
+	s, ok := v.(string)
+	if !ok || s != url {
+		return false
+	}
+	env.Delete(claudeProxyEnvKey)
+	if env.Len() == 0 {
+		cfg.Delete("env")
+	}
+	return util.WriteFile(p.Settings, util.StringifyJSON(cfg)) == nil
+}
+
+// ClaudeProxyWired reports whether ANTHROPIC_BASE_URL is set to url.
+func ClaudeProxyWired() bool {
+	url := ProxyEndpointFor("claude")
+	raw, ok := util.ReadFileSafe(util.ClaudeCodePaths().Settings)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	env, ok := mapChild(cfg, "env")
+	if !ok {
+		return false
+	}
+	v, ok := env.Get(claudeProxyEnvKey)
+	if !ok {
+		return false
+	}
+	s, ok := v.(string)
+	return ok && s == url
 }
 
 // claudeMcpEqual compares command/args/env by canonical JSON.

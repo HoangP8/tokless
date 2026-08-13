@@ -163,9 +163,22 @@ func unwrapRunMcp(command string, args []string) (string, []string) {
 	if base != "tokless" && base != "tokless.exe" {
 		return command, args
 	}
-	// run-mcp --agent <id> <cmd> [args...]
-	if len(args) >= 4 && args[0] == "run-mcp" && args[1] == "--agent" {
-		return args[3], append([]string(nil), args[4:]...)
+	if len(args) == 0 || args[0] != "run-mcp" {
+		return command, args
+	}
+	args = args[1:]
+	for len(args) > 0 {
+		switch args[0] {
+		case "--agent", "--workspace", "--tool":
+			if len(args) < 2 || args[1] == "" || strings.HasPrefix(args[1], "--") {
+				return command, args
+			}
+			args = args[2:]
+		case "--context-mode":
+			args = args[1:]
+		default:
+			return args[0], append([]string(nil), args[1:]...)
+		}
 	}
 	return command, args
 }

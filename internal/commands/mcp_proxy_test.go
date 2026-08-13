@@ -120,7 +120,7 @@ func main() {
 	}
 	input := bytes.NewBufferString("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ctx_search\"}}\n")
 	var output bytes.Buffer
-	if code := runMcpProxyIO("", "go", []string{"go", "run", upstream}, nil, input, &output, io.Discard, true); code != 0 {
+	if code := runMcpProxyIO("", "go", []string{"go", "run", upstream}, nil, input, &output, io.Discard, "context-mode"); code != 0 {
 		t.Fatalf("proxy exit code = %d", code)
 	}
 	var responses []map[string]any
@@ -150,10 +150,130 @@ func main() {
 	}
 }
 
+func TestHeadroomPolicyFiltersAndRejectsHiddenTools(t *testing.T) {
+	allowed := mcpToolPolicies["headroom"]
+	ids := &mcpRequestIDs{ids: map[string]bool{}}
+	var upstream, output bytes.Buffer
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"headroom_compress"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"headroom_stats"}}`,
+	}, "\n") + "\n"
+	if err := scanMcpInput(strings.NewReader(input), &upstream, &output, ids, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(upstream.String(), "tools/call"); got != 1 || strings.Contains(upstream.String(), "headroom_stats") {
+		t.Fatalf("hidden Headroom call reached upstream: %q", upstream.String())
+	}
+	if !strings.Contains(output.String(), `"id":3`) || !strings.Contains(output.String(), `"code":-32601`) || !strings.Contains(output.String(), `tool \"headroom_stats\" is not available`) {
+		t.Fatalf("unexpected denied response: %q", output.String())
+	}
+	output.Reset()
+	if err := scanMcpInput(strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"headroom_stats"}}`+"\n"), &upstream, &output, ids, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("denied notification produced response: %q", output.String())
+	}
+
+	output.Reset()
+	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"headroom_compress"},{"name":"headroom_stats"},{"name":"headroom_retrieve"},{"name":"headroom_read"}]}}` + "\n"
+	if err := scanMcpOutput(strings.NewReader(response), &output, ids, allowed); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if strings.Contains(got, "headroom_stats") || strings.Contains(got, "headroom_read") || !strings.Contains(got, "headroom_compress") || !strings.Contains(got, "headroom_retrieve") {
+		t.Fatalf("Headroom list not correctly filtered: %q", got)
+	}
+}
+
+func TestUnboundedProxyPassesThroughTools(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh fixture")
+	}
+	script := filepath.Join(t.TempDir(), "upstream")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nread line\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"tools\":[{\"name\":\"headroom_stats\"}]}}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := runMcpProxyIO("", script, []string{script}, nil, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"), &output, io.Discard, ""); code != 0 {
+		t.Fatalf("proxy exit code = %d", code)
+	}
+	if !strings.Contains(output.String(), "headroom_stats") {
+		t.Fatalf("unbounded proxy filtered upstream tools: %q", output.String())
+	}
+}
+
+func TestMcpProxyAfterStartRunsOnceOnlyAfterSuccessfulStart(t *testing.T) {
+	successPath := "sh"
+	successArgv := []string{"sh", "-c", "exit 0"}
+	if runtime.GOOS == "windows" {
+		successPath = "cmd"
+		successArgv = []string{"cmd", "/c", "exit 0"}
+	}
+	tests := []struct {
+		name    string
+		tool    string
+		path    string
+		argv    []string
+		wantRun bool
+	}{
+		{"unbounded success", "", successPath, successArgv, true},
+		{"unbounded failure", "", filepath.Join(t.TempDir(), "missing"), []string{"missing"}, false},
+		{"bounded success", "context-mode", successPath, successArgv, true},
+		{"bounded failure", "context-mode", filepath.Join(t.TempDir(), "missing"), []string{"missing"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			code := runMcpProxyIOAfterStart("", tt.path, tt.argv, nil, strings.NewReader(""), io.Discard, io.Discard, tt.tool, func() {
+				calls++
+			})
+			if tt.wantRun && code != 0 {
+				t.Fatalf("proxy exit code = %d, want 0", code)
+			}
+			if !tt.wantRun && code == 0 {
+				t.Fatal("proxy unexpectedly succeeded")
+			}
+			wantCalls := 0
+			if tt.wantRun {
+				wantCalls = 1
+			}
+			if calls != wantCalls {
+				t.Fatalf("afterStart calls = %d, want %d", calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestBoundedProxyOutputDoesNotDeadlock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh fixture")
+	}
+	inputReader, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	var output bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runMcpProxyIO("", "sh", []string{"sh", "-c", "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'"}, nil, inputReader, &output, io.Discard, "context-mode")
+	}()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("proxy exit code = %d", code)
+		}
+		if got := strings.TrimSpace(output.String()); got != `{"jsonrpc":"2.0","id":1,"result":{}}` {
+			t.Fatalf("output = %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bounded proxy deadlocked while forwarding child output")
+	}
+}
+
 func TestScanMcpInputSupportsLargeNDJSONMessage(t *testing.T) {
 	message := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ctx_search","arguments":{"query":"` + strings.Repeat("x", 70<<10) + `"}}}`
 	var upstream, output bytes.Buffer
-	if err := scanMcpInput(strings.NewReader(message+"\n"), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}); err != nil {
+	if err := scanMcpInput(strings.NewReader(message+"\n"), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(upstream.String()); got != message {
@@ -164,7 +284,7 @@ func TestScanMcpInputSupportsLargeNDJSONMessage(t *testing.T) {
 func TestScanMcpInputRejectsHiddenToolLocally(t *testing.T) {
 	request := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"hidden"}}`
 	var upstream, output bytes.Buffer
-	if err := scanMcpInput(strings.NewReader(request+"\n"), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}); err != nil {
+	if err := scanMcpInput(strings.NewReader(request+"\n"), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	if upstream.Len() != 0 {
@@ -187,7 +307,7 @@ func TestScanMcpInputRejectsHiddenToolLocally(t *testing.T) {
 func TestScanMcpInputRejectsBatchFailClosed(t *testing.T) {
 	batch := `[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hidden"}}]`
 	var upstream, output bytes.Buffer
-	if err := scanMcpInput(strings.NewReader(batch+"\n"), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}); err != nil {
+	if err := scanMcpInput(strings.NewReader(batch+"\n"), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	if upstream.Len() != 0 {
@@ -212,14 +332,14 @@ func TestToolsListIDIsCanonicalAndRemovedAfterResponse(t *testing.T) {
 	ids := &mcpRequestIDs{ids: map[string]bool{}}
 	var upstream, discarded bytes.Buffer
 	input := "{\"jsonrpc\":\"2.0\",\"id\": 1,\"method\":\"tools/list\"}\n"
-	if err := scanMcpInput(strings.NewReader(input), &upstream, &discarded, ids); err != nil {
+	if err := scanMcpInput(strings.NewReader(input), &upstream, &discarded, ids, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	response := []byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"hidden"}]}}`)
-	if !filterContextModeTools(response, ids) {
+	if !filterMcpTools(response, ids) {
 		t.Fatal("equivalent request/response IDs did not correlate")
 	}
-	if filterContextModeTools(response, ids) {
+	if filterMcpTools(response, ids) {
 		t.Fatal("request ID was reused after correlated response")
 	}
 }
@@ -238,11 +358,11 @@ func TestToolsListIDsCorrelateSemanticJSONValues(t *testing.T) {
 			ids := &mcpRequestIDs{ids: map[string]bool{}}
 			input := `{"jsonrpc":"2.0","id":` + tt.request + `,"method":"tools/list"}` + "\n"
 			var upstream, discarded bytes.Buffer
-			if err := scanMcpInput(strings.NewReader(input), &upstream, &discarded, ids); err != nil {
+			if err := scanMcpInput(strings.NewReader(input), &upstream, &discarded, ids, contextModeTools); err != nil {
 				t.Fatal(err)
 			}
 			response := []byte(`{"jsonrpc":"2.0","id":` + tt.response + `,"result":{"tools":[{"name":"hidden"}]}}`)
-			if !filterContextModeTools(response, ids) {
+			if !filterMcpTools(response, ids) {
 				t.Fatalf("IDs did not correlate: request %s, response %s", tt.request, tt.response)
 			}
 		})
@@ -252,16 +372,16 @@ func TestToolsListIDsCorrelateSemanticJSONValues(t *testing.T) {
 func TestServerRequestDoesNotConsumeToolsListID(t *testing.T) {
 	ids := &mcpRequestIDs{ids: map[string]bool{}}
 	var upstream, discarded bytes.Buffer
-	if err := scanMcpInput(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"), &upstream, &discarded, ids); err != nil {
+	if err := scanMcpInput(strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"), &upstream, &discarded, ids, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	serverRequest := []byte(`{"jsonrpc":"2.0","id":1,"method":"notifications/request"}`)
-	if filterContextModeTools(serverRequest, ids) {
+	if filterMcpTools(serverRequest, ids) {
 		t.Fatal("server request consumed pending tools/list ID")
 	}
 	response := []byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"hidden"},{"name":"ctx_search"}]}}`)
 	var output bytes.Buffer
-	if err := scanMcpOutput(strings.NewReader(string(response)+"\n"), &output, ids); err != nil {
+	if err := scanMcpOutput(strings.NewReader(string(response)+"\n"), &output, ids, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	filtered := output.Bytes()
@@ -274,7 +394,7 @@ func TestMCPContentLengthFraming(t *testing.T) {
 	message := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ctx_search"}}`)
 	input := fmt.Sprintf("Content-Length: %d\r\nX-Test: yes\r\n\r\n%s", len(message), message)
 	var upstream, output bytes.Buffer
-	if err := scanMcpInput(strings.NewReader(input), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}); err != nil {
+	if err := scanMcpInput(strings.NewReader(input), &upstream, &output, &mcpRequestIDs{ids: map[string]bool{}}, contextModeTools); err != nil {
 		t.Fatal(err)
 	}
 	want := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(message), message)
@@ -342,7 +462,7 @@ func TestBoundedContextModeProxyReturnsWhenUpstreamCloses(t *testing.T) {
 	defer inputWriter.Close()
 	done := make(chan int, 1)
 	go func() {
-		done <- runMcpProxyIO("", "sh", []string{"sh", "-c", "exit 0"}, nil, inputReader, io.Discard, io.Discard, true)
+		done <- runMcpProxyIO("", "sh", []string{"sh", "-c", "exit 0"}, nil, inputReader, io.Discard, io.Discard, "context-mode")
 	}()
 	select {
 	case code := <-done:

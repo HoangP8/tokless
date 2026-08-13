@@ -17,6 +17,8 @@ var ideProjectRoot string
 
 func SetIdeProjectRoot(p string) { ideProjectRoot = p }
 
+func IdeProjectRoot() string { return ideRoot() }
+
 func ideRoot() string {
 	if ideProjectRoot != "" {
 		return ideProjectRoot
@@ -302,7 +304,7 @@ func ConfigureCopilotMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
 	} else {
-		spawn = util.PickMcpSpawn(toolID)
+		spawn = util.McpSpawnFor(toolID)
 	}
 	desired := util.NewOrderedMap()
 	desired.Set("type", "local")
@@ -387,7 +389,7 @@ func ConfigureCopilotIdeMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
 	} else {
-		spawn = util.PickMcpSpawn(toolID)
+		spawn = util.McpSpawnFor(toolID)
 	}
 	desired := util.NewOrderedMap()
 	desired.Set("type", "stdio")

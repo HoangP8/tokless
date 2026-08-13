@@ -810,6 +810,7 @@ func Register() {
 	core.RegisterTool(caveman)
 	core.RegisterTool(codegraph)
 	core.RegisterTool(contextMode)
+	core.RegisterTool(headroom)
 	core.RegisterTool(ponytail)
 }
 

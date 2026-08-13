@@ -175,13 +175,27 @@ func buildClineSimBinary(t *testing.T) string {
 	}
 	build := exec.Command("go", "build", "-o", bin, "./cmd/tokless")
 	build.Dir = root
+	goHome := t.TempDir()
+	cacheEnv, err := exec.Command("go", "env", "GOPATH", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatalf("go env cache paths: %v", err)
+	}
+	cachePaths := strings.Fields(string(cacheEnv))
+	if len(cachePaths) != 2 || cachePaths[0] == "" || cachePaths[1] == "" {
+		t.Fatalf("go env cache paths = %q", cacheEnv)
+	}
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "GOCACHE=") {
+		if !strings.HasPrefix(e, "HOME=") && !strings.HasPrefix(e, "GOCACHE=") && !strings.HasPrefix(e, "GOPATH=") && !strings.HasPrefix(e, "GOMODCACHE=") {
 			env = append(env, e)
 		}
 	}
-	build.Env = append(env, "GOCACHE="+filepath.Join(t.TempDir(), "gocache"))
+	build.Env = append(env,
+		"HOME="+goHome,
+		"GOCACHE="+filepath.Join(goHome, "gocache"),
+		"GOPATH="+cachePaths[0],
+		"GOMODCACHE="+cachePaths[1],
+	)
 	out, err := build.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build tokless: %v\n%s", err, out)

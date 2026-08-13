@@ -407,6 +407,9 @@ func PiUpdatePackages() {
 
 func ConfigurePiMcp(toolID string) (changed bool, file string) {
 	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
+	if toolID == "headroom" {
+		spawn = util.McpSpawnFor(toolID)
+	}
 	f := piMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
@@ -502,4 +505,110 @@ func PiMcpHasAny() bool {
 	}
 	sm, ok := s.(*util.OrderedMap)
 	return ok && sm.Len() > 0
+}
+
+// --- Pi headroom HTTP proxy ---
+
+const piProxyProvider = "tokless-headroom"
+
+func piModelsFile() string { return filepath.Join(piAgentDir(), "models.json") }
+
+// piProxyProviderEntry builds the provider entry injected into providers.<id>.
+func piProxyProviderEntry(endpoint string) *util.OrderedMap {
+	entry := util.NewOrderedMap()
+	entry.Set("baseUrl", endpoint)
+	entry.Set("api", "openai-completions")
+	entry.Set("apiKey", "tokless")
+	model := util.NewOrderedMap()
+	model.Set("id", "headroom")
+	model.Set("reasoning", false)
+	entry.Set("models", []any{model})
+	return entry
+}
+
+// ConfigurePiProxy injects providers.tokless-headroom into models.json,
+// pointing at the OpenAI-compatible headroom daemon endpoint.
+func ConfigurePiProxy() (changed bool, file string) {
+	f := piModelsFile()
+	_ = util.EnsureDir(piAgentDir())
+	raw, ok := util.ReadFileSafe(f)
+	if util.HasJSONCComments(raw) {
+		return false, f
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		if ok {
+			return false, f
+		}
+		cfg = util.NewOrderedMap()
+	}
+	providers, ok := mapChild(cfg, "providers")
+	if !ok {
+		if _, present := cfg.Get("providers"); present {
+			return false, f
+		}
+		providers = util.NewOrderedMap()
+		cfg.Set("providers", providers)
+	}
+	desired := piProxyProviderEntry(ProxyEndpointFor("pi"))
+	if existing, ok := providers.Get(piProxyProvider); ok {
+		if jsonEqual(existing, desired) {
+			return false, f
+		}
+		return false, f
+	}
+	providers.Set(piProxyProvider, desired)
+	if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+		return false, f
+	}
+	return true, f
+}
+
+// RemovePiProxy deletes providers.tokless-headroom only while its value still
+// equals what tokless injected; a differing user entry is left untouched.
+func RemovePiProxy() bool {
+	f := piModelsFile()
+	raw, ok := util.ReadFileSafe(f)
+	if !ok {
+		return false
+	}
+	if util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "providers")
+	if !ok {
+		return false
+	}
+	existing, ok := providers.Get(piProxyProvider)
+	if !ok || !jsonEqual(existing, piProxyProviderEntry(ProxyEndpointFor("pi"))) {
+		return false
+	}
+	providers.Delete(piProxyProvider)
+	if providers.Len() == 0 {
+		cfg.Delete("providers")
+	}
+	return util.WriteFile(f, util.StringifyJSON(cfg)) == nil
+}
+
+// PiProxyWired reports whether providers.tokless-headroom points at the
+// headroom daemon endpoint.
+func PiProxyWired() bool {
+	raw, ok := util.ReadFileSafe(piModelsFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "providers")
+	if !ok {
+		return false
+	}
+	existing, ok := providers.Get(piProxyProvider)
+	return ok && jsonEqual(existing, piProxyProviderEntry(ProxyEndpointFor("pi")))
 }

@@ -64,6 +64,9 @@ func runPurge() int {
 			}
 		}
 	}
+	if err := os.RemoveAll(util.HeadroomPathsResolved().Root); err != nil {
+		return n + 1
+	}
 	return n
 }
 
@@ -78,6 +81,9 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		}
 	}
 	if len(detected) == 0 {
+		if removeTools && !opts.DryRun {
+			_ = purgeBinaries(opts)
+		}
 		util.L.Raw("  " + util.C.Gray("nothing wired."))
 		util.L.Raw("")
 		return 0

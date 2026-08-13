@@ -16,7 +16,7 @@ func cursorMcpEntry(toolID string) *util.OrderedMap {
 }
 
 func cursorMcpEntryFor(toolID string, windowsBridge bool) *util.OrderedMap {
-	spawn := util.PickMcpSpawn(toolID)
+	spawn := util.McpSpawnFor(toolID)
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("cursor", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 		spawn.Args = append([]string{"run-mcp", "--agent", "cursor", "--workspace", "${workspaceFolder}"}, spawn.Args[3:]...)
