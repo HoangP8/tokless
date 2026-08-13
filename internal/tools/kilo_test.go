@@ -127,6 +127,7 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 func TestKiloContextVerifyRejectsMutatedValidEntry(t *testing.T) {
 	kiloToolProject(t)
 	t.Setenv("TOKLESS_TEST", "1")
+	t.Setenv("KILO_CONFIG_DIR", filepath.Join(t.TempDir(), "global"))
 	binDir := t.TempDir()
 	kiloExecutableFixture(t, binDir, "rtk", "rtk")
 	t.Setenv("PATH", binDir)

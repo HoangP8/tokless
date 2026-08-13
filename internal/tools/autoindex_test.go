@@ -11,8 +11,7 @@ import (
 
 func TestClaudeAutoIndexUnwireKeepsUserHook(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv("HOME", dir)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", dir)
 	util.SetHomeOverride(dir)
 	defer util.SetHomeOverride("")
 	cp := util.ClaudeCodePaths()
@@ -35,8 +34,7 @@ func TestClaudeAutoIndexUnwireKeepsUserHook(t *testing.T) {
 
 func TestGeminiAutoIndexUnwireKeepsUserHook(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv("HOME", dir)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", dir)
 	util.SetHomeOverride(dir)
 	defer util.SetHomeOverride("")
 	p := geminiSettingsPath()
@@ -58,8 +56,7 @@ func TestGeminiAutoIndexUnwireKeepsUserHook(t *testing.T) {
 
 func TestCodexAutoIndexUnwireKeepsContextMode(t *testing.T) {
 	dir := t.TempDir()
-	os.Setenv("CODEX_HOME", dir)
-	defer os.Unsetenv("CODEX_HOME")
+	t.Setenv("CODEX_HOME", dir)
 	hp := filepath.Join(dir, "hooks.json")
 	os.WriteFile(hp, []byte(`{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"context-mode hook codex sessionstart"}]},{"matcher":"startup","hooks":[{"type":"command","command":"tokless index --auto --agent codex"}]}]}}`), 0o644)
 
