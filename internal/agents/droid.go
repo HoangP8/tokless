@@ -96,6 +96,9 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 	f := droidMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
+	if util.HasJSONCComments(raw) {
+		return false, f
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		cfg = util.NewOrderedMap()
@@ -124,7 +127,9 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 
 	servers.Set(toolID, entry)
 	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(f, next)
+		if err := util.WriteFile(f, next); err != nil {
+			return false, f
+		}
 		changed = true
 		file = f
 	}
@@ -164,6 +169,9 @@ func RemoveDroidMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
+	if util.HasJSONCComments(raw) {
+		return false
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		return false
@@ -180,8 +188,7 @@ func RemoveDroidMcp(toolID string) bool {
 		return false
 	}
 	sm.Delete(toolID)
-	_ = util.WriteFile(f, util.StringifyJSON(cfg))
-	return true
+	return util.WriteFile(f, util.StringifyJSON(cfg)) == nil
 }
 
 // DroidMcpHas reports whether ~/.factory/mcp.json registers the tool.

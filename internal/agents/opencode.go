@@ -13,6 +13,9 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
 	_ = util.EnsureDir(p.Dir)
 	raw, _ := util.ReadFileSafe(p.Config)
+	if util.HasJSONCComments(raw) {
+		return false, p.Config
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		cfg = util.NewOrderedMap()
@@ -43,7 +46,9 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 		}
 	}
 	mcp.Set(toolID, desired)
-	_ = util.WriteFile(p.Config, util.StringifyJSON(cfg))
+	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
+		return false, p.Config
+	}
 	return true, p.Config
 }
 
@@ -51,6 +56,9 @@ func RemoveOpenCodeMcp(toolID string) bool {
 	p := util.OpenCodePathsResolved()
 	raw, ok := util.ReadFileSafe(p.Config)
 	if !ok {
+		return false
+	}
+	if util.HasJSONCComments(raw) {
 		return false
 	}
 	cfg := util.TryParseJsonc(raw)

@@ -176,6 +176,9 @@ func removeClaudeContextModeWildcard(entries []any) []any {
 func DisallowClaudeMcpTool(toolID string) {
 	p := util.ClaudeCodePaths()
 	raw, ok := util.ReadFileSafe(p.Settings)
+	if util.HasJSONCComments(raw) {
+		return
+	}
 	if !ok {
 		return
 	}
