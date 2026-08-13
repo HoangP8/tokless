@@ -168,6 +168,13 @@ func TestHeadroomPolicyFiltersAndRejectsHiddenTools(t *testing.T) {
 	if !strings.Contains(output.String(), `"id":3`) || !strings.Contains(output.String(), `"code":-32601`) || !strings.Contains(output.String(), `tool \"headroom_stats\" is not available`) {
 		t.Fatalf("unexpected denied response: %q", output.String())
 	}
+	output.Reset()
+	if err := scanMcpInput(strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"headroom_stats"}}`+"\n"), &upstream, &output, ids, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("denied notification produced response: %q", output.String())
+	}
 
 	output.Reset()
 	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"headroom_compress"},{"name":"headroom_stats"},{"name":"headroom_retrieve"},{"name":"headroom_read"}]}}` + "\n"
@@ -194,6 +201,72 @@ func TestUnboundedProxyPassesThroughTools(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "headroom_stats") {
 		t.Fatalf("unbounded proxy filtered upstream tools: %q", output.String())
+	}
+}
+
+func TestMcpProxyAfterStartRunsOnceOnlyAfterSuccessfulStart(t *testing.T) {
+	successPath := "sh"
+	successArgv := []string{"sh", "-c", "exit 0"}
+	if runtime.GOOS == "windows" {
+		successPath = "cmd"
+		successArgv = []string{"cmd", "/c", "exit 0"}
+	}
+	tests := []struct {
+		name    string
+		tool    string
+		path    string
+		argv    []string
+		wantRun bool
+	}{
+		{"unbounded success", "", successPath, successArgv, true},
+		{"unbounded failure", "", filepath.Join(t.TempDir(), "missing"), []string{"missing"}, false},
+		{"bounded success", "context-mode", successPath, successArgv, true},
+		{"bounded failure", "context-mode", filepath.Join(t.TempDir(), "missing"), []string{"missing"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			code := runMcpProxyIOAfterStart("", tt.path, tt.argv, nil, strings.NewReader(""), io.Discard, io.Discard, tt.tool, func() {
+				calls++
+			})
+			if tt.wantRun && code != 0 {
+				t.Fatalf("proxy exit code = %d, want 0", code)
+			}
+			if !tt.wantRun && code == 0 {
+				t.Fatal("proxy unexpectedly succeeded")
+			}
+			wantCalls := 0
+			if tt.wantRun {
+				wantCalls = 1
+			}
+			if calls != wantCalls {
+				t.Fatalf("afterStart calls = %d, want %d", calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestBoundedProxyOutputDoesNotDeadlock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh fixture")
+	}
+	inputReader, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	var output bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runMcpProxyIO("", "sh", []string{"sh", "-c", "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'"}, nil, inputReader, &output, io.Discard, "context-mode")
+	}()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("proxy exit code = %d", code)
+		}
+		if got := strings.TrimSpace(output.String()); got != `{"jsonrpc":"2.0","id":1,"result":{}}` {
+			t.Fatalf("output = %q", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bounded proxy deadlocked while forwarding child output")
 	}
 }
 

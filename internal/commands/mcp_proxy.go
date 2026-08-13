@@ -34,9 +34,7 @@ func runMcpProxyIOAfterStart(agent, path string, argv, env []string, input io.Re
 	cmd.Env = mcpChildEnv(env)
 	cmd.Stderr = stderr
 	if allowed := mcpToolPolicies[tool]; len(allowed) > 0 {
-		if afterStart != nil {
-		}
-		return runBoundedMcpProxy(cmd, input, output, allowed)
+		return runBoundedMcpProxy(cmd, input, output, allowed, afterStart)
 	}
 	cmd.Stdin = input
 	stdout, err := cmd.StdoutPipe()
@@ -70,7 +68,7 @@ var mcpToolPolicies = map[string][]string{
 }
 
 // runBoundedMcpProxy forwards MCP traffic unchanged except an explicit tool allowlist.
-func runBoundedMcpProxy(cmd *exec.Cmd, input io.Reader, output io.Writer, allowed []string) int {
+func runBoundedMcpProxy(cmd *exec.Cmd, input io.Reader, output io.Writer, allowed []string, afterStart func()) int {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return 1
@@ -81,6 +79,9 @@ func runBoundedMcpProxy(cmd *exec.Cmd, input io.Reader, output io.Writer, allowe
 	}
 	if err := cmd.Start(); err != nil {
 		return 1
+	}
+	if afterStart != nil {
+		afterStart()
 	}
 	listIDs := &mcpRequestIDs{ids: map[string]bool{}}
 	lockedOutput := &mcpLockedWriter{writer: output}
@@ -167,8 +168,10 @@ func scanMcpInput(input io.Reader, upstream, output io.Writer, listIDs *mcpReque
 			}
 		}
 		if request.Method == "tools/call" && !isAllowedMcpTool(request.Params.Name, allowed) {
-			if err := writeMCPMessage(output, framing, mcpToolDeniedResponse(request.ID, request.Params.Name)); err != nil {
-				return err
+			if _, ok := canonicalMCPID(request.ID); ok {
+				if err := writeMCPMessage(output, framing, mcpToolDeniedResponse(request.ID, request.Params.Name)); err != nil {
+					return err
+				}
 			}
 			continue
 		}
