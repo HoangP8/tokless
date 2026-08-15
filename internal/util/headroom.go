@@ -48,9 +48,6 @@ func HeadroomUVBootstrapEnv() []string {
 }
 
 func McpSpawnFor(toolID string) McpSpawn {
-	if toolID == "headroom" {
-		return WrapBoundedTool("headroom", McpSpawn{Command: HeadroomBin(), Args: []string{"mcp", "serve"}})
-	}
 	return PickMcpSpawn(toolID)
 }
 

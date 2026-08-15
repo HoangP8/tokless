@@ -2,7 +2,6 @@ package util
 
 import (
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -23,9 +22,50 @@ func TestHeadroomPathsEnvAndSpawnAreToklessOwned(t *testing.T) {
 			t.Fatalf("environment outside Tokless root: %q", env)
 		}
 	}
-	spawn := McpSpawnFor("headroom")
-	want := []string{"run-mcp", "--tool", "headroom", HeadroomBin(), "mcp", "serve"}
-	if spawn.Command == HeadroomBin() || !reflect.DeepEqual(spawn.Args, want) {
-		t.Fatalf("spawn = %q %v, want wrapped %v", spawn.Command, spawn.Args, want)
+}
+
+func TestHeadroomProxyRuntimePersistsAndRoundTrips(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
+	if got := HeadroomProxyPort(); got != 8787 {
+		t.Fatalf("default port = %d, want 8787", got)
+	}
+	st := ProxyRuntime{Port: 19787, AnthropicURL: "https://api.ai-box.vn", OpenAIURL: "https://api.openai.com"}
+	if err := SaveHeadroomProxyRuntime(st); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReadProxyRuntime()
+	if !ok {
+		t.Fatal("persisted runtime not readable")
+	}
+	if got != st {
+		t.Fatalf("runtime round-trip = %+v, want %+v", got, st)
+	}
+	if port := HeadroomProxyPort(); port != 19787 {
+		t.Fatalf("port after persist = %d, want 19787", port)
+	}
+	if err := ClearHeadroomProxyRuntime(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadProxyRuntime(); ok {
+		t.Fatal("runtime still present after clear")
+	}
+	if port := HeadroomProxyPort(); port != 8787 {
+		t.Fatalf("port after clear = %d, want default 8787", port)
+	}
+}
+
+func TestHeadroomProxyRuntimeEnvOverridesPersisted(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	if err := SaveHeadroomProxyRuntime(ProxyRuntime{Port: 19787}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
+	if port := HeadroomProxyPort(); port != 9123 {
+		t.Fatalf("env should override persisted state, got %d", port)
 	}
 }
