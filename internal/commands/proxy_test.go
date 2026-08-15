@@ -9,6 +9,17 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+// proxyCmdTestHome isolates agent config writes from the real $HOME so proxy
+// command tests never touch live agent wiring.
+func proxyCmdTestHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+}
+
 // TestProxyInstructionsEndpointShapes pins the manual/env guidance to the same
 // /v1-vs-bare split, matching each upstream CLI's expected base-URL shape.
 func TestProxyInstructionsEndpointShapes(t *testing.T) {
@@ -36,11 +47,12 @@ func TestProxyInstructionsEndpointShapes(t *testing.T) {
 	}
 
 	if proxyInstructions("claude") != nil || proxyInstructions("codex") != nil || proxyInstructions("antigravity") != nil {
-		t.Fatal("wired/MCP-only agents must have no manual instructions")
+		t.Fatal("wired agents must have no manual instructions")
 	}
 }
 
 func TestRunProxyStatusProbesDaemonOnceAndDoesNotWireManual(t *testing.T) {
+	proxyCmdTestHome(t)
 	t.Setenv("GROK_MODELS_BASE_URL", headroompkg.ProxyOpenAIURL())
 	var probes int
 	oldRunning := proxyRunning
@@ -67,6 +79,7 @@ func TestRunProxyStatusProbesDaemonOnceAndDoesNotWireManual(t *testing.T) {
 }
 
 func TestRunProxyDownRetainsDaemonForSelectedSubset(t *testing.T) {
+	proxyCmdTestHome(t)
 	var stops int
 	oldStop := stopProxy
 	stopProxy = func() error { stops++; return nil }
@@ -80,6 +93,7 @@ func TestRunProxyDownRetainsDaemonForSelectedSubset(t *testing.T) {
 }
 
 func TestRunProxyDownStopsAfterFullUnwire(t *testing.T) {
+	proxyCmdTestHome(t)
 	var stops int
 	oldStop := stopProxy
 	stopProxy = func() error { stops++; return nil }
@@ -93,6 +107,7 @@ func TestRunProxyDownStopsAfterFullUnwire(t *testing.T) {
 }
 
 func TestRunProxyDownRetainsDaemonWhenUnwireFails(t *testing.T) {
+	proxyCmdTestHome(t)
 	var stops int
 	oldStop := stopProxy
 	stopProxy = func() error { stops++; return nil }

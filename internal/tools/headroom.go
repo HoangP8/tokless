@@ -9,80 +9,51 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+// headroomWired reports agents whose proxy config tokless manages by writing a
+// config file (claude, omp, codex, opencode, kilo, pi, droid, antigravity).
+// Manual agents (grok, copilot, cline, cursor) and any unregistered agent are
+// not wired and are handled as no-ops.
+func headroomWired(id string) bool {
+	return agents.ProxyEndpointFor(id) != ""
+}
+
+// headroomWire configures the headroom HTTP proxy for a single agent and
+// ensures the daemon is running so the wiring is immediately usable.
 func headroomWire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
 			return true, nil
 		}
-		if !headroompkg.CanConfigure(agent) {
-			return false, fmt.Errorf("%s already has a non-Tokless headroom MCP entry; refusing to overwrite it", agent)
+		if !headroomWired(agent) {
+			return true, nil
 		}
-		if !headroompkg.ConfigureMcp(agent) && !headroompkg.McpMatches(agent) {
-			return false, nil
-		}
-		if agent != "cursor" {
-			if agent == "kilo" {
-				kiloWriteOwner("headroom")
-			} else {
-				WriteOwner(agent, "headroom")
+		if !isTest() {
+			if err := headroompkg.StartProxy(); err != nil {
+				return false, err
 			}
 		}
-		if agent == "copilot" {
-			agents.ConfigureCopilotIdeMcp("headroom")
-			agents.SyncCopilotIdeInstructions()
+		if !agents.ConfigureProxyAgent(agent) {
+			return false, fmt.Errorf("%s proxy wiring not applied (differing existing config value, or write failed)", agent)
 		}
 		return headroomVerify(agent), nil
 	}
 }
 
+// headroomUnwire removes the headroom proxy config tokless wrote for an agent.
+// Manual agents have no written config and are reported as not wired.
 func headroomUnwire(agent string) core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
 			return true, nil
 		}
-		owned := HasOwner(agent, "headroom")
-		if agent == "kilo" {
-			owned = kiloHasOwner("headroom")
-		}
-		if agent != "cursor" && (!owned || !headroompkg.McpMatches(agent)) {
+		if !headroomWired(agent) {
 			return false, nil
 		}
-		switch agent {
-		case "claude":
-			agents.RemoveClaudeMcp("headroom")
-		case "opencode":
-			agents.RemoveOpenCodeMcp("headroom")
-		case "codex":
-			p := util.CodexPathsResolved().Config
-			if raw, ok := util.ReadFileSafe(p); ok {
-				_ = util.WriteFile(p, util.RemoveBlock(raw, "mcp_servers.headroom"))
-			}
-		case "cursor":
-			agents.RemoveCursorMcp("headroom")
-		case "antigravity":
-			agents.RemoveAntigravityMcp("headroom")
-		case "copilot":
-			agents.RemoveCopilotMcp("headroom")
-			agents.RemoveCopilotIdeMcp("headroom")
-		case "droid":
-			agents.RemoveDroidMcp("headroom")
-		case "grok":
-			if _, err := agents.RemoveGrokMcp("headroom"); err != nil {
-				return false, err
-			}
-		case "pi":
-			agents.RemovePiMcp("headroom")
-		case "omp":
-			agents.RemoveOmpMcp("headroom")
-		case "kilo":
-			agents.RemoveKiloMcp("headroom")
-		case "cline":
-			agents.RemoveClineMcp("headroom")
+		if !agents.ProxyAgentWired(agent) {
+			return false, nil
 		}
-		if agent == "kilo" {
-			kiloRemoveOwner("headroom")
-		} else if agent != "cursor" {
-			RemoveOwner(agent, "headroom")
+		if !agents.RemoveProxyAgent(agent) {
+			return false, fmt.Errorf("%s proxy unwire failed — removal did not take effect", agent)
 		}
 		return true, nil
 	}
@@ -92,26 +63,24 @@ func headroomVerify(agent string) bool {
 	if !isTest() && !util.HeadroomInstalled() {
 		return false
 	}
-	if agent == "cursor" {
-		return headroompkg.McpMatches(agent)
+	if !headroomWired(agent) {
+		return true
 	}
-	if agent == "kilo" {
-		return headroompkg.McpMatches(agent) && kiloHasOwner("headroom")
-	}
-	if agent == "grok" {
-		return agents.GrokHeadroomMcpHas() && HasOwner(agent, "headroom")
-	}
-	return headroompkg.McpMatches(agent) && HasOwner(agent, "headroom")
+	return agents.ProxyAgentWired(agent)
 }
 
 var headroom = &core.ToolManifest{
-	ID: "headroom", Label: "Headroom", Description: "On-demand MCP compression for large, self-contained text.",
-	Homepage: "https://github.com/headroomlabs-ai/headroom", InstallHint: "Tokless-managed uv tool: headroom-ai[mcp] (Python 3.13).",
+	ID: "headroom", Label: "Headroom", Description: "On-demand token compression proxy for large, self-contained text.",
+	Homepage: "https://github.com/headroomlabs-ai/headroom", InstallHint: "Tokless-managed uv tool: headroom-ai[proxy] (Python 3.13).",
 	Channel: core.ChannelBinary, NotTrackable: true, Install: headroompkg.EnsureInstalled,
 	WireFor: map[string]core.AgentFn{}, UnwireFor: map[string]core.AgentFn{}, VerifyFor: map[string]core.VerifyFn{},
 }
 
 func init() {
+	// All registered agents are wired, but Register() runs from main after
+	// package init, so core.AgentIDs() is incomplete here. Enumerate the proxy-
+	// supported set explicitly; unregistered-but-supported agents are filtered
+	// by ProxyEndpointFor at wire time.
 	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline"} {
 		headroom.WireFor[agent] = headroomWire(agent)
 		headroom.UnwireFor[agent] = headroomUnwire(agent)

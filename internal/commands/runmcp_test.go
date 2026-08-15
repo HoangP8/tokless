@@ -243,22 +243,18 @@ func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {
 	}
 }
 
-func TestRunMcpParsesHeadroomToolWithoutChangingChildArgs(t *testing.T) {
+func TestRunMcpRejectsRetiredHeadroomTool(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "started")
 	bin := filepath.Join(t.TempDir(), "headroom")
-	log := filepath.Join(t.TempDir(), "args")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s' \"$*\" > \"$RUN_MCP_LOG\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ntouch \"$RUN_MCP_MARKER\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("RUN_MCP_LOG", log)
-	if code := RunMcp([]string{"--tool", "headroom", "--workspace", t.TempDir(), bin, "mcp", "serve"}); code != 0 {
-		t.Fatalf("RunMcp = %d", code)
+	t.Setenv("RUN_MCP_MARKER", marker)
+	if code := RunMcp([]string{"--tool", "headroom", "--workspace", t.TempDir(), bin, "mcp", "serve"}); code != 2 {
+		t.Fatalf("retired headroom --tool = %d, want 2", code)
 	}
-	got, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "mcp serve" {
-		t.Fatalf("child args = %q, want %q", got, "mcp serve")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("child ran despite retired headroom --tool: %v", err)
 	}
 }
 

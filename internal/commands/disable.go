@@ -5,6 +5,7 @@ import (
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
+	headroompkg "github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -64,6 +65,7 @@ func runPurge() int {
 			}
 		}
 	}
+	_ = headroompkg.StopProxy()
 	if err := os.RemoveAll(util.HeadroomPathsResolved().Root); err != nil {
 		return n + 1
 	}

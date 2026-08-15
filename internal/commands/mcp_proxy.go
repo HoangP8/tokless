@@ -64,7 +64,6 @@ var contextModeTools = []string{
 
 var mcpToolPolicies = map[string][]string{
 	"context-mode": contextModeTools,
-	"headroom":     {"headroom_compress", "headroom_retrieve"},
 }
 
 // runBoundedMcpProxy forwards MCP traffic unchanged except an explicit tool allowlist.

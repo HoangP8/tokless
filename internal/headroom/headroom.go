@@ -9,13 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-const headroomPackage = "headroom-ai[mcp]"
-const headroomProbeTimeout = 500 * time.Millisecond
+const headroomPackage = "headroom-ai[proxy]"
+const headroomVersionTimeout = 30 * time.Second
 
 var runHeadroom = func(command string, args, env []string, ctx context.Context) util.ExecResult {
 	return util.Run(command, args, util.RunOptions{Capture: true, Env: env, Ctx: ctx})
@@ -89,15 +88,14 @@ func headroomUVWorks(uv string) bool {
 	return runHeadroom(uv, []string{"--version"}, util.HeadroomEnv(), ctx).Code == 0
 }
 
-func headroomServeProbe() error {
-	ctx, cancel := context.WithTimeout(context.Background(), headroomProbeTimeout)
+func headroomVersionProbe() error {
+	ctx, cancel := context.WithTimeout(context.Background(), headroomVersionTimeout)
 	defer cancel()
-	started := time.Now()
-	result := runHeadroom(util.HeadroomBin(), []string{"mcp", "serve"}, nil, ctx)
-	if ctx.Err() == context.DeadlineExceeded && time.Since(started) >= headroomProbeTimeout {
-		return nil
+	result := runHeadroom(util.HeadroomBin(), []string{"--version"}, nil, ctx)
+	if result.Code != 0 {
+		return headroomFailure("executable verification", result)
 	}
-	return headroomFailure("executable verification", result)
+	return nil
 }
 
 func EnsureInstalled(opts core.RunOpts) (bool, error) {
@@ -105,7 +103,7 @@ func EnsureInstalled(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would install headroom-ai[mcp] with managed Python 3.13")
+		util.L.Sub("[dry-run] would install headroom-ai[proxy] with managed Python 3.13")
 		return true, nil
 	}
 	opts.Reportf("uv bootstrap", 0.1)
@@ -114,7 +112,7 @@ func EnsureInstalled(opts core.RunOpts) (bool, error) {
 		return false, err
 	}
 	if util.HeadroomInstalled() && !opts.Upgrade {
-		if err := headroomServeProbe(); err != nil {
+		if err := headroomVersionProbe(); err != nil {
 			return false, err
 		}
 		opts.Reportf("already installed", 1)
@@ -134,164 +132,9 @@ func EnsureInstalled(opts core.RunOpts) (bool, error) {
 	if !util.HeadroomInstalled() {
 		return false, fmt.Errorf("headroom executable verification failed: %s", util.HeadroomBin())
 	}
-	if err := headroomServeProbe(); err != nil {
+	if err := headroomVersionProbe(); err != nil {
 		return false, err
 	}
 	opts.Reportf("ready", 1)
 	return true, nil
-}
-
-func ConfigureMcp(agent string) bool {
-	switch agent {
-	case "claude":
-		agents.ConfigureClaudeMcp("headroom")
-		return true
-	case "opencode":
-		agents.ConfigureOpenCodeMcp("headroom")
-		return true
-	case "codex":
-		agents.ConfigureCodexMcp("headroom")
-		return true
-	case "cursor":
-		changed, _ := agents.ConfigureCursorMcp("headroom")
-		return changed || agents.CursorMcpHas("headroom")
-	case "antigravity":
-		agents.ConfigureAntigravityMcp("headroom")
-		return true
-	case "copilot":
-		agents.ConfigureCopilotMcp("headroom")
-		return true
-	case "droid":
-		agents.ConfigureDroidMcp("headroom")
-		return true
-	case "grok":
-		_, _, err := agents.ConfigureGrokMcp("headroom")
-		return err == nil
-	case "pi":
-		agents.ConfigurePiMcp("headroom")
-		return true
-	case "omp":
-		changed, _ := agents.ConfigureOmpMcp("headroom")
-		return changed || agents.OmpMcpHas("headroom")
-	case "kilo":
-		spawn := util.McpSpawnFor("headroom")
-		_, _, err := agents.ConfigureKiloMcpSafe("headroom", append([]string{spawn.Command}, spawn.Args...))
-		return err == nil
-	case "cline":
-		spawn := util.McpSpawnFor("headroom")
-		_, _, err := agents.ConfigureClineMcpSafe("headroom", append([]string{spawn.Command}, spawn.Args...))
-		return err == nil
-	}
-	return false
-}
-
-func McpMatches(agent string) bool   { found, matches := McpState(agent); return found && matches }
-func CanConfigure(agent string) bool { found, matches := McpState(agent); return !found || matches }
-
-func McpState(agent string) (found, matches bool) {
-	spawn := util.McpSpawnFor("headroom")
-	command := append([]string{spawn.Command}, spawn.Args...)
-	entry := func() *util.OrderedMap {
-		m := util.NewOrderedMap()
-		m.Set("type", "stdio")
-		m.Set("command", spawn.Command)
-		m.Set("args", toAny(spawn.Args))
-		return m
-	}
-	jsonEntry := func(path, key string, expected *util.OrderedMap) (bool, bool) {
-		raw, ok := util.ReadFileSafe(path)
-		if !ok {
-			return false, false
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			return false, false
-		}
-		v, ok := cfg.Get(key)
-		if !ok {
-			return false, false
-		}
-		m, ok := v.(*util.OrderedMap)
-		if !ok {
-			return false, false
-		}
-		value, ok := m.Get("headroom")
-		return ok, ok && util.StringifyJSON(value) == util.StringifyJSON(expected)
-	}
-	switch agent {
-	case "claude":
-		return jsonEntry(util.ClaudeCodePaths().GlobalJSON, "mcpServers", entry())
-	case "opencode":
-		m := util.NewOrderedMap()
-		m.Set("type", "local")
-		m.Set("command", toAny(command))
-		m.Set("enabled", true)
-		return jsonEntry(util.OpenCodePathsResolved().Config, "mcp", m)
-	case "codex":
-		raw, _ := util.ReadFileSafe(util.CodexPathsResolved().Config)
-		if !util.HasBlock(raw, "mcp_servers.headroom") {
-			return false, false
-		}
-		m := util.NewTomlBlock("mcp_servers.headroom")
-		m.Set("command", spawn.Command)
-		m.Set("args", spawn.Args)
-		m.Set("enabled", true)
-		m.Set("default_tools_approval_mode", "approve")
-		return true, util.UpsertBlock(raw, m, false) == raw
-	case "cursor":
-		return jsonEntry(util.CursorGlobalMcpPath(), "mcpServers", entry())
-	case "antigravity":
-		m := util.NewOrderedMap()
-		m.Set("command", spawn.Command)
-		m.Set("args", toAny(spawn.Args))
-		m.Set("trust", true)
-		found, matches = false, true
-		for _, path := range []string{util.AntigravityPathsResolved().McpConfigCLI, filepath.Join(util.Home(), ".gemini", "antigravity-cli", "mcp_config.json")} {
-			seen, same := jsonEntry(path, "mcpServers", m)
-			if seen {
-				found = true
-				matches = matches && same
-			}
-		}
-		return found, matches
-	case "copilot":
-		cli := util.NewOrderedMap()
-		cli.Set("type", "local")
-		cli.Set("command", spawn.Command)
-		cli.Set("args", toAny(spawn.Args))
-		cli.Set("tools", []any{"*"})
-		foundCLI, matchesCLI := jsonEntry(util.CopilotPathsResolved().McpConfig, "mcpServers", cli)
-		foundIDE, matchesIDE := jsonEntry(filepath.Join(agents.IdeProjectRoot(), ".vscode", "mcp.json"), "servers", entry())
-		return foundCLI || foundIDE, foundCLI && matchesCLI && foundIDE && matchesIDE
-	case "droid":
-		m := util.NewOrderedMap()
-		m.Set("command", spawn.Command)
-		m.Set("args", toAny(spawn.Args))
-		m.Set("enabledTools", toAny(agents.HeadroomDroidToolNames))
-		return jsonEntry(filepath.Join(util.Home(), ".factory", "mcp.json"), "mcpServers", m)
-	case "grok":
-		return agents.GrokHeadroomMcpHas(), agents.GrokHeadroomMcpHas()
-	case "pi":
-		m := util.NewOrderedMap()
-		m.Set("command", spawn.Command)
-		m.Set("args", toAny(spawn.Args))
-		m.Set("lifecycle", "lazy")
-		m.Set("directTools", true)
-		return jsonEntry(filepath.Join(agents.PiAgentDirResolved(), "mcp.json"), "mcpServers", m)
-	case "omp":
-		return agents.OmpMcpHas("headroom"), agents.OmpMcpHas("headroom")
-	case "kilo":
-		return agents.KiloMcpConfigured("headroom"), agents.KiloMcpMatches("headroom", command)
-	case "cline":
-		return agents.ClineMcpConfigured("headroom"), agents.ClineMcpMatches("headroom", command)
-	}
-	return false, false
-}
-
-func toAny(ss []string) []any {
-	out := make([]any, len(ss))
-	for i, s := range ss {
-		out[i] = s
-	}
-	return out
 }

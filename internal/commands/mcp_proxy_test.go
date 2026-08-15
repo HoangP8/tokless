@@ -150,26 +150,26 @@ func main() {
 	}
 }
 
-func TestHeadroomPolicyFiltersAndRejectsHiddenTools(t *testing.T) {
-	allowed := mcpToolPolicies["headroom"]
+func TestBoundedPolicyFiltersAndRejectsHiddenTools(t *testing.T) {
+	allowed := mcpToolPolicies["context-mode"]
 	ids := &mcpRequestIDs{ids: map[string]bool{}}
 	var upstream, output bytes.Buffer
 	input := strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"headroom_compress"}}`,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"headroom_stats"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ctx_execute"}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ctx_hidden_tool"}}`,
 	}, "\n") + "\n"
 	if err := scanMcpInput(strings.NewReader(input), &upstream, &output, ids, allowed); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(upstream.String(), "tools/call"); got != 1 || strings.Contains(upstream.String(), "headroom_stats") {
-		t.Fatalf("hidden Headroom call reached upstream: %q", upstream.String())
+	if got := strings.Count(upstream.String(), "tools/call"); got != 1 || strings.Contains(upstream.String(), "ctx_hidden_tool") {
+		t.Fatalf("hidden call reached upstream: %q", upstream.String())
 	}
-	if !strings.Contains(output.String(), `"id":3`) || !strings.Contains(output.String(), `"code":-32601`) || !strings.Contains(output.String(), `tool \"headroom_stats\" is not available`) {
+	if !strings.Contains(output.String(), `"id":3`) || !strings.Contains(output.String(), `"code":-32601`) || !strings.Contains(output.String(), `tool \"ctx_hidden_tool\" is not available`) {
 		t.Fatalf("unexpected denied response: %q", output.String())
 	}
 	output.Reset()
-	if err := scanMcpInput(strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"headroom_stats"}}`+"\n"), &upstream, &output, ids, allowed); err != nil {
+	if err := scanMcpInput(strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"ctx_hidden_tool"}}`+"\n"), &upstream, &output, ids, allowed); err != nil {
 		t.Fatal(err)
 	}
 	if output.Len() != 0 {
@@ -177,13 +177,13 @@ func TestHeadroomPolicyFiltersAndRejectsHiddenTools(t *testing.T) {
 	}
 
 	output.Reset()
-	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"headroom_compress"},{"name":"headroom_stats"},{"name":"headroom_retrieve"},{"name":"headroom_read"}]}}` + "\n"
+	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"ctx_execute"},{"name":"ctx_hidden_tool"},{"name":"ctx_index"}]}}` + "\n"
 	if err := scanMcpOutput(strings.NewReader(response), &output, ids, allowed); err != nil {
 		t.Fatal(err)
 	}
 	got := output.String()
-	if strings.Contains(got, "headroom_stats") || strings.Contains(got, "headroom_read") || !strings.Contains(got, "headroom_compress") || !strings.Contains(got, "headroom_retrieve") {
-		t.Fatalf("Headroom list not correctly filtered: %q", got)
+	if strings.Contains(got, "ctx_hidden_tool") || !strings.Contains(got, "ctx_execute") || !strings.Contains(got, "ctx_index") {
+		t.Fatalf("list not correctly filtered: %q", got)
 	}
 }
 

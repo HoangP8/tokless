@@ -16,10 +16,10 @@ func TestHeadroomInstallArgsAndNativeRisk(t *testing.T) {
 	if got, want := headroomPythonInstallArgs(), []string{"python", "install", "3.13"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Python install args = %v, want %v", got, want)
 	}
-	if got, want := headroomInstallArgs(false), []string{"tool", "install", "--python", "3.13", "headroom-ai[mcp]"}; !reflect.DeepEqual(got, want) {
+	if got, want := headroomInstallArgs(false), []string{"tool", "install", "--python", "3.13", "headroom-ai[proxy]"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("install args = %v, want %v", got, want)
 	}
-	if got, want := headroomInstallArgs(true), []string{"tool", "install", "--upgrade", "--python", "3.13", "headroom-ai[mcp]"}; !reflect.DeepEqual(got, want) {
+	if got, want := headroomInstallArgs(true), []string{"tool", "install", "--upgrade", "--python", "3.13", "headroom-ai[proxy]"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("upgrade args = %v, want %v", got, want)
 	}
 	if !headroomNativeBuildRiskFor("windows", "amd64") || !headroomNativeBuildRiskFor("darwin", "amd64") || headroomNativeBuildRiskFor("darwin", "arm64") || headroomNativeBuildRiskFor("linux", "amd64") {
@@ -45,8 +45,10 @@ func TestHeadroomInstallUsesManagedUVState(t *testing.T) {
 	runHeadroom = func(command string, args, env []string, ctx context.Context) util.ExecResult {
 		calls = append(calls, append([]string{command}, args...))
 		if command == util.HeadroomBin() {
-			<-ctx.Done()
-			return util.ExecResult{Code: 1}
+			if reflect.DeepEqual(args, []string{"--version"}) {
+				return util.ExecResult{}
+			}
+			return util.ExecResult{Code: 1, Stderr: "unexpected bin args"}
 		}
 		if command != p.UV {
 			return util.ExecResult{Code: 1, Stderr: "unexpected uv"}
@@ -80,21 +82,20 @@ func TestHeadroomInstallUsesManagedUVState(t *testing.T) {
 	}
 }
 
-func TestHeadroomServeProbeRequiresLiveServer(t *testing.T) {
+func TestHeadroomVersionProbeRequiresWorkingBinary(t *testing.T) {
 	old := runHeadroom
 	t.Cleanup(func() { runHeadroom = old })
 	runHeadroom = func(string, []string, []string, context.Context) util.ExecResult {
 		return util.ExecResult{Code: 127, Stderr: "bad entry point"}
 	}
-	if err := headroomServeProbe(); err == nil || !strings.Contains(err.Error(), "executable verification") {
+	if err := headroomVersionProbe(); err == nil || !strings.Contains(err.Error(), "executable verification") {
 		t.Fatalf("immediate failure = %v", err)
 	}
-	runHeadroom = func(_ string, _ []string, _ []string, ctx context.Context) util.ExecResult {
-		<-ctx.Done()
-		return util.ExecResult{Code: 1}
+	runHeadroom = func(_ string, _ []string, _ []string, _ context.Context) util.ExecResult {
+		return util.ExecResult{}
 	}
-	if err := headroomServeProbe(); err != nil {
-		t.Fatalf("live server probe = %v", err)
+	if err := headroomVersionProbe(); err != nil {
+		t.Fatalf("version probe = %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,7 +39,22 @@ func TestHeadroomMapsEveryRegisteredAgent(t *testing.T) {
 
 func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	setupHeadroomHome(t)
-	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline"} {
+	// codex/opencode/omp proxy wiring requires an existing config file (the
+	// agents package refuses to create absent files); seed minimal configs.
+	if err := util.WriteFile(util.CodexPathsResolved().Config, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(util.OpenCodePathsResolved().Config, `{"$schema": "https://opencode.ai/config.json", "theme": "dark"}
+`); err != nil {
+		t.Fatal(err)
+	}
+	ompModels := filepath.Join(agents.OmpAgentDirResolved(), "models.yml")
+	if ompModels != "" {
+		if err := util.WriteFile(ompModels, "models:\n  claude-sonnet:\n    id: claude-sonnet\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity"} {
 		t.Run(agent, func(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				ok, err := headroom.WireFor[agent](core.RunOpts{})
@@ -54,39 +70,61 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	}
 }
 
-func TestHeadroomRefusesDirectUserServer(t *testing.T) {
+// Manual agents have no config tokless writes; wiring is a no-op and verify
+// always passes (nothing observable to check).
+func TestHeadroomManualAgentsAreNoOps(t *testing.T) {
 	setupHeadroomHome(t)
-	p := util.ClaudeCodePaths()
-	if err := util.WriteFile(p.GlobalJSON, `{"mcpServers":{"headroom":{"type":"stdio","command":"headroom","args":["mcp","serve"]}}}`); err != nil {
-		t.Fatal(err)
-	}
-	ok, err := headroom.WireFor["claude"](core.RunOpts{})
-	if err == nil || ok || !strings.Contains(err.Error(), "refusing to overwrite") {
-		t.Fatalf("wire direct user server = %v, %v", ok, err)
-	}
-	raw, _ := util.ReadFileSafe(p.GlobalJSON)
-	if !strings.Contains(raw, `"command":"headroom"`) || HasOwner("claude", "headroom") {
-		t.Fatalf("user server changed or ownership claimed: %s", raw)
+	for _, agent := range []string{"grok", "copilot", "cline", "cursor"} {
+		ok, err := headroom.WireFor[agent](core.RunOpts{})
+		if err != nil || !ok {
+			t.Fatalf("wire %s = %v, %v", agent, ok, err)
+		}
+		if !headroomVerify(agent) {
+			t.Fatalf("verify %s = false", agent)
+		}
+		ok, err = headroom.UnwireFor[agent](core.RunOpts{})
+		if err != nil || ok {
+			t.Fatalf("manual unwire %s = %v, %v (want false,no-op)", agent, ok, err)
+		}
 	}
 }
 
-func TestHeadroomVerifierRejectsUnboundedServer(t *testing.T) {
+func TestHeadroomRefusesDirectUserServer(t *testing.T) {
+	setupHeadroomHome(t)
+	p := util.ClaudeCodePaths()
+	if err := util.WriteFile(p.Settings, `{"env":{"ANTHROPIC_BASE_URL":"http://user.example:9999"}}`); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := headroom.WireFor["claude"](core.RunOpts{})
+	if err == nil || ok || !strings.Contains(err.Error(), "differing existing config value") {
+		t.Fatalf("wire direct user value = %v, %v", ok, err)
+	}
+	if agents.ClaudeProxyWired() {
+		t.Fatalf("user ANTHROPIC_BASE_URL must not be claimed as wired")
+	}
+	raw, _ := util.ReadFileSafe(p.Settings)
+	if !strings.Contains(raw, "http://user.example:9999") {
+		t.Fatalf("user value clobbered: %s", raw)
+	}
+}
+
+func TestHeadroomVerifierRejectsForeignEndpoint(t *testing.T) {
 	setupHeadroomHome(t)
 	if ok, err := headroom.WireFor["claude"](core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("wire = %v, %v", ok, err)
 	}
 	p := util.ClaudeCodePaths()
-	if err := util.WriteFile(p.GlobalJSON, `{"mcpServers":{"headroom":{"type":"stdio","command":"headroom","args":["mcp","serve"]}}}`); err != nil {
+	if err := util.WriteFile(p.Settings, `{"env":{"ANTHROPIC_BASE_URL":"http://user.example:9999"}}`); err != nil {
 		t.Fatal(err)
 	}
 	if headroomVerify("claude") {
-		t.Fatal("direct headroom server must not verify as Tokless-managed")
+		t.Fatal("foreign endpoint must not verify as Tokless-managed")
 	}
 	if ok, err := headroom.UnwireFor["claude"](core.RunOpts{}); err != nil || ok {
-		t.Fatalf("unwire unbounded server = %v, %v", ok, err)
+		t.Fatalf("unwire foreign endpoint = %v, %v", ok, err)
 	}
-	raw, _ := util.ReadFileSafe(p.GlobalJSON)
-	if !strings.Contains(raw, `"command":"headroom"`) {
-		t.Fatalf("unwire removed user server: %s", raw)
+	raw, _ := util.ReadFileSafe(p.Settings)
+	if !strings.Contains(raw, "http://user.example:9999") {
+		t.Fatalf("unwire removed user value: %s", raw)
 	}
 }
