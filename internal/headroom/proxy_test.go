@@ -19,6 +19,9 @@ import (
 
 func isolateProxyOps(t *testing.T) {
 	t.Helper()
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
+	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
+	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
 	oldProbe, oldSpawn := proxyLiveZProbe, proxySpawn
 	oldIdentity, oldKill := proxyIdentity, proxyKill
 	oldWrite, oldGone := proxyWrite, proxyGone
@@ -50,6 +53,8 @@ func proxyTestBin(t *testing.T) string {
 }
 
 func TestProxyPortDefaults(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
 	if got := ProxyPort(); got != 8787 {
 		t.Fatalf("ProxyPort = %d, want 8787", got)
@@ -248,6 +253,7 @@ func TestStopProxyRefusesUnavailableIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, errors.New("unavailable") }
+	proxyGone = func(*os.Process) bool { return false } // process present, identity unverifiable
 	killed := false
 	proxyKill = func(*os.Process) error { killed = true; return nil }
 	if err := StopProxy(); err == nil {
@@ -258,6 +264,29 @@ func TestStopProxyRefusesUnavailableIdentity(t *testing.T) {
 	}
 	if _, ok := util.ReadFileSafe(pidFile); !ok {
 		t.Fatal("ownership record removed after unavailable identity")
+	}
+}
+
+func TestStopProxySelfHealsStaleRecord(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	record := proxyOwnership{PID: 4245, Executable: bin, Args: []string{"proxy"}, Start: "start"}
+	if err := writeProxyOwnership(pidFile, record); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, errors.New("unavailable") }
+	proxyGone = func(*os.Process) bool { return true } // pid dead — stale record
+	killed := false
+	proxyKill = func(*os.Process) error { killed = true; return nil }
+	if err := StopProxy(); err != nil {
+		t.Fatalf("StopProxy should self-heal stale record: %v", err)
+	}
+	if killed {
+		t.Fatal("StopProxy killed a process that is already gone")
+	}
+	if _, ok := util.ReadFileSafe(pidFile); ok {
+		t.Fatal("stale ownership record was not removed")
 	}
 }
 
@@ -292,7 +321,7 @@ func TestStartProxyRecordWriteFailureRollsBack(t *testing.T) {
 	proxyLiveZProbe = func(time.Duration) bool { return false }
 	proxySpawn = func(cmd *exec.Cmd) error { cmd.Process = &os.Process{Pid: 5252}; return nil }
 	proxyIdentity = func(int) (processIdentityInfo, error) {
-		return processIdentityInfo{Executable: bin, Args: []string{"proxy", "--port", "8787", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}, Start: "start"}, nil
+		return processIdentityInfo{Executable: bin, Args: []string{"proxy", "--port", "8787", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}, Start: "start"}, nil
 	}
 	proxyWrite = func(string, proxyOwnership) error { return errors.New("disk full") }
 	proxyGone = func(*os.Process) bool { return true }
@@ -315,6 +344,92 @@ func TestStartProxyRecordWriteFailureRollsBack(t *testing.T) {
 	}
 }
 
+func TestPersistProxyRuntimeProviderPreservation(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
+	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "https://api.example.test")
+	t.Setenv("TOKLESS_PROXY_PROVIDER", "")
+
+	if err := persistProxyRuntime(9123); err != nil {
+		t.Fatal(err)
+	}
+	st, ok := util.ReadProxyRuntime()
+	if !ok || st.Port != 9123 || st.Provider != "" {
+		t.Fatalf("initial persisted runtime = %+v (ok=%v), want port 9123 provider empty", st, ok)
+	}
+
+	t.Setenv("TOKLESS_PROXY_PROVIDER", "apibox")
+	if err := persistProxyRuntime(9123); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = util.ReadProxyRuntime()
+	if st.Provider != "apibox" {
+		t.Fatalf("provider not persisted = %+v", st)
+	}
+
+	t.Setenv("TOKLESS_PROXY_PROVIDER", "")
+	if err := persistProxyRuntime(9123); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = util.ReadProxyRuntime()
+	if st.Provider != "apibox" {
+		t.Fatalf("clean-shell persist must preserve provider, got %+v", st)
+	}
+}
+
+func TestAcquireProxyStartLockSerializes(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	release, err := acquireProxyStartLock(time.Now)
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	got := make(chan error, 1)
+	go func() {
+		r2, err := acquireProxyStartLock(time.Now)
+		if err == nil {
+			r2()
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		t.Fatalf("second acquire completed while lock held: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	release()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("acquire after release failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second acquire never completed after release")
+	}
+}
+
+func TestAcquireProxyStartLockStealsStale(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	now := time.Unix(300, 0)
+	lock := proxyStartLock()
+	if err := os.WriteFile(lock, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(lock, time.Unix(200, 0), time.Unix(200, 0)); err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireProxyStartLock(func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("stale lock not stolen: %v", err)
+	}
+	release()
+	if util.Exists(lock) {
+		t.Fatal("lock file left behind after release")
+	}
+}
+
 func TestStartProxyReadinessTimeoutRollsBack(t *testing.T) {
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
@@ -326,7 +441,7 @@ func TestStartProxyReadinessTimeoutRollsBack(t *testing.T) {
 	proxyIdentity = func(int) (processIdentityInfo, error) {
 		return processIdentityInfo{
 			Executable: bin,
-			Args:       []string{"proxy", "--port", "8787", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"},
+			Args:       []string{"proxy", "--port", "8787", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"},
 			Start:      "start",
 		}, nil
 	}
@@ -385,6 +500,9 @@ func TestStartProxyIdentityFailureRollsBackDirectChild(t *testing.T) {
 			killed, waited := false, false
 			proxyKill = func(*os.Process) error { killed = true; return nil }
 			proxyWait = func(*os.Process) error { waited = true; return nil }
+			now := time.Unix(100, 0)
+			proxyNow = func() time.Time { return now }
+			proxySleep = func(time.Duration) { now = now.Add(proxyIdentityTimeout) }
 
 			err := StartProxy()
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -412,7 +530,7 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 		cmd.Process = &os.Process{Pid: 5254}
 		return nil
 	}
-	args := []string{"proxy", "--port", "8787", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}
+	args := []string{"proxy", "--port", "8787", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}
 	launchIdentity := processIdentityInfo{Executable: bin, Args: args, Start: "start"}
 	identityCalls := 0
 	proxyIdentity = func(int) (processIdentityInfo, error) {
@@ -453,6 +571,7 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 
 func TestStartProxyReusesHeadroomProbe(t *testing.T) {
 	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
 	proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return true }
 	spawned, wrote := false, false
@@ -463,6 +582,67 @@ func TestStartProxyReusesHeadroomProbe(t *testing.T) {
 	}
 	if spawned || wrote {
 		t.Fatalf("reused proxy spawned=%v wrote=%v", spawned, wrote)
+	}
+}
+
+func TestStartProxyRestartsStaleArgsDaemon(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	oldArgs := []string{"proxy", "--port", "8787"}
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5355, Executable: bin, Args: oldArgs, Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	live := true
+	killed, spawned, wrote := false, false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case 5355:
+			return processIdentityInfo{Executable: bin, Args: oldArgs, Start: "start"}, nil
+		case 5356:
+			return processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyKill = func(*os.Process) error { live = false; killed = true; return nil }
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error { live = true; spawned = true; cmd.Process = &os.Process{Pid: 5356}; return nil }
+	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
+	if err := StartProxy(); err != nil {
+		t.Fatal(err)
+	}
+	if !killed {
+		t.Fatal("stale-args daemon was not stopped before replacement")
+	}
+	if !spawned || !wrote {
+		t.Fatalf("stale-args daemon not replaced: spawned=%v wrote=%v", spawned, wrote)
+	}
+}
+
+func TestProxyArgsMatchRecorded(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+
+	if !proxyArgsMatchRecorded(8787) {
+		t.Fatal("absent record must be treated as a match (hand-started headroom)")
+	}
+	want := proxyArgs(8787)
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5357, Executable: bin, Args: want, Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	if !proxyArgsMatchRecorded(8787) {
+		t.Fatal("matching record not recognized")
+	}
+	stale := append(append([]string{}, want[:len(want)-1]...), "bogus")
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5357, Executable: bin, Args: stale, Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	if proxyArgsMatchRecorded(8787) {
+		t.Fatal("stale args must not match current proxyArgs")
 	}
 }
 
@@ -484,6 +664,8 @@ func TestStartProxyDoesNotReuseNonHeadroomProbe(t *testing.T) {
 }
 
 func TestProxyPortIgnoresInvalidEnv(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
 	for _, raw := range []string{"abc", "-1", "0", "70000", " 8a "} {
 		t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", raw)
 		if got := ProxyPort(); got != 8787 {
@@ -493,6 +675,8 @@ func TestProxyPortIgnoresInvalidEnv(t *testing.T) {
 }
 
 func TestProxyOpenAIURL(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
 	if got := ProxyOpenAIURL(); got != "http://127.0.0.1:9123/v1" {
 		t.Fatalf("ProxyOpenAIURL = %q, want http://127.0.0.1:9123/v1", got)
@@ -500,6 +684,8 @@ func TestProxyOpenAIURL(t *testing.T) {
 }
 
 func TestProxyUpstreamURLsDefaultsAndEnv(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
 	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
 	a, o := ProxyUpstreamURLs()
