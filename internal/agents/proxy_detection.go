@@ -13,6 +13,7 @@ type ProxyProtocol string
 const (
 	ProxyProtocolAnthropicNative  ProxyProtocol = "anthropic-native"
 	ProxyProtocolOpenAICompatible ProxyProtocol = "openai-compatible"
+	ProxyProtocolGeminiNative     ProxyProtocol = "gemini-native"
 	ProxyProtocolNone             ProxyProtocol = "none"
 )
 
@@ -23,7 +24,6 @@ const (
 	ProxyWireManagedRoute     ProxyWireKind = "managed-route"
 	ProxyWireAdditiveProvider ProxyWireKind = "additive-provider/model"
 	ProxyWireManual           ProxyWireKind = "manual"
-	ProxyWireMCPOnly          ProxyWireKind = "MCP-only"
 )
 
 // ProxyConfigState is an observed, read-only configuration state.
@@ -57,20 +57,13 @@ type ProxyDetection struct {
 // not enable semantic response caching for arbitrary BYOK endpoints.
 const ProxyCachePolicy = "cache mode preserves provider-prefix cache; semantic response cache disabled"
 
-var proxyCapabilities = map[string]ProxyCapability{
-	"claude":      {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute},
-	"omp":         {"omp", ProxyProtocolAnthropicNative, ProxyWireManagedRoute},
-	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute},
-	"opencode":    {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider},
-	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider},
-	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider},
-	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider},
-	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireManual},
-	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManual},
-	"cline":       {"cline", ProxyProtocolNone, ProxyWireManual},
-	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual},
-	"antigravity": {"antigravity", ProxyProtocolNone, ProxyWireMCPOnly},
-}
+var proxyCapabilities = func() map[string]ProxyCapability {
+	out := make(map[string]ProxyCapability, len(proxyAgentSpecs))
+	for id, spec := range proxyAgentSpecs {
+		out[id] = ProxyCapability{ID: spec.ID, Protocol: spec.Protocol, WireKind: spec.WireKind}
+	}
+	return out
+}()
 
 // ProxyCapabilities returns the static proxy capability registry.
 func ProxyCapabilities() map[string]ProxyCapability {
@@ -105,7 +98,8 @@ func DetectProxy(id string) ProxyDetection {
 	case "codex":
 		return detectCodexProxy(capability)
 	case "opencode":
-		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", "headroom", openCodeProxyProviderBlock(ProxyEndpointFor(id)))
+		spec := ProviderSpecActive()
+		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(id), spec))
 	case "kilo":
 		return detectProviderProxy(capability, util.KiloPathsResolved().Config, "provider", kiloProxyProvider, kiloProxyProviderEntry(ProxyEndpointFor(id)))
 	case "pi":
@@ -119,7 +113,7 @@ func DetectProxy(id string) ProxyDetection {
 	case "cline", "cursor":
 		return proxyDetection(id, "manual configuration not observable", ProxyStateUnknown)
 	case "antigravity":
-		return proxyDetection(id, "no client base-URL knob", ProxyStateUnknown)
+		return detectAntigravityProxy(capability)
 	default:
 		return proxyDetection(id, "unsupported agent", ProxyStateUnknown)
 	}
@@ -274,4 +268,24 @@ func detectManualEnv(cap ProxyCapability, key, endpoint string) ProxyDetection {
 		return proxyDetection(cap.ID, "manual endpoint equals proxy; ownership unknown", ProxyStateUnknown)
 	}
 	return proxyDetection(cap.ID, "documented environment endpoint differs", ProxyStateForeignBYOK)
+}
+
+// detectAntigravityProxy reads GOOGLE_GEMINI_BASE_URL from ~/.gemini/.env
+func detectAntigravityProxy(cap ProxyCapability) ProxyDetection {
+	path := antigravityEnvFile()
+	raw, err := readProxyConfig(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return proxyDetection(cap.ID, "env file absent", ProxyStateAbsent)
+		}
+		return proxyDetection(cap.ID, "env file unreadable", ProxyStateUnreadable)
+	}
+	value := antigravityEnvValue(raw, antigravityProxyEnvKey)
+	if value == "" {
+		return proxyDetection(cap.ID, "documented endpoint not configured", ProxyStateUnconfigured)
+	}
+	if value == ProxyEndpointFor(cap.ID) {
+		return proxyDetection(cap.ID, "exact managed endpoint", ProxyStateManaged)
+	}
+	return proxyDetection(cap.ID, "documented endpoint differs", ProxyStateForeignBYOK)
 }

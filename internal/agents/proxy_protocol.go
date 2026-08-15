@@ -9,13 +9,15 @@ import "github.com/HoangP8/tokless/internal/util"
 //     /v1 URL — their client appends /chat/completions, /responses, /models.
 //   - Anthropic-native providers (claude, omp) use the bare URL — their SDK
 //     appends /v1/messages itself.
+//   - Gemini-native providers (antigravity) use the bare URL — the CLI appends
+//     /v1beta/models/{model}:generateContent itself.
 //
 // It returns "" for agents tokless does not wire through a config file.
 func ProxyEndpointFor(id string) string {
 	switch id {
 	case "codex", "opencode", "kilo", "pi", "droid":
 		return util.HeadroomProxyOpenAIURL()
-	case "claude", "omp":
+	case "claude", "omp", "antigravity":
 		return util.HeadroomProxyURL()
 	}
 	return ""

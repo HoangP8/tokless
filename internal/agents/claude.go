@@ -66,8 +66,6 @@ func claudeMcpToolNames(toolID string) []string {
 	switch toolID {
 	case "context-mode":
 		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
-	case "headroom":
-		return []string{"headroom_compress", "headroom_retrieve"}
 	case "codegraph":
 		return []string{"codegraph_explore"}
 	}

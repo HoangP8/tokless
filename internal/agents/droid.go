@@ -82,7 +82,6 @@ var droid = &core.AgentManifest{
 var droidEnabledTools = map[string][]string{
 	"codegraph":    CodegraphDroidToolNames,
 	"context-mode": ContextModeDroidToolNames,
-	"headroom":     HeadroomDroidToolNames,
 }
 
 func ConfigureDroidMcp(toolID string) (changed bool, file string) {
@@ -219,8 +218,6 @@ var ContextModeDroidToolNames = []string{
 var CodegraphDroidToolNames = []string{
 	"codegraph_explore",
 }
-
-var HeadroomDroidToolNames = []string{"headroom_compress", "headroom_retrieve"}
 
 // --- hooks management ---
 

@@ -83,36 +83,39 @@ func RemoveOpenCodeMcp(toolID string) bool {
 // --- OpenCode headroom HTTP proxy ---
 
 func openCodeProxyProviderBlock(baseURL string) *util.OrderedMap {
-	gpt4o := util.NewOrderedMap()
-	gpt4o.Set("name", "GPT-4o")
-	gpt4oLimit := util.NewOrderedMap()
-	gpt4oLimit.Set("context", 128000)
-	gpt4oLimit.Set("output", 16384)
-	gpt4o.Set("limit", gpt4oLimit)
+	return openCodeProxyProviderBlockFor(baseURL, DefaultProviderSpec())
+}
 
-	gpt41 := util.NewOrderedMap()
-	gpt41.Set("name", "GPT-4.1")
-	gpt41Limit := util.NewOrderedMap()
-	gpt41Limit.Set("context", 1048576)
-	gpt41Limit.Set("output", 32768)
-	gpt41.Set("limit", gpt41Limit)
-
+func openCodeProxyProviderBlockFor(baseURL string, spec ProviderSpec) *util.OrderedMap {
 	models := util.NewOrderedMap()
-	models.Set("gpt-4o", gpt4o)
-	models.Set("gpt-4.1", gpt41)
+	for _, m := range spec.Models {
+		entry := util.NewOrderedMap()
+		entry.Set("name", m.Display)
+		if m.Reasoning {
+			entry.Set("reasoning", true)
+		}
+		limit := util.NewOrderedMap()
+		limit.Set("context", m.Context)
+		limit.Set("output", m.Output)
+		entry.Set("limit", limit)
+		models.Set(m.ID, entry)
+	}
 
 	opts := util.NewOrderedMap()
 	opts.Set("baseURL", baseURL)
+	if spec.KeyEnv != "" {
+		opts.Set("apiKey", "{env:"+spec.KeyEnv+"}")
+	}
 
 	block := util.NewOrderedMap()
-	block.Set("npm", "@ai-sdk/openai-compatible")
-	block.Set("name", "Headroom Proxy")
+	block.Set("npm", spec.Npm)
+	block.Set("name", spec.Name)
 	block.Set("options", opts)
 	block.Set("models", models)
 	return block
 }
 
-// ConfigureOpenCodeProxy merges the `headroom` provider into the top-level
+// ConfigureOpenCodeProxy merges the proxy provider into the top-level
 // `provider` object of the opencode config.
 func ConfigureOpenCodeProxy() (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
@@ -138,21 +141,22 @@ func ConfigureOpenCodeProxy() (changed bool, file string) {
 		providers = util.NewOrderedMap()
 		cfg.Set("provider", providers)
 	}
-	entry := openCodeProxyProviderBlock(ProxyEndpointFor("opencode"))
-	if existing, ok := providers.Get("headroom"); ok {
+	spec := ProviderSpecActive()
+	entry := openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec)
+	if existing, ok := providers.Get(spec.Key); ok {
 		if util.StringifyJSON(existing) == util.StringifyJSON(entry) {
 			return false, p.Config
 		}
 		return false, p.Config
 	}
-	providers.Set("headroom", entry)
+	providers.Set(spec.Key, entry)
 	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
 		return false, p.Config
 	}
 	return true, p.Config
 }
 
-// RemoveOpenCodeProxy deletes the `headroom` provider only when it still
+// RemoveOpenCodeProxy deletes the proxy provider only when it still
 // matches what tokless set.
 func RemoveOpenCodeProxy() bool {
 	p := util.OpenCodePathsResolved()
@@ -171,21 +175,22 @@ func RemoveOpenCodeProxy() bool {
 	if !ok {
 		return false
 	}
-	existing, ok := providers.Get("headroom")
+	spec := ProviderSpecActive()
+	existing, ok := providers.Get(spec.Key)
 	if !ok {
 		return false
 	}
-	if util.StringifyJSON(existing) != util.StringifyJSON(openCodeProxyProviderBlock(ProxyEndpointFor("opencode"))) {
+	if util.StringifyJSON(existing) != util.StringifyJSON(openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec)) {
 		return false
 	}
-	providers.Delete("headroom")
+	providers.Delete(spec.Key)
 	if providers.Len() == 0 {
 		cfg.Delete("provider")
 	}
 	return util.WriteFile(p.Config, util.StringifyJSON(cfg)) == nil
 }
 
-// OpenCodeProxyWired reports whether the `headroom` provider is set to baseURL.
+// OpenCodeProxyWired reports whether the proxy provider is set to baseURL.
 func OpenCodeProxyWired() bool {
 	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
 	if !ok {
@@ -199,11 +204,12 @@ func OpenCodeProxyWired() bool {
 	if !ok {
 		return false
 	}
-	existing, ok := providers.Get("headroom")
+	spec := ProviderSpecActive()
+	existing, ok := providers.Get(spec.Key)
 	if !ok {
 		return false
 	}
-	return util.StringifyJSON(existing) == util.StringifyJSON(openCodeProxyProviderBlock(ProxyEndpointFor("opencode")))
+	return util.StringifyJSON(existing) == util.StringifyJSON(openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec))
 }
 
 func notDisabled(m *util.OrderedMap) bool {

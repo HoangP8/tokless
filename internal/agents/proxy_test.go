@@ -11,8 +11,16 @@ import (
 
 const proxyTestURL = "http://127.0.0.1:8787"
 
+func pinToklessProxyEnv(t *testing.T) {
+	t.Setenv("TOKLESS_PROXY_PROVIDER", "")
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
+	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
+	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
+}
+
 func claudeProxyTestHome(t *testing.T) {
 	t.Helper()
+	pinToklessProxyEnv(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
@@ -158,6 +166,7 @@ func TestDetectProxyUnreadableConfigIsNotAbsentAndDoesNotMutate(t *testing.T) {
 }
 
 func TestDetectProxyConservativeStates(t *testing.T) {
+	setTestHome(t)
 	if got := DetectProxy("grok"); got.State != ProxyStateUnknown {
 		t.Fatalf("manual absent state = %s", got.State)
 	}
@@ -172,7 +181,8 @@ func TestDetectProxyConservativeStates(t *testing.T) {
 	if got := DetectProxy("cline"); got.State != ProxyStateUnknown {
 		t.Fatalf("cline state = %s", got.State)
 	}
-	if got := DetectProxy("antigravity"); got.State != ProxyStateUnknown || got.Capability.WireKind != ProxyWireMCPOnly {
+	if got := DetectProxy("antigravity"); got.State != ProxyStateAbsent || got.Capability.WireKind != ProxyWireManagedRoute ||
+		got.Capability.Protocol != ProxyProtocolGeminiNative {
 		t.Fatalf("antigravity = %+v", got)
 	}
 	if got := DetectProxy("arbitrary"); got.State != ProxyStateUnknown || got.Capability.ID != "arbitrary" {
@@ -323,6 +333,7 @@ supports_websockets = true
 
 func codexProxyTestHome(t *testing.T) {
 	t.Helper()
+	pinToklessProxyEnv(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("CODEX_HOME", "")
@@ -396,6 +407,7 @@ func openCodeProxySeed(foreign bool) string {
 
 func opencodeProxyTestHome(t *testing.T) {
 	t.Helper()
+	pinToklessProxyEnv(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
@@ -433,6 +445,7 @@ func TestOpenCodeProxyScenarios(t *testing.T) {
 
 func ompProxyTestHome(t *testing.T) {
 	t.Helper()
+	pinToklessProxyEnv(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("PI_CODING_AGENT_DIR", "")
@@ -679,5 +692,80 @@ func runProxyScenarios(t *testing.T, cases []proxyScenario,
 				}
 			}
 		})
+	}
+}
+
+func TestAntigravityProxyLifecycle(t *testing.T) {
+	setTestHome(t)
+	envFile := antigravityEnvFile()
+
+	changed, file := ConfigureAntigravityProxy()
+	if !changed || file != envFile {
+		t.Fatalf("ConfigureAntigravityProxy = %v, %q", changed, file)
+	}
+	if !AntigravityProxyWired() {
+		t.Fatal("expected wired after configure")
+	}
+	if changed, _ := ConfigureAntigravityProxy(); changed {
+		t.Fatal("second configure should be a no-op")
+	}
+	raw, ok := util.ReadFileSafe(envFile)
+	if !ok || !strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:8787") {
+		t.Fatalf("env file missing proxy line:\n%s", raw)
+	}
+	if !RemoveAntigravityProxy() {
+		t.Fatal("expected removal")
+	}
+	if AntigravityProxyWired() {
+		t.Fatal("expected unwired after remove")
+	}
+	if RemoveAntigravityProxy() {
+		t.Fatal("second remove should be a no-op")
+	}
+}
+
+func TestAntigravityProxyPreservesForeignEnv(t *testing.T) {
+	setTestHome(t)
+	envFile := antigravityEnvFile()
+	seed := "# user env\nGOOGLE_API_KEY=secret\n"
+	if err := util.WriteFile(envFile, seed); err != nil {
+		t.Fatal(err)
+	}
+	if _, _ = ConfigureAntigravityProxy(); !AntigravityProxyWired() {
+		t.Fatal("expected wired")
+	}
+	raw, _ := util.ReadFileSafe(envFile)
+	if !strings.Contains(raw, "GOOGLE_API_KEY=secret") {
+		t.Fatalf("foreign env lost:\n%s", raw)
+	}
+	if !RemoveAntigravityProxy() {
+		t.Fatal("expected removal")
+	}
+	raw, _ = util.ReadFileSafe(envFile)
+	if strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL") {
+		t.Fatalf("proxy line survived removal:\n%s", raw)
+	}
+	if !strings.Contains(raw, "GOOGLE_API_KEY=secret") {
+		t.Fatalf("foreign env lost after removal:\n%s", raw)
+	}
+}
+
+func TestDetectAntigravityManagedAndForeign(t *testing.T) {
+	setTestHome(t)
+	envFile := antigravityEnvFile()
+	if got := DetectProxy("antigravity"); got.State != ProxyStateAbsent {
+		t.Fatalf("absent = %+v", got)
+	}
+	if _, _ = ConfigureAntigravityProxy(); !AntigravityProxyWired() {
+		t.Fatal("expected wired")
+	}
+	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged {
+		t.Fatalf("managed = %+v", got)
+	}
+	if err := util.WriteFile(envFile, "GOOGLE_GEMINI_BASE_URL=http://user.example\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got := DetectProxy("antigravity"); got.State != ProxyStateForeignBYOK {
+		t.Fatalf("foreign = %+v", got)
 	}
 }

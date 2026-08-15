@@ -85,12 +85,6 @@ func GrokContextModeMcpHas() bool {
 	return ok && enabled && !grokMcpDisabled(raw, "context-mode") && grokToklessCommand(command) && grokContextModeArgs(args)
 }
 
-func GrokHeadroomMcpHas() bool {
-	raw, ok := util.ReadFileSafe(grokConfigFile())
-	command, args, enabled, ok := grokMcpFields(raw, "headroom")
-	return ok && enabled && !grokMcpDisabled(raw, "headroom") && grokToklessCommand(command) && grokHeadroomArgs(args)
-}
-
 func grokMcpDisabled(raw, toolID string) bool {
 	_, _, servers, ok := grokDisabledServers(raw)
 	if !ok {
@@ -131,11 +125,6 @@ func grokContextModeArgs(args []string) bool {
 	}
 	return len(tail) == 2 && grokCommandName(command, "npx") &&
 		tail[0] == "--no-install" && tail[1] == "context-mode"
-}
-
-func grokHeadroomArgs(args []string) bool {
-	command, tail, ok := grokMcpCommand(args, []string{"run-mcp", "--tool", "headroom"})
-	return ok && grokCommandName(command, "headroom") && len(tail) == 2 && tail[0] == "mcp" && tail[1] == "serve"
 }
 
 // grokMcpCommand accepts direct commands or Tokless's Windows cmd /c wrapper.

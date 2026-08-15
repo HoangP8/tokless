@@ -1,0 +1,63 @@
+package agents
+
+
+// ProxyAgentSpec is static metadata plus wire-side function references for one
+// agent's headroom proxy integration.
+type ProxyAgentSpec struct {
+	ID       string
+	Protocol ProxyProtocol
+	WireKind ProxyWireKind
+	Configure func() (changed bool, file string)
+	Remove    func() bool
+	Wired     func() bool
+}
+
+var proxyAgentSpecs = map[string]ProxyAgentSpec{
+	"claude":      {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired},
+	"omp":         {"omp", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
+	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired},
+	"opencode":    {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired},
+	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
+	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
+	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
+	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
+	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
+	"cline":       {"cline", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
+	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
+	"antigravity": {"antigravity", ProxyProtocolGeminiNative, ProxyWireManagedRoute, ConfigureAntigravityProxy, RemoveAntigravityProxy, AntigravityProxyWired},
+}
+
+func proxySpecFor(id string) (ProxyAgentSpec, bool) {
+	spec, ok := proxyAgentSpecs[id]
+	return spec, ok
+}
+
+// ConfigureProxyAgent wires id to the headroom proxy. Returns true when the
+// resulting config matches exactly what tokless would inject.
+func ConfigureProxyAgent(id string) bool {
+	spec, ok := proxySpecFor(id)
+	if !ok || spec.Configure == nil {
+		return false
+	}
+	_, _ = spec.Configure()
+	return spec.Wired != nil && spec.Wired()
+}
+
+// RemoveProxyAgent unwires id only when its proxy config still matches what
+// tokless set.
+func RemoveProxyAgent(id string) bool {
+	spec, ok := proxySpecFor(id)
+	if !ok || spec.Remove == nil {
+		return false
+	}
+	return spec.Remove()
+}
+
+// ProxyAgentWired reports whether id's proxy config exactly matches tokless's.
+func ProxyAgentWired(id string) bool {
+	spec, ok := proxySpecFor(id)
+	if !ok || spec.Wired == nil {
+		return false
+	}
+	return spec.Wired()
+}

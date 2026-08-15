@@ -12,6 +12,7 @@ import (
 
 func setTestHome(t *testing.T) {
 	t.Helper()
+	pinToklessProxyEnv(t)
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })
 }
