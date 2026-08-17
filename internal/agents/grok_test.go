@@ -18,6 +18,55 @@ func setGrokTestHome(t *testing.T) string {
 	return home
 }
 
+func TestGrokProxyHealsPoisonedProfile(t *testing.T) {
+	setGrokTestHome(t)
+	dir := t.TempDir()
+	t.Setenv("GROK_HOME", dir)
+	t.Setenv("TOKLESS_OPENCODE_GO_KEY", "test-key")
+
+	poisoned := "[model.dsv4-flash]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"https://opencode.ai/zen/go/v1\"\nname = \"original\"\napi_key = \"k\"\n\n[model.headroom]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"\"\napi_backend = \"chat_completions\"\nstream_tool_calls = false\napi_key = \"test-key\"\n"
+	file := filepath.Join(dir, "config.toml")
+	if err := util.WriteFile(file, poisoned); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, gotFile := ConfigureGrokProxy()
+	if !changed || gotFile != file {
+		t.Fatalf("ConfigureGrokProxy = (%v, %q), want (true, %q)", changed, gotFile, file)
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if !strings.Contains(raw, `base_url = "`+ProxyEndpointFor("grok")+`"`) {
+		t.Fatalf("headroom profile not healed to managed endpoint:\n%s", raw)
+	}
+	if !strings.Contains(raw, "[model.dsv4-flash]") || !strings.Contains(raw, "https://opencode.ai/zen/go/v1") {
+		t.Fatalf("unrelated profiles must be preserved:\n%s", raw)
+	}
+	if strings.Contains(raw, `base_url = ""`) {
+		t.Fatalf("empty base_url remains after heal:\n%s", raw)
+	}
+	if !GrokProxyWired() {
+		t.Fatal("GrokProxyWired = false after heal")
+	}
+}
+
+func TestGrokProxyHealsOnlyPoisonedProfile(t *testing.T) {
+	setGrokTestHome(t)
+	dir := t.TempDir()
+	t.Setenv("GROK_HOME", dir)
+	t.Setenv("TOKLESS_OPENCODE_GO_KEY", "test-key")
+
+	foreign := "[model.headroom]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"https://foreign.example/v1\"\napi_backend = \"chat_completions\"\nstream_tool_calls = false\napi_key = \"test-key\"\n"
+	file := filepath.Join(dir, "config.toml")
+	if err := util.WriteFile(file, foreign); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, _ := ConfigureGrokProxy()
+	if changed {
+		t.Fatal("ConfigureGrokProxy must refuse to overwrite foreign headroom profile")
+	}
+}
+
 func TestGrokConfigUsesGrokHome(t *testing.T) {
 	setGrokTestHome(t)
 	dir := t.TempDir()

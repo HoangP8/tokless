@@ -1,12 +1,11 @@
 package agents
 
-
 // ProxyAgentSpec is static metadata plus wire-side function references for one
 // agent's headroom proxy integration.
 type ProxyAgentSpec struct {
-	ID       string
-	Protocol ProxyProtocol
-	WireKind ProxyWireKind
+	ID        string
+	Protocol  ProxyProtocol
+	WireKind  ProxyWireKind
 	Configure func() (changed bool, file string)
 	Remove    func() bool
 	Wired     func() bool
@@ -14,15 +13,15 @@ type ProxyAgentSpec struct {
 
 var proxyAgentSpecs = map[string]ProxyAgentSpec{
 	"claude":      {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired},
-	"omp":         {"omp", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
-	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired},
+	"omp":         {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
+	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
 	"opencode":    {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired},
 	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
 	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
 	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
-	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
-	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
-	"cline":       {"cline", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
+	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureGrokProxy, RemoveGrokProxy, GrokProxyWired},
+	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCopilotProxy, RemoveCopilotProxy, CopilotProxyWired},
+	"cline":       {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
 	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
 	"antigravity": {"antigravity", ProxyProtocolGeminiNative, ProxyWireManagedRoute, ConfigureAntigravityProxy, RemoveAntigravityProxy, AntigravityProxyWired},
 }

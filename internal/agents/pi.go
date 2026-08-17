@@ -518,9 +518,9 @@ func piProxyProviderEntry(endpoint string) *util.OrderedMap {
 	entry := util.NewOrderedMap()
 	entry.Set("baseUrl", endpoint)
 	entry.Set("api", "openai-completions")
-	entry.Set("apiKey", "tokless")
+	entry.Set("apiKey", proxyWireKey())
 	model := util.NewOrderedMap()
-	model.Set("id", "headroom")
+	model.Set("id", proxyWireModel())
 	model.Set("reasoning", false)
 	entry.Set("models", []any{model})
 	return entry

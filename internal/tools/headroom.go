@@ -55,6 +55,9 @@ func headroomUnwire(agent string) core.AgentFn {
 		if !agents.RemoveProxyAgent(agent) {
 			return false, fmt.Errorf("%s proxy unwire failed — removal did not take effect", agent)
 		}
+		if agents.ProxyAgentWired(agent) {
+			return false, fmt.Errorf("%s proxy unwire incomplete — managed wiring remains", agent)
+		}
 		return true, nil
 	}
 }

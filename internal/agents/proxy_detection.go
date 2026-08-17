@@ -96,7 +96,7 @@ func DetectProxy(id string) ProxyDetection {
 	case "omp":
 		return detectOmpProxy(capability)
 	case "codex":
-		return detectCodexProxy(capability)
+		return proxyDetection(id, "manual configuration not observable", ProxyStateUnknown)
 	case "opencode":
 		spec := ProviderSpecActive()
 		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(id), spec))
@@ -107,10 +107,12 @@ func DetectProxy(id string) ProxyDetection {
 	case "droid":
 		return detectDroidProxy(capability)
 	case "grok":
-		return detectManualEnv(capability, "GROK_MODELS_BASE_URL", util.HeadroomProxyOpenAIURL())
+		return detectGrokProxy(capability)
 	case "copilot":
-		return detectManualEnv(capability, "COPILOT_PROVIDER_BASE_URL", util.HeadroomProxyOpenAIURL())
-	case "cline", "cursor":
+		return detectCopilotProxy(capability)
+	case "cline":
+		return detectClineProxy(capability)
+	case "cursor":
 		return proxyDetection(id, "manual configuration not observable", ProxyStateUnknown)
 	case "antigravity":
 		return detectAntigravityProxy(capability)
@@ -165,7 +167,14 @@ func detectOmpProxy(cap ProxyCapability) ProxyDetection {
 	if strings.TrimSpace(raw) == "" {
 		return proxyDetection(cap.ID, "models file unreadable", ProxyStateUnreadable)
 	}
-	return proxyDetection(cap.ID, "verified YAML parsing unavailable; config state unknown", ProxyStateUnknown)
+	ref := ompYamlScan(raw)
+	if ref.provider < 0 {
+		return proxyDetection(cap.ID, "headroom provider not configured", ProxyStateUnconfigured)
+	}
+	if !ompYamlHeadroomManaged(raw) {
+		return proxyDetection(cap.ID, "headroom provider differs", ProxyStateConflict)
+	}
+	return proxyDetection(cap.ID, "managed headroom provider; default role state observed separately", ProxyStateManaged)
 }
 
 func detectCodexProxy(cap ProxyCapability) ProxyDetection {
@@ -249,7 +258,7 @@ func detectDroidProxy(cap ProxyCapability) ProxyDetection {
 		}
 		model, _ := m.Get("model")
 		display, _ := m.Get("displayName")
-		if model == droidProxyModel && display == droidProxyDisplayName {
+		if model == proxyWireModel() && display == droidProxyDisplayName {
 			if jsonEqual(m, droidProxyEntry(ProxyEndpointFor(cap.ID))) {
 				return proxyDetection(cap.ID, "exact reserved custom model", ProxyStateManaged)
 			}
@@ -285,7 +294,10 @@ func detectAntigravityProxy(cap ProxyCapability) ProxyDetection {
 		return proxyDetection(cap.ID, "documented endpoint not configured", ProxyStateUnconfigured)
 	}
 	if value == ProxyEndpointFor(cap.ID) {
-		return proxyDetection(cap.ID, "exact managed endpoint", ProxyStateManaged)
+		if os.Getenv(antigravityCloudCodeKey) == value {
+			return proxyDetection(cap.ID, "exact managed endpoint; CLOUD_CODE_URL exported", ProxyStateManaged)
+		}
+		return proxyDetection(cap.ID, "exact managed endpoint; export CLOUD_CODE_URL so the agy CLI routes through the proxy", ProxyStateManaged)
 	}
 	return proxyDetection(cap.ID, "documented endpoint differs", ProxyStateForeignBYOK)
 }

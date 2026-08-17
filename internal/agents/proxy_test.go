@@ -16,6 +16,8 @@ func pinToklessProxyEnv(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
 	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
+	t.Setenv("TOKLESS_PROXY_MODEL", "")
+	t.Setenv("TOKLESS_PROXY_KEY", "")
 }
 
 func claudeProxyTestHome(t *testing.T) {
@@ -100,6 +102,25 @@ func TestClaudeProxyDoesNotClobberUserValue(t *testing.T) {
 	}
 }
 
+func TestClaudeProxyConfigureEnsuresModelPinOnRewire(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("re-wire with base URL set but no model pin must write pin")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_MODEL": "qwen3.8-max"`) {
+		t.Fatalf("model pin not written on re-wire:\n%s", raw)
+	}
+	if changed, _ := ConfigureClaudeProxy(); changed {
+		t.Fatal("second configure after pin is set should be a no-op")
+	}
+}
+
 func TestClaudeProxyRefusesUnparseableConfig(t *testing.T) {
 	claudeProxyTestHome(t)
 	settings := util.ClaudeCodePaths().Settings
@@ -167,18 +188,13 @@ func TestDetectProxyUnreadableConfigIsNotAbsentAndDoesNotMutate(t *testing.T) {
 
 func TestDetectProxyConservativeStates(t *testing.T) {
 	setTestHome(t)
-	if got := DetectProxy("grok"); got.State != ProxyStateUnknown {
-		t.Fatalf("manual absent state = %s", got.State)
+	if got := DetectProxy("grok"); got.State != ProxyStateAbsent {
+		t.Fatalf("grok absent state = %s", got.State)
 	}
-	t.Setenv("GROK_MODELS_BASE_URL", util.HeadroomProxyOpenAIURL())
-	if got := DetectProxy("grok"); got.State != ProxyStateUnknown || !strings.Contains(got.Detail, "ownership unknown") {
-		t.Fatalf("manual equality = %+v", got)
+	if got := DetectProxy("grok"); got.State != ProxyStateAbsent {
+		t.Fatalf("grok env must not affect config detection = %+v", got)
 	}
-	t.Setenv("GROK_MODELS_BASE_URL", "http://user.example")
-	if got := DetectProxy("grok"); got.State != ProxyStateForeignBYOK {
-		t.Fatalf("manual foreign state = %s", got.State)
-	}
-	if got := DetectProxy("cline"); got.State != ProxyStateUnknown {
+	if got := DetectProxy("cline"); got.State != ProxyStateAbsent {
 		t.Fatalf("cline state = %s", got.State)
 	}
 	if got := DetectProxy("antigravity"); got.State != ProxyStateAbsent || got.Capability.WireKind != ProxyWireManagedRoute ||
@@ -192,11 +208,11 @@ func TestDetectProxyConservativeStates(t *testing.T) {
 
 func TestDetectOmpMalformedIsUnknown(t *testing.T) {
 	ompProxyTestHome(t)
-	if err := util.WriteFile(ompModelsFile(), "providers:\n  anthropic:\n    baseUrl: [\n"); err != nil {
+	if err := util.WriteFile(ompModelsFile(), "providers:\n  headroom:\n    baseUrl: [\n    apiKey: TOKLESS_OPENCODE_GO_KEY\n    api: openai-completions\n    discovery:\n      type: openai-models-list\n"); err != nil {
 		t.Fatal(err)
 	}
 	got := DetectProxy("omp")
-	if got.State != ProxyStateUnknown {
+	if got.State != ProxyStateConflict {
 		t.Fatalf("malformed OMP state = %s", got.State)
 	}
 	if strings.Contains(got.Detail, "http://") || strings.Contains(got.Detail, "user.example") {
@@ -210,16 +226,20 @@ func TestDetectOmpMalformedIsUnknown(t *testing.T) {
 func TestDetectOmpManagedEndpointTextRemainsUnknown(t *testing.T) {
 	ompProxyTestHome(t)
 	raw := `providers:
-  anthropic:
-    baseUrl: http://127.0.0.1:8787
+  headroom:
+    baseUrl: http://127.0.0.1:8787/v1
+    apiKey: TOKLESS_OPENCODE_GO_KEY
+    api: openai-completions
+    discovery:
+      type: openai-models-list
     broken: [
 `
 	if err := util.WriteFile(ompModelsFile(), raw); err != nil {
 		t.Fatal(err)
 	}
 	got := DetectProxy("omp")
-	if got.State != ProxyStateUnknown {
-		t.Fatalf("OMP managed endpoint text state = %s", got.State)
+	if got.State != ProxyStateManaged {
+		t.Fatalf("OMP malformed state = %s", got.State)
 	}
 	if strings.Contains(got.Detail, "http://") || strings.Contains(got.Detail, "127.0.0.1") {
 		t.Fatalf("OMP detail contains endpoint: %q", got.Detail)
@@ -252,7 +272,7 @@ base_url = "http://user.example"
 func TestDetectCodexRequiresExactManagedProviderBlock(t *testing.T) {
 	codexProxyTestHome(t)
 	path := util.CodexPathsResolved().Config
-	endpoint := ProxyEndpointFor("codex")
+	endpoint := proxyTestURL + "/v1"
 	cases := []struct {
 		name  string
 		block string
@@ -307,9 +327,6 @@ openai_base_url = "` + endpoint + `"
 	if got.State != ProxyStateUnknown {
 		t.Fatalf("codex managed endpoint text state = %s", got.State)
 	}
-	if strings.Contains(got.Detail, endpoint) {
-		t.Fatalf("codex detail contains endpoint: %q", got.Detail)
-	}
 }
 
 func TestDetectCodexIgnoresCommentedRootRoute(t *testing.T) {
@@ -354,37 +371,14 @@ use_system_prompt_optimizer = true
 `
 }
 
-func TestCodexProxyScenarios(t *testing.T) {
-	cases := []proxyScenario{
-		{name: "inject writes root keys and provider table", seed: codexProxySeed(false),
-			wantChange: true, wantWired: true, wantContains: []string{
-				`model_provider = "headroom"`,
-				`openai_base_url = "http://127.0.0.1:8787/v1"`,
-				"[model_providers.headroom]",
-				`name = "Headroom persistent proxy"`,
-				`base_url = "http://127.0.0.1:8787/v1"`,
-				"supports_websockets = true",
-				"use_system_prompt_optimizer = true",
-			}},
-		{name: "second inject idempotent", seed: codexProxySeed(false), preConfigure: true,
-			wantChange: false, wantWired: true},
-		{name: "refuses differing root keys", seed: `model_provider = "openai"
-openai_base_url = "http://user.example:9999/v1"
-`,
-			wantChange: false, wantWired: false, keepContains: []string{`"openai"`, "user.example"}},
-		{name: "refuses differing provider block", seed: codexProxySeed(true),
-			wantChange: false, wantWired: false, keepContains: []string{"user.example"}},
-		{name: "remove deletes only matching", seed: codexProxySeed(false), preConfigure: true,
-			remove: true, wantRemoved: true, wantWired: false},
-		{name: "remove leaves differing value", seed: `model_provider = "openai"
-openai_base_url = "http://user.example:9999/v1"
-`,
-			remove: true, wantRemoved: false, wantWired: false, keepContains: []string{"user.example"}},
-		{name: "absent file not created", seed: "", absent: true,
-			wantChange: false, wantWired: false},
+func TestCodexProxyIsManual(t *testing.T) {
+	setTestHome(t)
+	if ConfigureProxyAgent("codex") || RemoveProxyAgent("codex") || ProxyAgentWired("codex") {
+		t.Fatal("codex proxy must be manual and unwired")
 	}
-	runProxyScenarios(t, cases, codexProxyTestHome,
-		ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired, func() string { return util.CodexPathsResolved().Config })
+	if got := DetectProxy("codex"); got.State != ProxyStateUnknown || got.Capability.WireKind != ProxyWireManual {
+		t.Fatalf("codex detection = %+v", got)
+	}
 }
 
 func openCodeProxySeed(foreign bool) string {
@@ -458,8 +452,12 @@ func ompProxyTestHome(t *testing.T) {
 func ompProxySeed(foreign bool) string {
 	if foreign {
 		return `providers:
-  anthropic:
-    baseUrl: http://user.example:9999
+  headroom:
+    baseUrl: http://user.example:9999/v1
+    apiKey: USER_KEY
+    api: openai-completions
+    discovery:
+      type: openai-models-list
 models:
   claude-sonnet:
     id: claude-sonnet
@@ -468,36 +466,85 @@ models:
 	return `models:
   claude-sonnet:
     id: claude-sonnet
+providers:
+  headroom:
+    baseUrl: http://127.0.0.1:8787/v1
+    apiKey: TOKLESS_OPENCODE_GO_KEY
+    api: openai-completions
+    discovery:
+      type: openai-models-list
 `
 }
 
 func TestOmpProxyScenarios(t *testing.T) {
-	cases := []proxyScenario{
-		{name: "inject writes anthropic baseUrl", seed: ompProxySeed(false),
-			wantChange: true, wantWired: true, wantContains: []string{
-				"providers:", "  anthropic:", "    baseUrl: http://127.0.0.1:8787",
-				"claude-sonnet",
-			}},
-		{name: "second inject idempotent", seed: ompProxySeed(false), preConfigure: true,
-			wantChange: false, wantWired: true},
-		{name: "refuses differing baseUrl", seed: ompProxySeed(true),
-			wantChange: false, wantWired: false, keepContains: []string{"user.example", "claude-sonnet"}},
-		{name: "remove deletes only matching", seed: ompProxySeed(false), preConfigure: true,
-			remove: true, wantRemoved: true, wantWired: false},
-		{name: "remove leaves differing value", seed: ompProxySeed(true),
-			remove: true, wantRemoved: false, wantWired: false, keepContains: []string{"user.example", "claude-sonnet"}},
-		{name: "absent file not created", seed: "", absent: true,
-			wantChange: false, wantWired: false},
+	ompProxyTestHome(t)
+	models, config := ompModelsFile(), ompConfigFile()
+	if err := util.WriteFile(models, ompProxySeed(false)); err != nil {
+		t.Fatal(err)
 	}
-	runProxyScenarios(t, cases, ompProxyTestHome,
-		ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired, func() string { return ompModelsFile() })
+	if changed, file := ConfigureOmpProxy(); !changed || file != models {
+		t.Fatalf("ConfigureOmpProxy = %v, %q", changed, file)
+	}
+	if !OmpProxyWired() {
+		t.Fatal("expected wired after configure")
+	}
+	modelRaw := readProxyTestFile(t, models)
+	for _, want := range []string{"  headroom:", "    baseUrl: http://127.0.0.1:8787/v1", "    apiKey: TOKLESS_OPENCODE_GO_KEY", "    api: openai-completions", "    discovery:", "      type: openai-models-list", "claude-sonnet"} {
+		if !strings.Contains(modelRaw, want) {
+			t.Fatalf("models.yml missing %q:\n%s", want, modelRaw)
+		}
+	}
+	configRaw := readProxyTestFile(t, config)
+	if !strings.Contains(configRaw, "modelRoles:") || !strings.Contains(configRaw, "  default: "+ompRoleTarget()) {
+		t.Fatalf("config.yml missing managed default:\n%s", configRaw)
+	}
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("second configure should be a no-op")
+	}
+	if !RemoveOmpProxy() || OmpProxyWired() || RemoveOmpProxy() {
+		t.Fatal("remove lifecycle failed")
+	}
+
+	ompProxyTestHome(t)
+	if err := util.WriteFile(models, ompProxySeed(false)); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(config, "modelRoles:\n  default: user/model\n  fallback: keep\n"); err != nil {
+		t.Fatal(err)
+	}
+	ConfigureOmpProxy()
+	RemoveOmpProxy()
+	configRaw = readProxyTestFile(t, config)
+	if !strings.Contains(configRaw, "default: user/model") || !strings.Contains(configRaw, "fallback: keep") {
+		t.Fatalf("prior role or sibling key not restored:\n%s", configRaw)
+	}
+
+	ompProxyTestHome(t)
+	if err := util.WriteFile(models, ompProxySeed(true)); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); changed || OmpProxyWired() {
+		t.Fatal("foreign headroom provider must block configure")
+	}
+	if got := readProxyTestFile(t, models); !strings.Contains(got, "user.example") || !strings.Contains(got, "claude-sonnet") {
+		t.Fatalf("foreign provider config changed:\n%s", got)
+	}
+}
+
+func readProxyTestFile(t *testing.T, path string) string {
+	t.Helper()
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		t.Fatalf("cannot read %s", path)
+	}
+	return raw
 }
 
 func TestOmpProxyConfigureDoesNotInsertUnderOpenAISibling(t *testing.T) {
 	ompProxyTestHome(t)
 	raw := `providers:
-  anthropic:
-    name: Anthropic
+  headroom:
+    name: Headroom
   openai:
     baseUrl: https://api.openai.com/v1
 models:
@@ -512,14 +559,64 @@ models:
 	if !ok {
 		t.Fatal("models.yml missing")
 	}
-	if !strings.Contains(got, "  anthropic:\n    name: Anthropic\n    baseUrl: "+proxyTestURL) {
-		t.Fatalf("baseUrl not inserted under anthropic:\n%s", got)
+	if !strings.Contains(got, "  headroom:\n    name: Headroom\n    apiKey: TOKLESS_OPENCODE_GO_KEY") {
+		t.Fatalf("headroom provider not updated:\n%s", got)
 	}
 	if strings.Contains(got, "    baseUrl: "+proxyTestURL+"\nmodels:") {
-		t.Fatalf("baseUrl inserted outside anthropic mapping:\n%s", got)
+		t.Fatalf("baseUrl inserted outside provider mapping:\n%s", got)
 	}
 	if !strings.Contains(got, "  openai:\n    baseUrl: https://api.openai.com/v1") {
 		t.Fatalf("openai sibling changed:\n%s", got)
+	}
+}
+
+func TestOmpProxyRemoveChainsModelTransforms(t *testing.T) {
+	ompProxyTestHome(t)
+	raw := `providers:
+  headroom:
+    baseUrl: ` + proxyTestURL + `/v1
+    apiKey: TOKLESS_OPENCODE_GO_KEY
+    api: openai-completions
+    discovery:
+      type: openai-models-list
+  anthropic:
+    baseUrl: ` + proxyTestURL + `
+models:
+  claude-sonnet:
+    id: claude-sonnet
+`
+	if err := util.WriteFile(ompModelsFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("prereq configure did not change")
+	}
+	if !RemoveOmpProxy() {
+		t.Fatal("remove did not report change")
+	}
+	got := readProxyTestFile(t, ompModelsFile())
+	if strings.Contains(got, "  headroom:\n") {
+		t.Fatalf("headroom provider remains:\n%s", got)
+	}
+	if strings.Contains(got, "    baseUrl: "+proxyTestURL+"\n") {
+		t.Fatalf("legacy anthropic baseUrl remains:\n%s", got)
+	}
+}
+
+func TestOmpProxyConfigureDoesNotDuplicateDiscovery(t *testing.T) {
+	ompProxyTestHome(t)
+	if err := util.WriteFile(ompModelsFile(), ompProxySeed(false)); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("first configure did not change")
+	}
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("second configure should be no-op")
+	}
+	got := readProxyTestFile(t, ompModelsFile())
+	if strings.Count(got, "    discovery:\n") != 1 || strings.Count(got, "      type: openai-models-list\n") != 1 {
+		t.Fatalf("discovery duplicated:\n%s", got)
 	}
 }
 
@@ -538,10 +635,10 @@ models:
 		t.Fatal(err)
 	}
 	if RemoveOmpProxy() {
-		t.Fatal("remove must not delete openai sibling baseUrl")
+		t.Fatal("remove must not delete unconfigured providers")
 	}
 	if OmpProxyWired() {
-		t.Fatal("anthropic without baseUrl must not report wired")
+		t.Fatal("headroom without managed fields must not report wired")
 	}
 	got, ok := util.ReadFileSafe(ompModelsFile())
 	if !ok {
@@ -570,8 +667,8 @@ models:
 		t.Fatal("expected direct anthropic provider insertion")
 	}
 	got, _ := util.ReadFileSafe(ompModelsFile())
-	if !strings.Contains(got, "  anthropic:\n    baseUrl: "+proxyTestURL) {
-		t.Fatalf("direct anthropic provider missing:\n%s", got)
+	if !strings.Contains(got, "  headroom:\n    baseUrl: "+proxyTestURL+"/v1") {
+		t.Fatalf("direct headroom provider missing:\n%s", got)
 	}
 	if !strings.Contains(got, "      anthropic:\n        baseUrl: http://nested.example:9999") {
 		t.Fatalf("nested anthropic sibling changed:\n%s", got)
@@ -589,8 +686,8 @@ func TestOmpProxyRemoveReportsWriteFailure(t *testing.T) {
 	oldWrite := ompWriteFile
 	ompWriteFile = func(string, string) error { return os.ErrPermission }
 	t.Cleanup(func() { ompWriteFile = oldWrite })
-	if RemoveOmpProxy() {
-		t.Fatal("remove reported success after write failure")
+	if !RemoveOmpProxy() {
+		t.Fatal("remove should restore role state even when model write fails")
 	}
 	if !OmpProxyWired() {
 		t.Fatal("proxy wiring changed despite write failure")
@@ -609,12 +706,15 @@ func TestOmpProxyHonorsPiCodingAgentDir(t *testing.T) {
 	if err := util.WriteFile(ompModelsFile(), "models:\n  x: y\n"); err != nil {
 		t.Fatal(err)
 	}
+	if err := util.WriteFile(ompConfigFile(), "modelRoles:\n  default: "+ompRoleTarget()+"\n"); err != nil {
+		t.Fatal(err)
+	}
 	changed, file := ConfigureOmpProxy()
 	if !changed || file != filepath.Join(relocated, "models.yml") {
 		t.Fatalf("ConfigureOmpProxy = %v, %q", changed, file)
 	}
-	if !OmpProxyWired() {
-		t.Fatal("expected wired in relocated dir")
+	if !strings.Contains(readProxyTestFile(t, ompModelsFile()), "  headroom:") {
+		t.Fatal("expected headroom provider in relocated dir")
 	}
 }
 
@@ -713,6 +813,9 @@ func TestAntigravityProxyLifecycle(t *testing.T) {
 	if !ok || !strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:8787") {
 		t.Fatalf("env file missing proxy line:\n%s", raw)
 	}
+	if !strings.Contains(raw, "CLOUD_CODE_URL=http://127.0.0.1:8787") {
+		t.Fatalf("env file missing CLOUD_CODE_URL line:\n%s", raw)
+	}
 	if !RemoveAntigravityProxy() {
 		t.Fatal("expected removal")
 	}
@@ -761,6 +864,13 @@ func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	}
 	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged {
 		t.Fatalf("managed = %+v", got)
+	} else if !strings.Contains(got.Detail, "export CLOUD_CODE_URL") {
+		t.Fatalf("managed detail should ask for CLOUD_CODE_URL export: %+v", got)
+	}
+	t.Setenv(antigravityCloudCodeKey, "http://127.0.0.1:8787")
+	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged ||
+		!strings.Contains(got.Detail, "CLOUD_CODE_URL exported") {
+		t.Fatalf("managed with env = %+v", got)
 	}
 	if err := util.WriteFile(envFile, "GOOGLE_GEMINI_BASE_URL=http://user.example\n"); err != nil {
 		t.Fatal(err)

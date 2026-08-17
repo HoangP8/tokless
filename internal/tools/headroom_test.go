@@ -39,11 +39,8 @@ func TestHeadroomMapsEveryRegisteredAgent(t *testing.T) {
 
 func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	setupHeadroomHome(t)
-	// codex/opencode/omp proxy wiring requires an existing config file (the
+	// opencode/omp proxy wiring requires an existing config file (the
 	// agents package refuses to create absent files); seed minimal configs.
-	if err := util.WriteFile(util.CodexPathsResolved().Config, ""); err != nil {
-		t.Fatal(err)
-	}
 	if err := util.WriteFile(util.OpenCodePathsResolved().Config, `{"$schema": "https://opencode.ai/config.json", "theme": "dark"}
 `); err != nil {
 		t.Fatal(err)
@@ -53,8 +50,14 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 		if err := util.WriteFile(ompModels, "models:\n  claude-sonnet:\n    id: claude-sonnet\n"); err != nil {
 			t.Fatal(err)
 		}
+		if err := util.WriteFile(filepath.Join(agents.OmpAgentDirResolved(), "config.yml"), ""); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity"} {
+	if err := util.WriteFile(filepath.Join(util.ClinePathsResolved().DataDir, "settings", "providers.json"), `{}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []string{"claude", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline"} {
 		t.Run(agent, func(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				ok, err := headroom.WireFor[agent](core.RunOpts{})
@@ -70,11 +73,11 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	}
 }
 
-// Manual agents have no config tokless writes; wiring is a no-op and verify
-// always passes (nothing observable to check).
+// Codex and Cursor are manual agents: no config tokless writes, wiring
+// is a no-op, and verify always passes (nothing observable to check).
 func TestHeadroomManualAgentsAreNoOps(t *testing.T) {
 	setupHeadroomHome(t)
-	for _, agent := range []string{"grok", "copilot", "cline", "cursor"} {
+	for _, agent := range []string{"codex", "cursor"} {
 		ok, err := headroom.WireFor[agent](core.RunOpts{})
 		if err != nil || !ok {
 			t.Fatalf("wire %s = %v, %v", agent, ok, err)

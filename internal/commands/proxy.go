@@ -10,8 +10,8 @@ import (
 // wired agents first (config-file injection), then manual/env agents.
 func ProxyAgentIDs() []string {
 	return []string{
-		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", // wired
-		"grok", "copilot", "cline", "cursor", // manual / launch-env
+		"claude", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", // wired
+		"codex", "cursor", // manual / launch-env
 	}
 }
 
@@ -25,23 +25,13 @@ func resolveProxyAgents(opts InitOptions) []string {
 // proxyInstructions returns the exact manual/env guidance for agents that
 // tokless cannot wire via a config file.
 func proxyInstructions(id string) []string {
-	base := headroompkg.ProxyURL()
-	openai := headroompkg.ProxyOpenAIURL()
 	switch id {
-	case "grok":
-		return []string{"export GROK_MODELS_BASE_URL=" + openai}
-	case "copilot":
-		return []string{"export COPILOT_PROVIDER_BASE_URL=" + openai}
-	case "cline":
-		return []string{
-			"VS Code: Cline settings → API Provider",
-			"  Anthropic Base URL: " + base,
-			"  OpenAI Compatible Base URL: " + openai,
-		}
+	case "codex":
+		return []string{"codex-via-proxy is DEPRECATED — headroom cannot compress the /v1/responses shape (upstream prefix-cache safety) and codex no longer supports wire_api=chat; keep codex on its native provider."}
 	case "cursor":
 		return []string{
-			"Cursor settings → Models → OpenAI API Key → Override OpenAI Base URL",
-			"  Base URL: " + openai,
+			"cursor-via-proxy is DEPRECATED — upstream supports manual settings-UI setup only.",
+			"Keep cursor on native api2.cursor.sh OAuth.",
 		}
 	}
 	return nil
@@ -83,12 +73,10 @@ func RunProxyUp(opts InitOptions) int {
 	}
 	wired, failed := 0, 0
 	for _, id := range resolveProxyAgents(opts) {
+		if proxyInstructions(id) != nil {
+			continue
+		}
 		switch {
-		case proxyInstructions(id) != nil:
-			util.L.Raw("  " + util.Sym.Bullet + " " + id + ": manual (cannot auto-wire) — set:")
-			for _, line := range proxyInstructions(id) {
-				util.L.Raw("      " + line)
-			}
 		case configureProxyAgent(id):
 			util.L.Ok(id + ": wired to " + agents.ProxyEndpointFor(id))
 			wired++

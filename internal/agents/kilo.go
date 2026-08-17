@@ -489,6 +489,9 @@ func kiloProxyProviderEntry(endpoint string) *util.OrderedMap {
 	entry.Set("name", "Headroom Proxy")
 	options := util.NewOrderedMap()
 	options.Set("baseURL", endpoint)
+	if k := proxyWireKey(); k != "tokless" {
+		options.Set("apiKey", k)
+	}
 	entry.Set("options", options)
 	model := util.NewOrderedMap()
 	model.Set("name", "Headroom")
@@ -498,7 +501,7 @@ func kiloProxyProviderEntry(endpoint string) *util.OrderedMap {
 	limit.Set("output", 16384)
 	model.Set("limit", limit)
 	models := util.NewOrderedMap()
-	models.Set("headroom", model)
+	models.Set(proxyWireModel(), model)
 	entry.Set("models", models)
 	return entry
 }

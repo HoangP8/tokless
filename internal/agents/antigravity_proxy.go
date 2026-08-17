@@ -10,6 +10,7 @@ import (
 
 const (
 	antigravityProxyEnvKey    = "GOOGLE_GEMINI_BASE_URL"
+	antigravityCloudCodeKey   = "CLOUD_CODE_URL"
 	antigravityProxyFenceHead = "# tokless:headroom begin"
 	antigravityProxyFenceFoot = "# tokless:headroom end"
 )
@@ -54,13 +55,14 @@ func antigravityEnvValue(raw, key string) string {
 	return unfenced
 }
 
-// ConfigureAntigravityProxy writes GOOGLE_GEMINI_BASE_URL inside a tokless
-// fenced block of ~/.gemini/.env.
+// ConfigureAntigravityProxy writes GOOGLE_GEMINI_BASE_URL and CLOUD_CODE_URL
+// inside a tokless fenced block of ~/.gemini/.env.
 func ConfigureAntigravityProxy() (changed bool, file string) {
 	file = antigravityEnvFile()
 	url := ProxyEndpointFor("antigravity")
 	raw, _ := util.ReadFileSafe(file)
-	if antigravityEnvValue(raw, antigravityProxyEnvKey) == url {
+	if antigravityEnvValue(raw, antigravityProxyEnvKey) == url &&
+		antigravityEnvValue(raw, antigravityCloudCodeKey) == url {
 		return false, file
 	}
 	next := antigravityStripFence(raw)
@@ -71,6 +73,7 @@ func ConfigureAntigravityProxy() (changed bool, file string) {
 	}
 	sb.WriteString(antigravityProxyFenceHead + "\n")
 	sb.WriteString(antigravityProxyEnvKey + "=" + url + "\n")
+	sb.WriteString(antigravityCloudCodeKey + "=" + url + "\n")
 	sb.WriteString(antigravityProxyFenceFoot + "\n")
 	if err := util.WriteFile(file, sb.String()); err != nil {
 		return false, file

@@ -52,6 +52,35 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	return true, p.Config
 }
 
+func ensureOpenCodeEnabledProvider(path, provider string) (changed, ok bool) {
+	raw, exists := util.ReadFileSafe(path)
+	if !exists || util.HasJSONCComments(raw) {
+		return false, true
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false, false
+	}
+	enabled, exists := cfg.Get("enabled_providers")
+	if !exists {
+		return false, true
+	}
+	providers, ok := enabled.([]any)
+	if !ok {
+		return false, false
+	}
+	for _, value := range providers {
+		if value == provider {
+			return false, true
+		}
+	}
+	cfg.Set("enabled_providers", append(providers, provider))
+	if err := util.WriteFile(path, util.StringifyJSON(cfg)); err != nil {
+		return false, false
+	}
+	return true, true
+}
+
 func RemoveOpenCodeMcp(toolID string) bool {
 	p := util.OpenCodePathsResolved()
 	raw, ok := util.ReadFileSafe(p.Config)
@@ -143,16 +172,40 @@ func ConfigureOpenCodeProxy() (changed bool, file string) {
 	}
 	spec := ProviderSpecActive()
 	entry := openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec)
-	if existing, ok := providers.Get(spec.Key); ok {
-		if util.StringifyJSON(existing) == util.StringifyJSON(entry) {
+	if enabled, ok := cfg.Get("enabled_providers"); ok {
+		providersList, ok := enabled.([]any)
+		if !ok {
 			return false, p.Config
 		}
-		return false, p.Config
+		present := false
+		for _, value := range providersList {
+			if value == spec.Key {
+				present = true
+				break
+			}
+		}
+		if !present {
+			cfg.Set("enabled_providers", append(providersList, spec.Key))
+			changed = true
+		}
 	}
-	providers.Set(spec.Key, entry)
+	if existing, ok := providers.Get(spec.Key); ok {
+		if util.StringifyJSON(existing) == util.StringifyJSON(entry) {
+			if !changed {
+				return false, p.Config
+			}
+		} else {
+			return false, p.Config
+		}
+	} else {
+		providers.Set(spec.Key, entry)
+		changed = true
+	}
 	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
 		return false, p.Config
 	}
+	gateChanged, _ := ensureOpenCodeEnabledProvider(filepath.Join(p.Dir, "config.json"), spec.Key)
+	changed = changed || gateChanged
 	return true, p.Config
 }
 

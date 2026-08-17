@@ -347,7 +347,11 @@ func RemoveClaudeMcp(toolID string) bool {
 
 // --- Claude headroom HTTP proxy ---
 
-const claudeProxyEnvKey = "ANTHROPIC_BASE_URL"
+const (
+	claudeProxyEnvKey   = "ANTHROPIC_BASE_URL"
+	claudeProxyModelKey = "ANTHROPIC_MODEL"
+	claudeProxyModel    = "qwen3.8-max"
+)
 
 func ConfigureClaudeProxy() (changed bool, file string) {
 	url := ProxyEndpointFor("claude")
@@ -374,13 +378,26 @@ func ConfigureClaudeProxy() (changed bool, file string) {
 	} else {
 		cfg.Set("env", env)
 	}
+	dirty := false
 	if v, ok := env.Get(claudeProxyEnvKey); ok {
-		if s, ok := v.(string); ok && s == url {
+		if s, ok := v.(string); !ok || s != url {
 			return false, p.Settings
 		}
+	} else {
+		env.Set(claudeProxyEnvKey, url)
+		dirty = true
+	}
+	if v, ok := env.Get(claudeProxyModelKey); ok {
+		if s, ok := v.(string); !ok || s != claudeProxyModel {
+			return false, p.Settings
+		}
+	} else {
+		env.Set(claudeProxyModelKey, claudeProxyModel)
+		dirty = true
+	}
+	if !dirty {
 		return false, p.Settings
 	}
-	env.Set(claudeProxyEnvKey, url)
 	if err := util.WriteFile(p.Settings, util.StringifyJSON(cfg)); err != nil {
 		return false, p.Settings
 	}
@@ -416,6 +433,12 @@ func RemoveClaudeProxy() bool {
 		return false
 	}
 	env.Delete(claudeProxyEnvKey)
+	if v, present := env.Get(claudeProxyModelKey); present {
+		if s, ok := v.(string); !ok || s != claudeProxyModel {
+			return false
+		}
+		env.Delete(claudeProxyModelKey)
+	}
 	if env.Len() == 0 {
 		cfg.Delete("env")
 	}

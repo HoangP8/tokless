@@ -26,28 +26,19 @@ func TestProxyInstructionsEndpointShapes(t *testing.T) {
 	openai := headroompkg.ProxyOpenAIURL()
 	bare := headroompkg.ProxyURL()
 
-	if got := proxyInstructions("grok"); len(got) != 1 || got[0] != "export GROK_MODELS_BASE_URL="+openai {
-		t.Fatalf("grok instructions = %v", got)
-	}
-	if got := proxyInstructions("copilot"); len(got) != 1 || got[0] != "export COPILOT_PROVIDER_BASE_URL="+openai {
-		t.Fatalf("copilot instructions = %v", got)
-	}
-
-	cline := strings.Join(proxyInstructions("cline"), "\n")
-	if !strings.Contains(cline, "Anthropic Base URL: "+bare) {
-		t.Fatalf("cline instructions missing bare anthropic URL: %q", cline)
-	}
-	if !strings.Contains(cline, "OpenAI Compatible Base URL: "+openai) {
-		t.Fatalf("cline instructions missing openai /v1 URL: %q", cline)
-	}
+	_ = openai
+	_ = bare
 
 	cursor := strings.Join(proxyInstructions("cursor"), "\n")
-	if !strings.Contains(cursor, "Base URL: "+openai) {
-		t.Fatalf("cursor instructions missing openai /v1 URL: %q", cursor)
+	if !strings.Contains(cursor, "DEPRECATED") || !strings.Contains(cursor, "native") {
+		t.Fatalf("cursor instructions must state deprecation/native OAuth: %q", cursor)
 	}
 
-	if proxyInstructions("claude") != nil || proxyInstructions("codex") != nil || proxyInstructions("antigravity") != nil {
+	if proxyInstructions("claude") != nil || proxyInstructions("antigravity") != nil {
 		t.Fatal("wired agents must have no manual instructions")
+	}
+	if got := strings.Join(proxyInstructions("codex"), " "); !strings.Contains(got, "DEPRECATED") || !strings.Contains(got, "native provider") {
+		t.Fatalf("codex instructions = %q", got)
 	}
 }
 
@@ -73,8 +64,8 @@ func TestRunProxyStatusProbesDaemonOnceAndDoesNotWireManual(t *testing.T) {
 	if strings.Contains(logs, "→") || strings.Contains(logs, headroompkg.ProxyOpenAIURL()) {
 		t.Fatalf("manual status rendered as wired endpoint: %q", logs)
 	}
-	if !strings.Contains(logs, string(agents.ProxyStateUnknown)) || !strings.Contains(logs, "ownership unknown") {
-		t.Fatalf("manual status missing truthful state: %q", logs)
+	if !strings.Contains(logs, string(agents.ProxyStateAbsent)) {
+		t.Fatalf("grok status missing absent state: %q", logs)
 	}
 }
 

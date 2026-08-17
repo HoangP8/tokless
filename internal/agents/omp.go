@@ -304,56 +304,100 @@ func HasOmpRtkExtension() bool {
 
 // --- Oh My Pi (omp) headroom HTTP proxy ---
 
-func ompModelsFile() string { return filepath.Join(OmpAgentDirResolved(), "models.yml") }
+func ompModelsFile() string    { return filepath.Join(OmpAgentDirResolved(), "models.yml") }
+func ompConfigFile() string    { return filepath.Join(OmpAgentDirResolved(), "config.yml") }
+func ompRoleStateFile() string { return filepath.Join(util.ToklessDataDir(), "omp-role-prev") }
 
 var ompWriteFile = util.WriteFile
 
-// ConfigureOmpProxy points providers.anthropic.baseUrl at the proxy via a
-// careful text edit that preserves the rest of models.yml.
+const ompRoleModel = "deepseek-v4-flash"
+
+func ompManagedHeadroomFields() map[string]string {
+	return map[string]string{
+		"baseUrl": ProxyEndpointFor("opencode"),
+		"apiKey":  "TOKLESS_OPENCODE_GO_KEY",
+		"api":     "openai-completions",
+	}
+}
+
+const ompDiscoveryType = "openai-models-list"
+
+func ompRoleTarget() string { return "headroom/" + ompRoleModel + ":high" }
+
+// ConfigureOmpProxy wires omp through its additive OpenAI-compatible provider.
 func ConfigureOmpProxy() (changed bool, file string) {
-	baseURL := ProxyEndpointFor("omp")
 	p := ompModelsFile()
 	raw, ok := util.ReadFileSafe(p)
 	if !ok {
 		return false, p
 	}
-	next, ok := ompYamlWriteBaseURL(raw, baseURL)
-	if !ok || next == raw {
+	next, ok := ompYamlWriteHeadroom(raw)
+	if !ok {
 		return false, p
 	}
-	if err := ompWriteFile(p, next); err != nil {
+	config := ompConfigFile()
+	configRaw, ok := util.ReadFileSafe(config)
+	if !ok {
+		configRaw = ""
+	}
+	roleNext, rolePrev, roleChanged, ok := ompYamlWriteRole(configRaw, ompRoleTarget())
+	if !ok {
 		return false, p
 	}
-	return true, p
+	if next != raw {
+		if err := ompWriteFile(p, next); err != nil {
+			return false, p
+		}
+		changed = true
+	}
+	if roleChanged {
+		if err := util.WriteFile(ompRoleStateFile(), rolePrev); err != nil {
+			return false, p
+		}
+		if err := ompWriteFile(config, roleNext); err != nil {
+			return false, p
+		}
+		changed = true
+	}
+	return changed, p
 }
 
-// RemoveOmpProxy deletes providers.anthropic.baseUrl only when it still equals
-// the url tokless set.
+// RemoveOmpProxy removes only tokless-owned omp wiring and restores prior role.
 func RemoveOmpProxy() bool {
-	baseURL := ProxyEndpointFor("omp")
-	p := ompModelsFile()
-	raw, ok := util.ReadFileSafe(p)
-	if !ok {
-		return false
+	changed := false
+	if raw, ok := util.ReadFileSafe(ompModelsFile()); ok {
+		next, headroomRemoved := ompYamlRemoveHeadroom(raw)
+		next, legacyRemoved := ompYamlRemoveLegacyAnthropic(next)
+		if (headroomRemoved || legacyRemoved) && ompWriteFile(ompModelsFile(), next) == nil {
+			changed = true
+		}
 	}
-	next, ok := ompYamlRemoveBaseURL(raw, baseURL)
-	if !ok || next == raw {
-		return false
+	if raw, ok := util.ReadFileSafe(ompConfigFile()); ok {
+		if prev, ok := util.ReadFileSafe(ompRoleStateFile()); ok {
+			if next, did := ompYamlRestoreRole(raw, prev); did && ompWriteFile(ompConfigFile(), next) == nil {
+				changed = true
+			}
+			if err := os.Remove(ompRoleStateFile()); err == nil {
+				changed = true
+			}
+		} else if next, did := ompYamlRemoveManagedRole(raw); did && ompWriteFile(ompConfigFile(), next) == nil {
+			changed = true
+		}
 	}
-	if err := ompWriteFile(p, next); err != nil {
-		return false
-	}
-	return true
+	return changed
 }
 
-// OmpProxyWired reports whether providers.anthropic.baseUrl is set to baseURL.
+// OmpProxyWired reports whether managed provider and default role are present.
 func OmpProxyWired() bool {
-	baseURL := ProxyEndpointFor("omp")
-	raw, ok := util.ReadFileSafe(ompModelsFile())
+	models, ok := util.ReadFileSafe(ompModelsFile())
 	if !ok {
 		return false
 	}
-	return ompYamlBaseURL(raw) == baseURL
+	config, ok := util.ReadFileSafe(ompConfigFile())
+	if !ok {
+		return false
+	}
+	return ompYamlHeadroomManaged(models) && ompYamlRole(config) == ompRoleTarget()
 }
 
 // ompYamlKeyRe matches a YAML mapping-key line: indent, key, then anything.
@@ -379,11 +423,12 @@ func ompYamlKeyLine(line string) (int, string, bool, string) {
 
 // ompYamlRef locates the providers → anthropic → baseUrl chain in models.yml.
 type ompYamlRef struct {
-	prov, provEnd, ant, antIndent, antEnd, base int // line indexes; -1 when absent
+	prov, provEnd, provider, providerIndent, providerEnd int
+	fields                                               map[string]int
 }
 
 func ompYamlScan(raw string) ompYamlRef {
-	ref := ompYamlRef{prov: -1, ant: -1, antIndent: 0, antEnd: -1, base: -1}
+	ref := ompYamlRef{prov: -1, provider: -1, providerEnd: -1, fields: map[string]int{}}
 	lines := strings.Split(raw, "\n")
 	for i, l := range lines {
 		if ind, key, _, _ := ompYamlKeyLine(l); ind == 0 && key == "providers" {
@@ -412,87 +457,232 @@ func ompYamlScan(raw string) ompYamlRef {
 		}
 	}
 	for i := ref.prov + 1; i < ref.provEnd; i++ {
-		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == "anthropic" && ind == directIndent {
-			ref.ant, ref.antIndent = i, ind
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == "headroom" && ind == directIndent {
+			ref.provider, ref.providerIndent = i, ind
 			break
 		}
 	}
-	if ref.ant == -1 {
-		ref.antIndent = 2
-		ref.antEnd = ref.provEnd
+	if ref.provider == -1 {
 		return ref
 	}
-	ref.antEnd = ref.provEnd
-	for i := ref.ant + 1; i < ref.provEnd; i++ {
+	ref.providerEnd = ref.provEnd
+	for i := ref.provider + 1; i < ref.provEnd; i++ {
 		if strings.TrimSpace(lines[i]) == "" {
 			continue
 		}
-		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind >= 0 && ind <= ref.antIndent {
-			ref.antEnd = i
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind >= 0 && ind <= ref.providerIndent {
+			ref.providerEnd = i
 			break
 		}
 	}
-	for i := ref.ant + 1; i < ref.antEnd; i++ {
-		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == "baseUrl" && ind == ref.antIndent+2 {
-			ref.base = i
-			break
+	for i := ref.provider + 1; i < ref.providerEnd; i++ {
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); ind == ref.providerIndent+2 {
+			ref.fields[key] = i
 		}
 	}
 	return ref
 }
 
-// ompYamlBaseURL returns the current providers.anthropic.baseUrl value.
-func ompYamlBaseURL(raw string) string {
+func ompYamlHeadroomManaged(raw string) bool {
 	ref := ompYamlScan(raw)
-	if ref.base == -1 {
-		return ""
+	if ref.provider < 0 {
+		return false
 	}
-	_, _, _, v := ompYamlKeyLine(strings.Split(raw, "\n")[ref.base])
-	return v
+	lines := strings.Split(raw, "\n")
+	want := ompManagedHeadroomFields()
+	for key, value := range want {
+		i, ok := ref.fields[key]
+		if !ok {
+			return false
+		}
+		_, _, _, have := ompYamlKeyLine(lines[i])
+		if have != value {
+			return false
+		}
+	}
+	discovery, ok := ref.fields["discovery"]
+	if !ok {
+		return false
+	}
+	if _, _, _, value := ompYamlKeyLine(lines[discovery]); value != "" {
+		return false
+	}
+	typeOK := false
+	for i := discovery + 1; i < ref.providerEnd; i++ {
+		ind, key, _, value := ompYamlKeyLine(lines[i])
+		if ind <= ref.providerIndent+2 {
+			break
+		}
+		if ind == ref.providerIndent+4 && key == "type" && value == "openai-models-list" {
+			typeOK = true
+			break
+		}
+	}
+	if !typeOK {
+		return false
+	}
+	return true
 }
 
-// ompYamlWriteBaseURL sets providers.anthropic.baseUrl = url, preserving the
-// rest byte-for-byte. ok=false when a differing value blocks the edit.
-func ompYamlWriteBaseURL(raw, url string) (string, bool) {
+func ompYamlWriteHeadroom(raw string) (string, bool) {
 	lines := strings.Split(raw, "\n")
 	ref := ompYamlScan(raw)
-	switch {
-	case ref.base >= 0:
-		if _, _, _, have := ompYamlKeyLine(lines[ref.base]); have == url {
-			return raw, true
-		} else if have != "" {
-			return raw, false
+	want := ompManagedHeadroomFields()
+	if ref.provider >= 0 {
+		for _, key := range []string{"apiKey", "baseUrl", "api"} {
+			value := want[key]
+			if i, exists := ref.fields[key]; exists {
+				_, _, _, have := ompYamlKeyLine(lines[i])
+				if have != "" && have != value {
+					return raw, false
+				}
+			}
 		}
-		lines[ref.base] = strings.Repeat(" ", ref.antIndent+2) + "baseUrl: " + url
-	case ref.ant >= 0:
-		line := strings.Repeat(" ", ref.antIndent+2) + "baseUrl: " + url
-		lines = ompYamlInsertLine(lines, ref.antEnd, line)
-	case ref.prov >= 0:
-		lines = ompYamlInsertLines(lines, ref.provEnd, "  anthropic:", "    baseUrl: "+url)
-	default:
+		for _, key := range []string{"apiKey", "baseUrl", "api"} {
+			value := want[key]
+			if i, exists := ref.fields[key]; exists {
+				lines[i] = strings.Repeat(" ", ref.providerIndent+2) + key + ": " + value
+			} else {
+				lines = ompYamlInsertLine(lines, ref.providerEnd, strings.Repeat(" ", ref.providerIndent+2)+key+": "+value)
+				ref.providerEnd++
+			}
+		}
+		if i, exists := ref.fields["discovery"]; exists {
+			lines[i] = strings.Repeat(" ", ref.providerIndent+2) + "discovery:"
+		} else {
+			lines = ompYamlInsertLines(lines, ref.providerEnd, strings.Repeat(" ", ref.providerIndent+2)+"discovery:", strings.Repeat(" ", ref.providerIndent+4)+"type: openai-models-list")
+		}
+		return strings.Join(lines, "\n"), true
+	}
+	if ref.prov >= 0 {
+		return strings.Join(ompYamlInsertLines(lines, ref.provEnd, "  headroom:", "    baseUrl: "+want["baseUrl"], "    apiKey: "+want["apiKey"], "    api: "+want["api"], "    discovery:", "      type: "+ompDiscoveryType), "\n"), true
+	}
+	{
 		out := raw
 		if out != "" && !strings.HasSuffix(out, "\n") {
 			out += "\n"
 		}
-		out += "providers:" + "\n" + "  anthropic:" + "\n" + "    baseUrl: " + url + "\n"
+		out += "providers:\n  headroom:\n    baseUrl: " + want["baseUrl"] + "\n    apiKey: " + want["apiKey"] + "\n    api: " + want["api"] + "\n    discovery:\n      type: " + ompDiscoveryType + "\n"
 		return out, true
 	}
-	return strings.Join(lines, "\n"), true
 }
 
-// ompYamlRemoveBaseURL deletes providers.anthropic.baseUrl only when it still
-// equals url; ok=false when absent or differing.
-func ompYamlRemoveBaseURL(raw, url string) (string, bool) {
-	lines := strings.Split(raw, "\n")
+func ompYamlRemoveHeadroom(raw string) (string, bool) {
 	ref := ompYamlScan(raw)
-	if ref.base == -1 {
+	if ref.provider < 0 || !ompYamlHeadroomManaged(raw) {
 		return raw, false
 	}
-	if _, _, _, have := ompYamlKeyLine(lines[ref.base]); have != url {
-		return raw, false
+	lines := strings.Split(raw, "\n")
+	return strings.Join(append(lines[:ref.provider], lines[ref.providerEnd:]...), "\n"), true
+}
+
+func ompYamlRemoveLegacyAnthropic(raw string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		ind, key, _, _ := ompYamlKeyLine(line)
+		if ind != 2 || key != "anthropic" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "" {
+				continue
+			}
+			childInd, childKey, _, value := ompYamlKeyLine(lines[j])
+			if childInd <= ind {
+				break
+			}
+			if childInd == ind+2 && childKey == "baseUrl" && value == ProxyEndpointFor("omp") {
+				return strings.Join(append(lines[:j], lines[j+1:]...), "\n"), true
+			}
+		}
 	}
-	lines = append(lines[:ref.base], lines[ref.base+1:]...)
-	return strings.Join(lines, "\n"), true
+	return raw, false
+}
+
+func ompYamlRole(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		_, key, _, _ := ompYamlKeyLine(line)
+		if key != "modelRoles" {
+			continue
+		}
+		for _, child := range lines[i+1:] {
+			ind, k, _, v := ompYamlKeyLine(child)
+			if ind > 0 && k == "default" {
+				return v
+			}
+			if ind == 0 {
+				break
+			}
+		}
+	}
+	return ""
+}
+
+func ompYamlWriteRole(raw, target string) (string, string, bool, bool) {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		ind, key, _, _ := ompYamlKeyLine(line)
+		if ind != 0 || key != "modelRoles" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			childInd, childKey, _, value := ompYamlKeyLine(lines[j])
+			if childInd == 0 {
+				break
+			}
+			if childKey == "default" {
+				if value == target {
+					return raw, "", false, true
+				}
+				lines[j] = strings.Repeat(" ", childInd) + "default: " + target
+				return strings.Join(lines, "\n"), value, true, true
+			}
+		}
+		return strings.Join(ompYamlInsertLine(lines, i+1, "  default: "+target), "\n"), "", true, true
+	}
+	return strings.Join(ompYamlInsertLines(lines, len(lines), "modelRoles: ", "  default: "+target), "\n"), "", true, true
+}
+
+func ompYamlRestoreRole(raw, previous string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		ind, key, _, _ := ompYamlKeyLine(line)
+		if ind != 0 || key != "modelRoles" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			ci, ck, _, _ := ompYamlKeyLine(lines[j])
+			if ci == 0 {
+				break
+			}
+			if ck == "default" {
+				lines[j] = strings.Repeat(" ", ci) + "default: " + previous
+				return strings.Join(lines, "\n"), true
+			}
+		}
+	}
+	return raw, false
+}
+
+func ompYamlRemoveManagedRole(raw string) (string, bool) {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		ind, key, _, _ := ompYamlKeyLine(line)
+		if ind != 0 || key != "modelRoles" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			ci, ck, _, value := ompYamlKeyLine(lines[j])
+			if ci == 0 {
+				break
+			}
+			if ck == "default" && value == ompRoleTarget() {
+				return strings.Join(append(lines[:j], lines[j+1:]...), "\n"), true
+			}
+		}
+	}
+	return raw, false
 }
 
 func ompYamlInsertLine(lines []string, at int, line string) []string {

@@ -89,7 +89,9 @@ func codexProxyBlock(endpoint string) *util.TomlBlock {
 	block := util.NewTomlBlock(codexProxyProvider)
 	block.Set("name", "Headroom persistent proxy")
 	block.Set("base_url", endpoint)
-	block.Set("supports_websockets", true)
+	block.Set("wire_api", "responses")
+	block.Set("env_key", "OPENAI_API_KEY")
+	block.Set("supports_websockets", false)
 	return block
 }
 

@@ -468,7 +468,6 @@ func argsEq(a any, b []string) bool {
 // --- Droid headroom HTTP proxy ---
 
 const (
-	droidProxyModel        = "headroom"
 	droidProxyDisplayName  = "Headroom Proxy"
 	droidProxyProviderKind = "generic-chat-completion-api"
 )
@@ -478,10 +477,13 @@ func droidSettingsFile() string { return filepath.Join(droidDir(), "settings.jso
 // droidProxyEntry builds the customModels entry pointing at the headroom daemon.
 func droidProxyEntry(endpoint string) *util.OrderedMap {
 	entry := util.NewOrderedMap()
-	entry.Set("model", droidProxyModel)
+	entry.Set("model", proxyWireModel())
 	entry.Set("displayName", droidProxyDisplayName)
 	entry.Set("baseUrl", endpoint)
 	entry.Set("provider", droidProxyProviderKind)
+	if k := proxyWireKey(); k != "tokless" {
+		entry.Set("apiKey", k)
+	}
 	return entry
 }
 
@@ -502,6 +504,7 @@ func ConfigureDroidProxy() (changed bool, file string) {
 		cfg = util.NewOrderedMap()
 	}
 	endpoint := ProxyEndpointFor("droid")
+	desired := droidProxyEntry(endpoint)
 	var models []any
 	if v, ok := cfg.Get("customModels"); ok {
 		arr, isArr := v.([]any)
@@ -510,18 +513,30 @@ func ConfigureDroidProxy() (changed bool, file string) {
 		}
 		models = arr
 	}
-	for _, existing := range models {
+	for i, existing := range models {
 		em, isMap := existing.(*util.OrderedMap)
 		if !isMap {
 			continue
 		}
 		model, _ := em.Get("model")
 		display, _ := em.Get("displayName")
-		if model == droidProxyModel && display == droidProxyDisplayName {
-			return false, f
+		if model == proxyWireModel() && display == droidProxyDisplayName {
+			if jsonEqual(em, desired) {
+				return false, f
+			}
+			baseURL, _ := em.Get("baseUrl")
+			if baseURL != endpoint {
+				return false, f
+			}
+			models[i] = desired
+			cfg.Set("customModels", models)
+			if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+				return false, f
+			}
+			return true, f
 		}
 	}
-	cfg.Set("customModels", append(models, droidProxyEntry(endpoint)))
+	cfg.Set("customModels", append(models, desired))
 	if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
 		return false, f
 	}

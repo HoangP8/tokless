@@ -2,10 +2,10 @@ package agents
 
 import (
 	"os"
+	"strings"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
-
 
 const proxyProviderEnv = "TOKLESS_PROXY_PROVIDER"
 
@@ -21,10 +21,10 @@ type ProviderModel struct {
 
 // ProviderSpec is one selectable proxy backend identity.
 type ProviderSpec struct {
-	ID string
-	Key string
-	Npm string
-	Name string
+	ID     string
+	Key    string
+	Npm    string
+	Name   string
 	KeyEnv string
 	Models []ProviderModel
 }
@@ -42,31 +42,34 @@ func DefaultProviderSpec() ProviderSpec {
 	}
 }
 
-func apiboxProviderSpec() ProviderSpec {
-	return ProviderSpec{
-		ID:     "apibox",
-		Key:    "apibox",
-		Npm:    "@ai-sdk/anthropic",
-		Name:   "APIBox",
-		KeyEnv: "TOKLESS_APIOBOX_KEY",
-		Models: []ProviderModel{
-			{ID: "deepseek-v4-flash", Display: "APIBox DeepSeek V4 Flash", Context: 200000, Output: 64000, Reasoning: true},
-			{ID: "qwen3.8-max", Display: "APIBox Qwen3 8 Max", Context: 200000, Output: 64000, Reasoning: true},
-		},
-	}
-}
-
 // ProviderSpecActive returns the selected provider, defaulting to the
 // byte-compatible headroom spec.
 func ProviderSpecActive() ProviderSpec {
-	switch os.Getenv(proxyProviderEnv) {
-	case providerApibox:
-		return apiboxProviderSpec()
+	if spec := exampleProviderSpec(os.Getenv(proxyProviderEnv)); spec.ID != "" {
+		return spec
 	}
-	if st, ok := util.ReadProxyRuntime(); ok && st.Provider == providerApibox {
-		return apiboxProviderSpec()
+	if st, ok := util.ReadProxyRuntime(); ok {
+		if spec := exampleProviderSpec(st.Provider); spec.ID != "" {
+			return spec
+		}
 	}
 	return DefaultProviderSpec()
 }
 
-const providerApibox = "apibox"
+// proxyWireModel returns the model id tokless pins into OpenAI-compatible
+// agent configs.
+func proxyWireModel() string {
+	if v := strings.TrimSpace(os.Getenv("TOKLESS_PROXY_MODEL")); v != "" {
+		return v
+	}
+	return "headroom"
+}
+
+// proxyWireKey returns the API key tokless pins into agent configs that have
+// no environment-key mechanism.
+func proxyWireKey() string {
+	if v := strings.TrimSpace(os.Getenv("TOKLESS_PROXY_KEY")); v != "" {
+		return v
+	}
+	return "tokless"
+}
