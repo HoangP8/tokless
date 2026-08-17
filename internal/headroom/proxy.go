@@ -109,9 +109,6 @@ func ResolveHeadroomBin() string {
 func ProxyRunning() bool { return proxyLiveZProbe(proxyProbeTimeout) }
 
 // EnsureProxyUp starts the daemon when it is not already running, silently.
-// Intended for invisible boot layers (e.g. run-mcp before an MCP server exec):
-// a broken proxy must never block or fail the calling tool, so errors are
-// swallowed and the fast path (already running) costs a single livez probe.
 func EnsureProxyUp() {
 	if ProxyRunning() {
 		return

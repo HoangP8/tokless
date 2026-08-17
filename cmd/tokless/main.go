@@ -8,6 +8,7 @@ import (
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/commands"
 	"github.com/HoangP8/tokless/internal/core"
+	headroompkg "github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -23,6 +24,24 @@ var (
 	registerTools     = tools.Register
 	ensureProcessPath = util.EnsureProcessPath
 )
+
+// ensureSessionBoot is the hook-path readiness gate. Swapped in tests.
+var ensureSessionBoot = headroompkg.EnsureProxyUp
+
+// isSessionBootArg reports whether argv names an agent-session entry point
+// (run-mcp, rtk-hook variants, codex-perm, codegraph-index hooks, cursor
+// project-rules) that may carry agent traffic through the headroom proxy.
+func isSessionBootArg(args []string) bool {
+	switch {
+	case len(args) >= 2 && args[0] == "run-mcp",
+		len(args) >= 2 && args[0] == "rtk-hook",
+		len(args) >= 3 && args[0] == "rtk" && args[1] == "hook",
+		len(args) >= 2 && args[0] == "codex-perm",
+		len(args) >= 2 && (args[0] == "agy-hook" || args[0] == "cursor-hook" || args[0] == "copilot-hook"):
+		return true
+	}
+	return false
+}
 
 // parseArgs mirrors the TS parser: --k=v, --k v, --k, -x short bool.
 func parseArgs(argv []string) parsedArgs {
@@ -155,6 +174,9 @@ func run() int {
 	registerAgents()
 	registerTools()
 	ensureProcessPath()
+	if isSessionBootArg(os.Args[1:]) {
+		ensureSessionBoot()
+	}
 	if len(os.Args) >= 3 && os.Args[1] == "run-mcp" {
 		return commands.RunMcp(os.Args[2:])
 	}
