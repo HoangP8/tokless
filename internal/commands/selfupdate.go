@@ -101,19 +101,19 @@ func runStatus(label string, fn func()) {
 		defer t.Stop()
 		i := 0
 		for {
-		line := "  " + util.C.Cyan(frames[i%len(frames)]) + " " + util.C.Gray(label)
-		curWidth := util.VisibleLen(line)
-		pad := 0
-		if prevWidth > curWidth {
-			pad = prevWidth - curWidth
-		}
-		prevWidth = curWidth
-		fmt.Print("\r\x1b[2K" + line + strings.Repeat(" ", pad))
-		i++
-		select {
-		case <-done:
-			fmt.Print("\r\x1b[2K")
-			return
+			line := "  " + util.C.Cyan(frames[i%len(frames)]) + " " + util.C.Gray(label)
+			curWidth := util.VisibleLen(line)
+			pad := 0
+			if prevWidth > curWidth {
+				pad = prevWidth - curWidth
+			}
+			prevWidth = curWidth
+			fmt.Print("\r\x1b[2K" + line + strings.Repeat(" ", pad))
+			i++
+			select {
+			case <-done:
+				fmt.Print("\r\x1b[2K")
+				return
 			case <-t.C:
 			}
 		}

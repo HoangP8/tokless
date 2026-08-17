@@ -1,10 +1,10 @@
 package commands
 
 import (
+	"github.com/HoangP8/tokless/internal/util"
 	"os"
 	"path/filepath"
 	"strings"
-	"github.com/HoangP8/tokless/internal/util"
 )
 
 const reexecEnvKey = "TOKLESS_REEXECED"
