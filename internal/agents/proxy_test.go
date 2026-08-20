@@ -866,6 +866,7 @@ func TestAntigravityProxyPreservesForeignEnv(t *testing.T) {
 
 func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	setTestHome(t)
+	t.Setenv(antigravityCloudCodeKey, "")
 	envFile := antigravityEnvFile()
 	if got := DetectProxy("antigravity"); got.State != ProxyStateAbsent {
 		t.Fatalf("absent = %+v", got)
