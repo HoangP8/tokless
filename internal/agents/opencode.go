@@ -148,148 +148,17 @@ func openCodeProxySpecs() []ProviderSpec {
 	return []ProviderSpec{DefaultProviderSpec()}
 }
 
-// ConfigureOpenCodeProxy merges every registered proxy provider into the
-// top-level `provider` object, then rewrites user BYOK baseURLs through
-// headroom (key→host route table).
 func ConfigureOpenCodeProxy() (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
-	if byokChanged, _ := wireOpenCodeBYOK(); byokChanged {
-		changed = true
-		file = filepath.Join(p.Dir, "config.json")
+	byokChanged, _ := wireOpenCodeBYOK()
+	if byokChanged {
+		return true, filepath.Join(p.Dir, "config.json")
 	}
-	raw, ok := util.ReadFileSafe(p.Config)
-	if !ok {
-		if changed {
-			return true, file
-		}
-		return false, p.Config
-	}
-	if util.HasJSONCComments(raw) {
-		if changed {
-			return true, file
-		}
-		return false, p.Config
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		if changed {
-			return true, file
-		}
-		return false, p.Config
-	}
-	var providers *util.OrderedMap
-	if v, ok := cfg.Get("provider"); ok {
-		em, isMap := v.(*util.OrderedMap)
-		if !isMap {
-			if changed {
-				return true, file
-			}
-			return false, p.Config
-		}
-		providers = em
-	} else {
-		providers = util.NewOrderedMap()
-		cfg.Set("provider", providers)
-	}
-	base := ProxyEndpointFor("opencode")
-	exampleChanged := false
-	for _, spec := range openCodeProxySpecs() {
-		entry := openCodeProxyProviderBlockFor(base, spec)
-		if enabled, ok := cfg.Get("enabled_providers"); ok {
-			providersList, ok := enabled.([]any)
-			if !ok {
-				if changed {
-					return true, file
-				}
-				return false, p.Config
-			}
-			present := false
-			for _, value := range providersList {
-				if value == spec.Key {
-					present = true
-					break
-				}
-			}
-			if !present {
-				cfg.Set("enabled_providers", append(providersList, spec.Key))
-				exampleChanged = true
-			}
-		}
-		if existing, ok := providers.Get(spec.Key); ok {
-			if util.StringifyJSON(existing) != util.StringifyJSON(entry) {
-				continue
-			}
-			continue
-		}
-		providers.Set(spec.Key, entry)
-		exampleChanged = true
-	}
-	if exampleChanged {
-		if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
-			if changed {
-				return true, file
-			}
-			return false, p.Config
-		}
-		changed = true
-		file = p.Config
-		for _, spec := range openCodeProxySpecs() {
-			gateChanged, _ := ensureOpenCodeEnabledProvider(filepath.Join(p.Dir, "config.json"), spec.Key)
-			changed = changed || gateChanged
-		}
-	}
-	if !changed {
-		return false, p.Config
-	}
-	if file == "" {
-		file = p.Config
-	}
-	return true, file
+	return false, p.Config
 }
 
-// RemoveOpenCodeProxy deletes every managed proxy provider that still matches
-// what tokless set, and restores user BYOK baseURLs.
 func RemoveOpenCodeProxy() bool {
-	byokRemoved := unwireOpenCodeBYOK()
-	p := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(p.Config)
-	if !ok {
-		return byokRemoved
-	}
-	if util.HasJSONCComments(raw) {
-		return byokRemoved
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return byokRemoved
-	}
-	providers, ok := mapChild(cfg, "provider")
-	if !ok {
-		return byokRemoved
-	}
-	base := ProxyEndpointFor("opencode")
-	exampleRemoved := false
-	for _, spec := range openCodeProxySpecs() {
-		existing, ok := providers.Get(spec.Key)
-		if !ok {
-			continue
-		}
-		if util.StringifyJSON(existing) != util.StringifyJSON(openCodeProxyProviderBlockFor(base, spec)) {
-			continue
-		}
-		providers.Delete(spec.Key)
-		exampleRemoved = true
-	}
-	if !exampleRemoved {
-		return byokRemoved
-	}
-	if providers.Len() == 0 {
-		cfg.Delete("provider")
-	}
-	if util.WriteFile(p.Config, util.StringifyJSON(cfg)) != nil {
-		return false
-	}
-	return true
+	return unwireOpenCodeBYOK()
 }
 
 // OpenCodeProxyWired reports whether at least one registered provider block is

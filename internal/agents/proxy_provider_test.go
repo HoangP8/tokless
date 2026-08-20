@@ -84,7 +84,7 @@ func TestProxyWireModelAndKeyEnvOverride(t *testing.T) {
 	}
 }
 
-func TestConfigureOpenCodeProxyEnabledProviders(t *testing.T) {
+func TestConfigureOpenCodeProxyBYOKOnlyNoHeadroomInject(t *testing.T) {
 	opencodeProxyTestHome(t)
 	cfgPath := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
 	if err := util.EnsureDir(filepath.Dir(cfgPath)); err != nil {
@@ -94,44 +94,49 @@ func TestConfigureOpenCodeProxyEnabledProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	gatePath := filepath.Join(util.OpenCodePathsResolved().Dir, "config.json")
-	if err := util.WriteFile(gatePath, `{"enabled_providers":["anthropic"]}`); err != nil {
+	gate := `{"enabled_providers":["anthropic"],"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"k"}}}}`
+	if err := util.WriteFile(gatePath, gate); err != nil {
 		t.Fatal(err)
 	}
 	if changed, _ := ConfigureOpenCodeProxy(); !changed {
-		t.Fatal("configure did not append provider")
+		t.Fatal("configure did not wire BYOK")
 	}
 	if changed, _ := ConfigureOpenCodeProxy(); changed {
 		t.Fatal("configure was not idempotent")
 	}
 	raw, _ := util.ReadFileSafe(gatePath)
-	if strings.Count(raw, `"headroom"`) != 1 {
-		t.Fatalf("gate provider id count = %d, want 1: %s", strings.Count(raw, `"headroom"`), raw)
+	if strings.Contains(raw, `"headroom"`) {
+		t.Fatalf("must not inject headroom provider: %s", raw)
+	}
+	if !strings.Contains(raw, `"baseURL":"http://127.0.0.1:8787/v1"`) && !strings.Contains(raw, `"baseURL": "http://127.0.0.1:8787/v1"`) {
+		t.Fatalf("BYOK baseURL not wired: %s", raw)
 	}
 	raw, _ = util.ReadFileSafe(cfgPath)
-	if strings.Count(raw, `"headroom"`) != 1 {
-		t.Fatalf("registry provider id count = %d, want 1: %s", strings.Count(raw, `"headroom"`), raw)
+	if strings.Contains(raw, `"headroom"`) {
+		t.Fatalf("must not touch opencode.json: %s", raw)
 	}
 }
 
-func TestConfigureOpenCodeProxyEnabledProvidersAbsentNoOp(t *testing.T) {
+func TestConfigureOpenCodeProxyNoBYOKNoOp(t *testing.T) {
 	opencodeProxyTestHome(t)
 	cfgPath := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
 	if err := util.EnsureDir(filepath.Dir(cfgPath)); err != nil {
 		t.Fatal(err)
 	}
-	if err := util.WriteFile(cfgPath, `{"theme":"dark"}`); err != nil {
+	orig := `{"theme":"dark"}`
+	if err := util.WriteFile(cfgPath, orig); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureOpenCodeProxy(); !changed {
-		t.Fatal("provider configure did not change config")
+	if changed, _ := ConfigureOpenCodeProxy(); changed {
+		t.Fatal("no BYOK must be no-op")
 	}
 	raw, _ := util.ReadFileSafe(cfgPath)
-	if strings.Contains(raw, "enabled_providers") {
-		t.Fatalf("absent enabled_providers was created: %s", raw)
+	if raw != orig {
+		t.Fatalf("config mutated without BYOK: %s", raw)
 	}
 }
 
-func TestConfigureOpenCodeProxyMalformedSeparateGateNoOp(t *testing.T) {
+func TestConfigureOpenCodeProxyMalformedGateNoOp(t *testing.T) {
 	opencodeProxyTestHome(t)
 	cfgPath := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
 	if err := util.EnsureDir(filepath.Dir(cfgPath)); err != nil {
@@ -145,8 +150,8 @@ func TestConfigureOpenCodeProxyMalformedSeparateGateNoOp(t *testing.T) {
 	if err := util.WriteFile(gatePath, malformed); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureOpenCodeProxy(); !changed {
-		t.Fatal("provider configure did not change registry")
+	if changed, _ := ConfigureOpenCodeProxy(); changed {
+		t.Fatal("malformed gate must not change")
 	}
 	raw, _ := util.ReadFileSafe(gatePath)
 	if raw != malformed {

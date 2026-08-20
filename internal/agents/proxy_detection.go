@@ -98,6 +98,9 @@ func DetectProxy(id string) ProxyDetection {
 	case "codex":
 		return proxyDetection(id, "manual configuration not observable", ProxyStateUnknown)
 	case "opencode":
+		if openCodeBYOKWired() {
+			return proxyDetection(id, "managed (byok baseURL through proxy)", ProxyStateManaged)
+		}
 		spec := ProviderSpecActive()
 		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(id), spec))
 	case "kilo":

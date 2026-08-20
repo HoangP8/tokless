@@ -408,24 +408,25 @@ func opencodeProxyTestHome(t *testing.T) {
 }
 
 func TestOpenCodeProxyScenarios(t *testing.T) {
+	byokSeed := `{"$schema": "https://opencode.ai/config.json", "theme": "dark", "provider": {"prov-a": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "https://api.provider-a.test/v1", "apiKey": "prov-a-key"}, "models": {"m1": {"name": "M1"}}}}}`
 	cases := []proxyScenario{
-		{name: "inject writes headroom provider", seed: openCodeProxySeed(false),
+		{name: "wire rewrites BYOK baseURL, no headroom inject", seed: byokSeed,
 			wantChange: true, wantWired: true, wantContains: []string{
-				`"headroom"`,
-				`"npm": "@ai-sdk/openai-compatible"`,
+				`"prov-a"`,
 				`"baseURL": "http://127.0.0.1:8787/v1"`,
-				`"gpt-4o"`,
 				`"theme": "dark"`,
-			}, wantAbsent: []string{`"apibox"`, `"xkiro"`, `"opencode-go"`}},
-		{name: "second inject idempotent", seed: openCodeProxySeed(false), preConfigure: true,
+			}, wantAbsent: []string{`"headroom"`, `"provider-a.test"`}},
+		{name: "second inject idempotent", seed: byokSeed, preConfigure: true,
 			wantChange: false, wantWired: true},
+		{name: "no BYOK no-op", seed: openCodeProxySeed(false),
+			wantChange: false, wantWired: false},
 		{name: "adds missing providers, refuses differing entry", seed: openCodeProxySeed(true),
 			wantChange: false, wantWired: false, keepContains: []string{"User Proxy", "user.example"}},
 		{name: "refuses non-map provider", seed: `{"provider": "junk"}
 `,
 			wantChange: false, wantWired: false, keepContains: []string{`"junk"`}},
-		{name: "remove deletes only matching", seed: openCodeProxySeed(false), preConfigure: true,
-			remove: true, wantRemoved: true, wantWired: false},
+		{name: "remove restores BYOK baseURL", seed: byokSeed, preConfigure: true,
+			remove: true, wantRemoved: true, wantWired: false, wantContains: []string{"provider-a.test"}, wantAbsent: []string{"127.0.0.1:8787"}},
 		{name: "remove leaves differing value", seed: openCodeProxySeed(true),
 			remove: true, wantRemoved: false, wantWired: false, keepContains: []string{"User Proxy", "user.example"}},
 		{name: "absent file not created", seed: "", absent: true,

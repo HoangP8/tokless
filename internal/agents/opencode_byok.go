@@ -311,37 +311,181 @@ func rewriteProviderBaseURL(path, id, baseURL string) bool {
 		return false
 	}
 	if cur != "" {
-		if next, n := replaceProviderBaseURL(raw, cur, baseURL); n > 0 {
+		if next, n := replaceProviderBaseURLScoped(raw, id, cur, baseURL); n > 0 {
 			return util.WriteFile(path, next) == nil
 		}
+		return false
 	}
-	opts, _ := m.Get("options")
-	om, _ := opts.(*util.OrderedMap)
-	if om == nil {
-		om = util.NewOrderedMap()
-		m.Set("options", om)
-	}
-	om.Set("baseURL", baseURL)
-	return util.WriteFile(path, util.StringifyJSON(cfg)) == nil
+	return false
 }
 
 func replaceProviderBaseURL(raw, oldURL, newURL string) (string, int) {
 	if oldURL == "" || oldURL == newURL {
 		return raw, 0
 	}
-	n := 0
-	for _, key := range []string{"baseURL", "baseUrl"} {
-		for _, sp := range []string{`: "`, `:"`} {
-			from := `"` + key + `"` + sp + oldURL + `"`
-			to := `"` + key + `"` + sp + newURL + `"`
-			if strings.Contains(raw, from) {
-				raw = strings.Replace(raw, from, to, 1)
-				n++
-				return raw, n
+	return replaceProviderBaseURLScoped(raw, "", oldURL, newURL)
+}
+
+func replaceProviderBaseURLScoped(raw, id, oldURL, newURL string) (string, int) {
+	if id != "" {
+		s, e, ok := providerBlockBounds(raw, id)
+		if !ok {
+			return raw, 0
+		}
+		block := raw[s:e]
+		nb, n := replaceBaseURLInBlock(block, oldURL, newURL)
+		if n == 0 {
+			return raw, 0
+		}
+		return raw[:s] + nb + raw[e:], n
+	}
+	for _, probe := range providerBlockCandidates(raw, oldURL) {
+		s, e, ok := providerBlockBounds(raw, probe)
+		if !ok {
+			continue
+		}
+		block := raw[s:e]
+		if !strings.Contains(block, `"`+oldURL+`"`) {
+			continue
+		}
+		nb, n := replaceBaseURLInBlock(block, oldURL, newURL)
+		if n == 0 {
+			continue
+		}
+		return raw[:s] + nb + raw[e:], n
+	}
+	b, n := replaceBaseURLInBlock(raw, oldURL, newURL)
+	if n == 0 {
+		return raw, 0
+	}
+	return b, n
+}
+
+func providerBlockCandidates(raw, oldURL string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range extractProviderIDs(raw) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		s, e, ok := providerBlockBounds(raw, id)
+		if !ok {
+			continue
+		}
+		if strings.Contains(raw[s:e], `"`+oldURL+`"`) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func extractProviderIDs(raw string) []string {
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return nil
+	}
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		return nil
+	}
+	return providers.Keys()
+}
+
+func providerBlockBounds(raw, id string) (int, int, bool) {
+	key := `"` + id + `"`
+	pos := -1
+	search := 0
+	for {
+		idx := strings.Index(raw[search:], key)
+		if idx == -1 {
+			return 0, 0, false
+		}
+		abs := search + idx
+		after := strings.TrimLeft(raw[abs+len(key):], " \t\n\r")
+		if strings.HasPrefix(after, ":") {
+			pos = abs
+			break
+		}
+		search = abs + len(key)
+		if search >= len(raw) {
+			return 0, 0, false
+		}
+	}
+	colon := strings.Index(raw[pos+len(key):], ":")
+	if colon == -1 {
+		return 0, 0, false
+	}
+	braceRel := strings.Index(raw[pos+len(key)+colon:], "{")
+	if braceRel == -1 {
+		return 0, 0, false
+	}
+	start := pos + len(key) + colon + braceRel
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(raw); i++ {
+		c := raw[i]
+		if inStr {
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			continue
+		}
+		if c == '{' {
+			depth++
+		} else if c == '}' {
+			depth--
+			if depth == 0 {
+				return start, i + 1, true
 			}
 		}
 	}
-	return raw, 0
+	return 0, 0, false
+}
+
+func replaceBaseURLInBlock(block, oldURL, newURL string) (string, int) {
+	for _, key := range []string{"baseURL", "baseUrl"} {
+		search := `"` + key + `"`
+		idx := strings.Index(block, search)
+		if idx == -1 {
+			continue
+		}
+		rest := block[idx+len(search):]
+		colonIdx := strings.Index(rest, ":")
+		if colonIdx == -1 {
+			continue
+		}
+		afterColon := rest[colonIdx+1:]
+		q1Rel := strings.Index(afterColon, `"`)
+		if q1Rel == -1 {
+			continue
+		}
+		q1Abs := idx + len(search) + colonIdx + 1 + q1Rel
+		q2Rel := strings.Index(block[q1Abs+1:], `"`)
+		if q2Rel == -1 {
+			continue
+		}
+		q2Abs := q1Abs + 1 + q2Rel
+		cur := block[q1Abs+1 : q2Abs]
+		if cur != oldURL {
+			continue
+		}
+		return block[:q1Abs+1] + newURL + block[q2Abs:], 1
+	}
+	return block, 0
 }
 
 // --- stash: original baseURL per provider id (no secrets) ---

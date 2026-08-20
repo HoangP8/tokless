@@ -385,7 +385,11 @@ func TestProxyConfiguratorsRefusePersistenceFailure(t *testing.T) {
 		remove    func() bool
 	}{
 		{"claude", claudeProxyTestHome, func() string { return util.ClaudeCodePaths().Settings }, ConfigureClaudeProxy, RemoveClaudeProxy},
-		{"opencode", opencodeProxyTestHome, func() string { return util.OpenCodePathsResolved().Config }, ConfigureOpenCodeProxy, RemoveOpenCodeProxy},
+		{"opencode", func(t *testing.T) {
+			opencodeProxyTestHome(t)
+			seed := `{"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"k"},"models":{}}}}`
+			_ = util.WriteFile(util.OpenCodePathsResolved().Config, seed)
+		}, func() string { return util.OpenCodePathsResolved().Config }, ConfigureOpenCodeProxy, RemoveOpenCodeProxy},
 		{"kilo", kiloProxyTestHome, func() string { return util.KiloPathsResolved().Config }, ConfigureKiloProxy, RemoveKiloProxy},
 		{"pi", piProxyTestHome, func() string { return filepath.Join(piAgentDir(), "models.json") }, ConfigurePiProxy, RemovePiProxy},
 		{"droid", droidProxyTestHome, droidSettingsFile, ConfigureDroidProxy, RemoveDroidProxy},
@@ -393,9 +397,6 @@ func TestProxyConfiguratorsRefusePersistenceFailure(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.home(t)
-			if err := util.WriteFile(tc.path(), "{}"); err != nil {
-				t.Fatal(err)
-			}
 			util.SetWriteFileOverride(func(string, string) error { return os.ErrPermission })
 			t.Cleanup(func() { util.SetWriteFileOverride(nil) })
 			if changed, _ := tc.configure(); changed {
