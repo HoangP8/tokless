@@ -3,8 +3,6 @@ package agents
 import (
 	"os"
 	"strings"
-
-	"github.com/HoangP8/tokless/internal/util"
 )
 
 const proxyProviderEnv = "TOKLESS_PROXY_PROVIDER"
@@ -42,17 +40,8 @@ func DefaultProviderSpec() ProviderSpec {
 	}
 }
 
-// ProviderSpecActive returns the selected provider, defaulting to the
-// byte-compatible headroom spec.
+// ProviderSpecActive returns the managed headroom proxy identity.
 func ProviderSpecActive() ProviderSpec {
-	if spec := exampleProviderSpec(os.Getenv(proxyProviderEnv)); spec.ID != "" {
-		return spec
-	}
-	if st, ok := util.ReadProxyRuntime(); ok {
-		if spec := exampleProviderSpec(st.Provider); spec.ID != "" {
-			return spec
-		}
-	}
 	return DefaultProviderSpec()
 }
 

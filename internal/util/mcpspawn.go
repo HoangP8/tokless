@@ -255,7 +255,7 @@ func toklessRunMcpCommand() string {
 	if err != nil {
 		return "tokless"
 	}
-	if isGoTestExecutable(self) {
+	if IsGoTestExecutable(self) {
 		return whichToklessOrBare()
 	}
 	return self

@@ -174,6 +174,9 @@ func run() int {
 	registerAgents()
 	registerTools()
 	ensureProcessPath()
+	if len(os.Args) >= 2 && os.Args[1] == "__route-proxy-serve" {
+		return headroompkg.RunRouteProxyServe()
+	}
 	if isSessionBootArg(os.Args[1:]) {
 		ensureSessionBoot()
 	}

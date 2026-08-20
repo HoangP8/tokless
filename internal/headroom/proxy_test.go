@@ -637,6 +637,13 @@ func TestProxyArgsMatchRecorded(t *testing.T) {
 	if !proxyArgsMatchRecorded(8787) {
 		t.Fatal("matching record not recognized")
 	}
+	full := append([]string{bin}, want...)
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5357, Executable: bin, Args: full, Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	if !proxyArgsMatchRecorded(8787) {
+		t.Fatal("launcher-prefixed ownership args must match bare proxyArgs")
+	}
 	stale := append(append([]string{}, want[:len(want)-1]...), "bogus")
 	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5357, Executable: bin, Args: stale, Start: "start"}); err != nil {
 		t.Fatal(err)

@@ -413,15 +413,13 @@ func TestOpenCodeProxyScenarios(t *testing.T) {
 			wantChange: true, wantWired: true, wantContains: []string{
 				`"headroom"`,
 				`"npm": "@ai-sdk/openai-compatible"`,
-				`"name": "Headroom Proxy"`,
 				`"baseURL": "http://127.0.0.1:8787/v1"`,
-				`"gpt-4.1"`,
-				`"context": 1048576`,
+				`"gpt-4o"`,
 				`"theme": "dark"`,
-			}},
+			}, wantAbsent: []string{`"apibox"`, `"xkiro"`, `"opencode-go"`}},
 		{name: "second inject idempotent", seed: openCodeProxySeed(false), preConfigure: true,
 			wantChange: false, wantWired: true},
-		{name: "refuses differing provider entry", seed: openCodeProxySeed(true),
+		{name: "adds missing providers, refuses differing entry", seed: openCodeProxySeed(true),
 			wantChange: false, wantWired: false, keepContains: []string{"User Proxy", "user.example"}},
 		{name: "refuses non-map provider", seed: `{"provider": "junk"}
 `,
@@ -731,6 +729,7 @@ type proxyScenario struct {
 	wantRemoved  bool
 	wantWired    bool
 	wantContains []string
+	wantAbsent   []string
 	keepContains []string
 }
 
@@ -780,6 +779,17 @@ func runProxyScenarios(t *testing.T, cases []proxyScenario,
 				for _, want := range c.wantContains {
 					if !strings.Contains(raw, want) {
 						t.Fatalf("missing %q in:\n%s", want, raw)
+					}
+				}
+			}
+			if len(c.wantAbsent) > 0 {
+				raw, ok := util.ReadFileSafe(path)
+				if !ok {
+					t.Fatalf("cannot read %s", path)
+				}
+				for _, absent := range c.wantAbsent {
+					if strings.Contains(raw, absent) {
+						t.Fatalf("unexpected %q in:\n%s", absent, raw)
 					}
 				}
 			}

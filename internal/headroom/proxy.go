@@ -53,19 +53,30 @@ func ProxyPort() int         { return util.HeadroomProxyPort() }
 func ProxyURL() string       { return util.HeadroomProxyURL() }
 func ProxyOpenAIURL() string { return util.HeadroomProxyOpenAIURL() }
 
-func ProxyUpstreamURLs() (anthropic, openai string) {
+// realUpstreamURLs are the provider hosts headroom (or the key-router fallback)
+// should reach — never the local route proxy itself.
+func realUpstreamURLs() (anthropic, openai string) {
 	anthropic, openai = "https://api.anthropic.com", "https://api.openai.com"
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_ANTHROPIC_URL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_ANTHROPIC_URL")); v != "" && !isLocalRouteURL(v) {
 		anthropic = v
-	} else if st, ok := util.ReadProxyRuntime(); ok && st.AnthropicURL != "" {
+	} else if st, ok := util.ReadProxyRuntime(); ok && st.AnthropicURL != "" && !isLocalRouteURL(st.AnthropicURL) {
 		anthropic = st.AnthropicURL
 	}
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_OPENAI_URL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_OPENAI_URL")); v != "" && !isLocalRouteURL(v) {
 		openai = v
-	} else if st, ok := util.ReadProxyRuntime(); ok && st.OpenAIURL != "" {
+	} else if st, ok := util.ReadProxyRuntime(); ok && st.OpenAIURL != "" && !isLocalRouteURL(st.OpenAIURL) {
 		openai = st.OpenAIURL
 	}
 	return
+}
+
+// ProxyUpstreamURLs returns the URLs passed to `headroom proxy --*-api-url`.
+func ProxyUpstreamURLs() (anthropic, openai string) {
+	if RouteCount() > 0 {
+		u := RouteProxyURL()
+		return u, u
+	}
+	return realUpstreamURLs()
 }
 
 // ProxyUpstreamGeminiURLs returns optional upstream overrides for the Gemini
@@ -109,11 +120,10 @@ func ResolveHeadroomBin() string {
 func ProxyRunning() bool { return proxyLiveZProbe(proxyProbeTimeout) }
 
 // EnsureProxyUp starts the daemon when it is not already running, silently.
+// Reloads the BYOK route table so a warm daemon still matches current keys.
+// Quiet so hook/MCP stdout (JSON protocols) stays clean.
 func EnsureProxyUp() {
-	if ProxyRunning() {
-		return
-	}
-	_ = StartProxy()
+	util.WithQuiet(func() { _ = StartProxy() })
 }
 
 func proxyLiveZ(timeout time.Duration) bool {
@@ -173,8 +183,12 @@ func acquireProxyStartLock(now func() time.Time) (func(), error) {
 }
 
 // proxyArgsMatchRecorded reports whether the persisted ownership record (when
-// present) lists exactly the argv tokless would launch today. An absent
-// record means a hand-started headroom proxy — leave it alone.
+// present) lists the argv tokless would launch today. An absent record means a
+// hand-started headroom proxy — leave it alone.
+//
+// Recorded Args may be either the bare subcommand argv (proxyArgs) or the
+// full process argv with the headroom launcher path prepended (what /proc
+// reports for a uv/python-wrapped headroom binary). Both forms match.
 func proxyArgsMatchRecorded(port int) bool {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
@@ -185,18 +199,34 @@ func proxyArgsMatchRecorded(port int) bool {
 	if err := json.Unmarshal([]byte(raw), &record); err != nil || len(record.Args) == 0 {
 		return true
 	}
-	if len(record.Args) != len(proxyArgs(port)) {
-		return false
+	want := proxyArgs(port)
+	if equalStrings(record.Args, want) {
+		return true
 	}
-	for i := range record.Args {
-		if record.Args[i] != proxyArgs(port)[i] {
-			return false
-		}
+	return len(record.Args) > len(want) && equalStrings(record.Args[len(record.Args)-len(want):], want)
+}
+
+func ensureRouteProxy() error {
+	_ = LoadRouteMap()
+	if RouteCount() == 0 {
+		return nil
 	}
-	return true
+	// Fallbacks must be in the environment before the detached worker is spawned.
+	a, o := realUpstreamURLs()
+	_ = os.Setenv("TOKLESS_ROUTE_FALLBACK_ANTHROPIC", a)
+	_ = os.Setenv("TOKLESS_ROUTE_FALLBACK_OPENAI", o)
+	if err := StartRouteProxy(); err != nil {
+		return fmt.Errorf("byok route proxy: %w", err)
+	}
+	return nil
 }
 
 func StartProxy() error {
+	// Key-router first when BYOK routes exist so headroom's dual upstream
+	// slots can both point at one in-process router (no N daemons).
+	if err := ensureRouteProxy(); err != nil {
+		return err
+	}
 	port := ProxyPort()
 	args := proxyArgs(port)
 	// Fast path: already up with matching args. No lock needed — this is the
@@ -220,9 +250,14 @@ func StartProxy() error {
 			return nil
 		}
 		util.L.Sub("headroom proxy running with stale args — restarting (" + ProxyURL() + ")")
-		if err := StopProxy(); err != nil {
+		// Kill headroom only; keep (or re-up) the key-router for the respawn.
+		if err := stopHeadroomDaemon(); err != nil {
 			return err
 		}
+		if err := ensureRouteProxy(); err != nil {
+			return err
+		}
+		args = proxyArgs(port)
 	}
 	bin := ResolveHeadroomBin()
 	if bin == "" {
@@ -301,8 +336,10 @@ func verifyIdentityWithRetry(pid int, bin string, args []string) (processIdentit
 // setup without requiring the original env vars. The provider is only updated
 // when the env selector is set; otherwise the previously persisted identity is
 // kept so a clean-shell re-up does not silently resort to the default.
+// Real provider hosts are stored (not the local key-router) so a later up can
+// rebuild the route chain.
 func persistProxyRuntime(port int) error {
-	anthropic, openai := ProxyUpstreamURLs()
+	anthropic, openai := realUpstreamURLs()
 	p := util.ProxyRuntime{
 		Port:         port,
 		AnthropicURL: anthropic,
@@ -320,7 +357,8 @@ func persistProxyRuntime(port int) error {
 // string-stable here so headroom's proxy never depends on the agents package.
 func providerEnvVar() string { return "TOKLESS_PROXY_PROVIDER" }
 
-func StopProxy() error {
+// stopHeadroomDaemon stops the headroom process only (leaves the key-router up).
+func stopHeadroomDaemon() error {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
 	if !ok {
@@ -365,6 +403,13 @@ func StopProxy() error {
 		proxySleep(proxyPollInterval)
 	}
 	return fmt.Errorf("headroom proxy did not stop (pid %d)", record.PID)
+}
+
+// StopProxy stops headroom first (it may still call the key-router), then the router.
+func StopProxy() error {
+	err := stopHeadroomDaemon()
+	_ = StopRouteProxy()
+	return err
 }
 
 // clearProxyRuntime drops the persisted runtime after daemon resources are gone.

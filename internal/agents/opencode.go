@@ -144,25 +144,46 @@ func openCodeProxyProviderBlockFor(baseURL string, spec ProviderSpec) *util.Orde
 	return block
 }
 
-// ConfigureOpenCodeProxy merges the proxy provider into the top-level
-// `provider` object of the opencode config.
+func openCodeProxySpecs() []ProviderSpec {
+	return []ProviderSpec{DefaultProviderSpec()}
+}
+
+// ConfigureOpenCodeProxy merges every registered proxy provider into the
+// top-level `provider` object, then rewrites user BYOK baseURLs through
+// headroom (key→host route table).
 func ConfigureOpenCodeProxy() (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
+	if byokChanged, _ := wireOpenCodeBYOK(); byokChanged {
+		changed = true
+		file = filepath.Join(p.Dir, "config.json")
+	}
 	raw, ok := util.ReadFileSafe(p.Config)
 	if !ok {
+		if changed {
+			return true, file
+		}
 		return false, p.Config
 	}
 	if util.HasJSONCComments(raw) {
+		if changed {
+			return true, file
+		}
 		return false, p.Config
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if changed {
+			return true, file
+		}
 		return false, p.Config
 	}
 	var providers *util.OrderedMap
 	if v, ok := cfg.Get("provider"); ok {
 		em, isMap := v.(*util.OrderedMap)
 		if !isMap {
+			if changed {
+				return true, file
+			}
 			return false, p.Config
 		}
 		providers = em
@@ -170,81 +191,113 @@ func ConfigureOpenCodeProxy() (changed bool, file string) {
 		providers = util.NewOrderedMap()
 		cfg.Set("provider", providers)
 	}
-	spec := ProviderSpecActive()
-	entry := openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec)
-	if enabled, ok := cfg.Get("enabled_providers"); ok {
-		providersList, ok := enabled.([]any)
-		if !ok {
-			return false, p.Config
-		}
-		present := false
-		for _, value := range providersList {
-			if value == spec.Key {
-				present = true
-				break
-			}
-		}
-		if !present {
-			cfg.Set("enabled_providers", append(providersList, spec.Key))
-			changed = true
-		}
-	}
-	if existing, ok := providers.Get(spec.Key); ok {
-		if util.StringifyJSON(existing) == util.StringifyJSON(entry) {
-			if !changed {
+	base := ProxyEndpointFor("opencode")
+	exampleChanged := false
+	for _, spec := range openCodeProxySpecs() {
+		entry := openCodeProxyProviderBlockFor(base, spec)
+		if enabled, ok := cfg.Get("enabled_providers"); ok {
+			providersList, ok := enabled.([]any)
+			if !ok {
+				if changed {
+					return true, file
+				}
 				return false, p.Config
 			}
-		} else {
+			present := false
+			for _, value := range providersList {
+				if value == spec.Key {
+					present = true
+					break
+				}
+			}
+			if !present {
+				cfg.Set("enabled_providers", append(providersList, spec.Key))
+				exampleChanged = true
+			}
+		}
+		if existing, ok := providers.Get(spec.Key); ok {
+			if util.StringifyJSON(existing) != util.StringifyJSON(entry) {
+				continue
+			}
+			continue
+		}
+		providers.Set(spec.Key, entry)
+		exampleChanged = true
+	}
+	if exampleChanged {
+		if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
+			if changed {
+				return true, file
+			}
 			return false, p.Config
 		}
-	} else {
-		providers.Set(spec.Key, entry)
 		changed = true
+		file = p.Config
+		for _, spec := range openCodeProxySpecs() {
+			gateChanged, _ := ensureOpenCodeEnabledProvider(filepath.Join(p.Dir, "config.json"), spec.Key)
+			changed = changed || gateChanged
+		}
 	}
-	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
+	if !changed {
 		return false, p.Config
 	}
-	gateChanged, _ := ensureOpenCodeEnabledProvider(filepath.Join(p.Dir, "config.json"), spec.Key)
-	changed = changed || gateChanged
-	return true, p.Config
+	if file == "" {
+		file = p.Config
+	}
+	return true, file
 }
 
-// RemoveOpenCodeProxy deletes the proxy provider only when it still
-// matches what tokless set.
+// RemoveOpenCodeProxy deletes every managed proxy provider that still matches
+// what tokless set, and restores user BYOK baseURLs.
 func RemoveOpenCodeProxy() bool {
+	byokRemoved := unwireOpenCodeBYOK()
 	p := util.OpenCodePathsResolved()
 	raw, ok := util.ReadFileSafe(p.Config)
 	if !ok {
-		return false
+		return byokRemoved
 	}
 	if util.HasJSONCComments(raw) {
-		return false
+		return byokRemoved
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
-		return false
+		return byokRemoved
 	}
 	providers, ok := mapChild(cfg, "provider")
 	if !ok {
-		return false
+		return byokRemoved
 	}
-	spec := ProviderSpecActive()
-	existing, ok := providers.Get(spec.Key)
-	if !ok {
-		return false
+	base := ProxyEndpointFor("opencode")
+	exampleRemoved := false
+	for _, spec := range openCodeProxySpecs() {
+		existing, ok := providers.Get(spec.Key)
+		if !ok {
+			continue
+		}
+		if util.StringifyJSON(existing) != util.StringifyJSON(openCodeProxyProviderBlockFor(base, spec)) {
+			continue
+		}
+		providers.Delete(spec.Key)
+		exampleRemoved = true
 	}
-	if util.StringifyJSON(existing) != util.StringifyJSON(openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec)) {
-		return false
+	if !exampleRemoved {
+		return byokRemoved
 	}
-	providers.Delete(spec.Key)
 	if providers.Len() == 0 {
 		cfg.Delete("provider")
 	}
-	return util.WriteFile(p.Config, util.StringifyJSON(cfg)) == nil
+	if util.WriteFile(p.Config, util.StringifyJSON(cfg)) != nil {
+		return false
+	}
+	return true
 }
 
-// OpenCodeProxyWired reports whether the proxy provider is set to baseURL.
+// OpenCodeProxyWired reports whether at least one registered provider block is
+// managed at the proxy endpoint, or any user BYOK baseURL is routed through it.
 func OpenCodeProxyWired() bool {
+	if openCodeBYOKWired() {
+		return true
+	}
 	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
 	if !ok {
 		return false
@@ -257,12 +310,17 @@ func OpenCodeProxyWired() bool {
 	if !ok {
 		return false
 	}
-	spec := ProviderSpecActive()
-	existing, ok := providers.Get(spec.Key)
-	if !ok {
-		return false
+	base := ProxyEndpointFor("opencode")
+	for _, spec := range openCodeProxySpecs() {
+		existing, ok := providers.Get(spec.Key)
+		if !ok {
+			continue
+		}
+		if util.StringifyJSON(existing) == util.StringifyJSON(openCodeProxyProviderBlockFor(base, spec)) {
+			return true
+		}
 	}
-	return util.StringifyJSON(existing) == util.StringifyJSON(openCodeProxyProviderBlockFor(ProxyEndpointFor("opencode"), spec))
+	return false
 }
 
 func notDisabled(m *util.OrderedMap) bool {

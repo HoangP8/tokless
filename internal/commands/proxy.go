@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"strconv"
+
 	"github.com/HoangP8/tokless/internal/agents"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
@@ -67,6 +69,9 @@ func RunProxyUp(opts InitOptions) int {
 		util.L.Err("headroom binary not found — run `tokless` first to install headroom")
 		return 1
 	}
+	if n := agents.SyncOpenCodeBYOKRoutes(); n > 0 {
+		util.L.Sub("byok routes: " + strconv.Itoa(n))
+	}
 	if err := headroompkg.StartProxy(); err != nil {
 		util.L.Err(err.Error())
 		return 1
@@ -84,6 +89,10 @@ func RunProxyUp(opts InitOptions) int {
 			util.L.Err(id + ": not wired (differing existing config value, or write failed)")
 			failed++
 		}
+	}
+	if err := headroompkg.StartProxy(); err != nil {
+		util.L.Err(err.Error())
+		return 1
 	}
 	util.L.Raw("")
 	if failed > 0 {

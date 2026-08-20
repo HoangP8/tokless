@@ -23,6 +23,17 @@ func SetVerbose(v bool) {
 
 func SetQuiet(q bool) { L.quiet = q }
 
+// Quiet reports whether informational logs are suppressed.
+func Quiet() bool { return L.quiet }
+
+// WithQuiet runs fn with informational logs suppressed, then restores prior state.
+func WithQuiet(fn func()) {
+	was := L.quiet
+	L.quiet = true
+	defer func() { L.quiet = was }()
+	fn()
+}
+
 func (l *logger) Info(msg string) { fmt.Println(C.Cyan(Sym.Info) + " " + msg) }
 func (l *logger) Ok(msg string)   { fmt.Println(C.Green(Sym.Check) + " " + msg) }
 func (l *logger) Warn(msg string) { fmt.Println(C.Yellow(Sym.Warn) + " " + msg) }

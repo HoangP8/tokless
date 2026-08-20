@@ -56,13 +56,14 @@ func ToklessAbs() string {
 	if strings.ContainsAny(exe, " \t") {
 		return whichToklessOrBare()
 	}
-	if isGoTestExecutable(exe) {
+	if IsGoTestExecutable(exe) {
 		return whichToklessOrBare()
 	}
 	return exe
 }
 
-func isGoTestExecutable(exe string) bool {
+// IsGoTestExecutable reports go test binaries and go-build cache paths.
+func IsGoTestExecutable(exe string) bool {
 	base := strings.ToLower(filepath.Base(exe))
 	return strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe") || strings.Contains(exe, string(filepath.Separator)+"go-build")
 }
@@ -75,7 +76,7 @@ func ToklessAbsStrict() string {
 		if resolved, err := filepath.EvalSymlinks(exe); err == nil && resolved != "" {
 			exe = resolved
 		}
-		if !strings.ContainsAny(exe, " \t") && !isGoTestExecutable(exe) {
+		if !strings.ContainsAny(exe, " \t") && !IsGoTestExecutable(exe) {
 			return exe
 		}
 	}
