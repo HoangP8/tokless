@@ -52,6 +52,27 @@ func headroomFailureFor(stage string, result util.ExecResult, nativeRisk bool) e
 	return fmt.Errorf("headroom %s failed%s%s", stage, detail, hint)
 }
 
+// headroomUVBootstrapCmd picks the official Astral uv installer for the OS.
+// Unix: curl preferred, wget fallback. Windows: powershell irm|iex.
+// UV_INSTALL_DIR / UV_NO_MODIFY_PATH must already be in the process env (see HeadroomUVBootstrapEnv).
+func headroomUVBootstrapCmd(windows, haveCurl, haveWget bool) (string, []string, error) {
+	if windows {
+		return "powershell", []string{
+			"-NoProfile",
+			"-ExecutionPolicy", "Bypass",
+			"-Command",
+			"irm https://astral.sh/uv/install.ps1 | iex",
+		}, nil
+	}
+	if haveCurl {
+		return "sh", []string{"-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"}, nil
+	}
+	if haveWget {
+		return "sh", []string{"-c", "wget -qO- https://astral.sh/uv/install.sh | sh"}, nil
+	}
+	return "", nil, fmt.Errorf("need curl or wget to bootstrap uv")
+}
+
 func headroomUV() (string, error) {
 	p := util.HeadroomPathsResolved()
 	if util.Exists(p.UV) && headroomUVWorks(p.UV) {
@@ -63,16 +84,11 @@ func headroomUV() (string, error) {
 	if err := util.EnsureDir(filepath.Dir(p.UV)); err != nil {
 		return "", err
 	}
-	var command string
-	var args []string
-	if util.IsWin {
-		command = "powershell"
-		args = []string{"-ExecutionPolicy", "ByPass", "-c", "$env:UV_INSTALL_DIR=$env:TOKLESS_HEADROOM_UV_INSTALL_DIR;$env:UV_NO_MODIFY_PATH=1;irm https://astral.sh/uv/install.ps1 | iex"}
-	} else {
-		command = "sh"
-		args = []string{"-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"}
+	command, args, err := headroomUVBootstrapCmd(util.IsWin, util.Which("curl") != "", util.Which("wget") != "")
+	if err != nil {
+		return "", err
 	}
-	env := append(util.HeadroomUVBootstrapEnv(), "TOKLESS_HEADROOM_UV_INSTALL_DIR="+filepath.Dir(p.UV))
+	env := util.HeadroomUVBootstrapEnv()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	result := runHeadroom(command, args, env, ctx)

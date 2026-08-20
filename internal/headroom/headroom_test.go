@@ -27,6 +27,57 @@ func TestHeadroomInstallArgsAndNativeRisk(t *testing.T) {
 	}
 }
 
+func TestHeadroomUVBootstrapCmdAllOS(t *testing.T) {
+	cmd, args, err := headroomUVBootstrapCmd(true, false, false)
+	if err != nil || cmd != "powershell" {
+		t.Fatalf("windows = %q %v err=%v", cmd, args, err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "install.ps1"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("windows args missing %q: %v", want, args)
+		}
+	}
+	// UV_INSTALL_DIR comes from process env, not the PS one-liner.
+	if strings.Contains(joined, "TOKLESS_HEADROOM_UV") || strings.Contains(joined, "$env:UV_INSTALL_DIR") {
+		t.Fatalf("windows must not re-set UV_INSTALL_DIR in script: %v", args)
+	}
+
+	cmd, args, err = headroomUVBootstrapCmd(false, true, true)
+	if err != nil || cmd != "sh" || !strings.Contains(strings.Join(args, " "), "curl -LsSf") {
+		t.Fatalf("unix curl preferred = %q %v err=%v", cmd, args, err)
+	}
+	cmd, args, err = headroomUVBootstrapCmd(false, false, true)
+	if err != nil || cmd != "sh" || !strings.Contains(strings.Join(args, " "), "wget -qO-") {
+		t.Fatalf("unix wget fallback = %q %v err=%v", cmd, args, err)
+	}
+	if _, _, err := headroomUVBootstrapCmd(false, false, false); err == nil || !strings.Contains(err.Error(), "curl or wget") {
+		t.Fatalf("unix neither = %v", err)
+	}
+}
+
+func TestHeadroomUVBootstrapEnvPinsInstallDir(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	p := util.HeadroomPathsResolved()
+	env := util.HeadroomUVBootstrapEnv()
+	wantInstall := "UV_INSTALL_DIR=" + filepath.Dir(p.UV)
+	wantNoPath := "UV_NO_MODIFY_PATH=1"
+	var gotInstall, gotNoPath bool
+	for _, e := range env {
+		if e == wantInstall {
+			gotInstall = true
+		}
+		if e == wantNoPath {
+			gotNoPath = true
+		}
+	}
+	if !gotInstall || !gotNoPath {
+		t.Fatalf("bootstrap env = %v want %q and %q", env, wantInstall, wantNoPath)
+	}
+}
+
 func TestHeadroomInstallUsesManagedUVState(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
