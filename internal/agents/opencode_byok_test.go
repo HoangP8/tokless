@@ -15,22 +15,21 @@ func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
 	if err := util.EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	// Real BYOK lives in config.json (OpenCode loads it first).
 	cfg := `{
   "provider": {
-    "mustc": {
+    "prov-a": {
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://htmustc.id.vn/v1",
-        "apiKey": "mustc-secret-key"
+        "baseURL": "https://api.provider-a.test/v1",
+        "apiKey": "prov-a-test-key"
       },
-      "models": {"gpt-5.6-luna": {"name": "Luna"}}
+      "models": {"m1": {"name": "M1"}}
     },
-    "nvidia_nim": {
+    "prov-b": {
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "https://integrate.api.nvidia.com/v1",
-        "apiKey": "nvapi-test-key"
+        "baseURL": "https://api.provider-b.test/v1",
+        "apiKey": "prov-b-test-key"
       }
     }
   }
@@ -38,7 +37,6 @@ func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
 	if err := util.WriteFile(filepath.Join(dir, "config.json"), cfg); err != nil {
 		t.Fatal(err)
 	}
-	// Minimal opencode.json so OpenCodePathsResolved picks a file.
 	if err := util.WriteFile(filepath.Join(dir, "opencode.json"), `{"$schema":"https://opencode.ai/config.json"}`); err != nil {
 		t.Fatal(err)
 	}
@@ -63,25 +61,23 @@ func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
 	if !strings.Contains(raw, `"baseURL": "http://127.0.0.1:8787/v1"`) {
 		t.Fatalf("baseURL not rewritten: %s", raw)
 	}
-	if strings.Contains(raw, "htmustc.id.vn") || strings.Contains(raw, "nvidia.com") {
+	if strings.Contains(raw, "provider-a.test") || strings.Contains(raw, "provider-b.test") {
 		t.Fatalf("real hosts still in config: %s", raw)
 	}
-	// Secrets stay put.
-	if !strings.Contains(raw, "mustc-secret-key") || !strings.Contains(raw, "nvapi-test-key") {
+	if !strings.Contains(raw, "prov-a-test-key") || !strings.Contains(raw, "prov-b-test-key") {
 		t.Fatalf("keys lost: %s", raw)
 	}
 
-	// Route map: fingerprint → original host (no raw key).
-	base, ok := headroom.LookupRoute("mustc-secret-key")
-	if !ok || base != "https://htmustc.id.vn/v1" {
-		t.Fatalf("mustc route = %q ok=%v", base, ok)
+	base, ok := headroom.LookupRoute("prov-a-test-key")
+	if !ok || base != "https://api.provider-a.test/v1" {
+		t.Fatalf("prov-a route = %q ok=%v", base, ok)
 	}
-	base, ok = headroom.LookupRoute("nvapi-test-key")
-	if !ok || !strings.Contains(base, "nvidia.com") {
-		t.Fatalf("nvidia route = %q ok=%v", base, ok)
+	base, ok = headroom.LookupRoute("prov-b-test-key")
+	if !ok || base != "https://api.provider-b.test/v1" {
+		t.Fatalf("prov-b route = %q ok=%v", base, ok)
 	}
 	mapRaw, _ := util.ReadFileSafe(filepath.Join(util.HeadroomPathsResolved().Root, "proxy.routes.json"))
-	if strings.Contains(mapRaw, "mustc-secret") || strings.Contains(mapRaw, "nvapi-test") {
+	if strings.Contains(mapRaw, "prov-a-test") || strings.Contains(mapRaw, "prov-b-test") {
 		t.Fatalf("raw key leaked into route map: %s", mapRaw)
 	}
 
@@ -89,13 +85,13 @@ func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
 		t.Fatal("remove failed")
 	}
 	raw, _ = util.ReadFileSafe(filepath.Join(dir, "config.json"))
-	if !strings.Contains(raw, "htmustc.id.vn") || !strings.Contains(raw, "nvidia.com") {
+	if !strings.Contains(raw, "provider-a.test") || !strings.Contains(raw, "provider-b.test") {
 		t.Fatalf("hosts not restored: %s", raw)
 	}
 	if OpenCodeProxyWired() {
 		t.Fatal("still wired after remove")
 	}
-	if _, ok := headroom.LookupRoute("mustc-secret-key"); ok {
+	if _, ok := headroom.LookupRoute("prov-a-test-key"); ok {
 		t.Fatal("route map not cleared")
 	}
 }
@@ -106,12 +102,12 @@ func TestRewriteProviderBaseURLPreservesCompactStyle(t *testing.T) {
 	if err := util.EnsureDir(dir); err != nil {
 		t.Fatal(err)
 	}
-	cfg := `{"provider":{"mustc":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://htmustc.id.vn/v1","apiKey":"k"},"models":{}}}}`
+	cfg := `{"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"k"},"models":{}}}}`
 	path := filepath.Join(dir, "config.json")
 	if err := util.WriteFile(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if !rewriteProviderBaseURL(path, "mustc", "http://127.0.0.1:8787/v1") {
+	if !rewriteProviderBaseURL(path, "prov-a", "http://127.0.0.1:8787/v1") {
 		t.Fatal("rewrite no change")
 	}
 	raw, _ := util.ReadFileSafe(path)
@@ -121,16 +117,14 @@ func TestRewriteProviderBaseURLPreservesCompactStyle(t *testing.T) {
 	if !strings.Contains(raw, `"baseURL":"http://127.0.0.1:8787/v1"`) {
 		t.Fatalf("baseURL not swapped: %s", raw)
 	}
-	if !strings.Contains(raw, `"apiKey":"k"`) || !strings.Contains(raw, `"mustc"`) {
+	if !strings.Contains(raw, `"apiKey":"k"`) || !strings.Contains(raw, `"prov-a"`) {
 		t.Fatalf("body corrupted: %s", raw)
 	}
-	if !rewriteProviderBaseURL(path, "mustc", "https://htmustc.id.vn/v1") {
+	if !rewriteProviderBaseURL(path, "prov-a", "https://api.provider-a.test/v1") {
 		t.Fatal("restore no change")
 	}
 	raw, _ = util.ReadFileSafe(path)
-	if strings.Count(raw, "\n") > 1 || !strings.Contains(raw, `"baseURL":"https://htmustc.id.vn/v1"`) {
+	if strings.Count(raw, "\n") > 1 || !strings.Contains(raw, `"baseURL":"https://api.provider-a.test/v1"`) {
 		t.Fatalf("restore failed: %s", raw)
 	}
 }
-
-

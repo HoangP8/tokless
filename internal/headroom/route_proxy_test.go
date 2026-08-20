@@ -41,9 +41,9 @@ func TestJoinUpstream(t *testing.T) {
 	cases := []struct {
 		base, path, want string
 	}{
-		{"https://api.xkiro.com/v1", "/v1/chat/completions", "https://api.xkiro.com/v1/chat/completions"},
-		{"https://api.ai-box.vn/v1", "/v1/messages", "https://api.ai-box.vn/v1/messages"},
-		{"https://api.qwencoder.cloud/api/v1", "/v1/chat/completions", "https://api.qwencoder.cloud/api/v1/chat/completions"},
+		{"https://api.provider-x.test/v1", "/v1/chat/completions", "https://api.provider-x.test/v1/chat/completions"},
+		{"https://api.provider-a.test/v1", "/v1/messages", "https://api.provider-a.test/v1/messages"},
+		{"https://api.provider-q.test/v1", "/v1/chat/completions", "https://api.provider-q.test/v1/chat/completions"},
 		{"https://example.com", "/v1/chat/completions", "https://example.com/v1/chat/completions"},
 	}
 	for _, c := range cases {
@@ -156,20 +156,20 @@ func TestRouteProxyMissReturns502NoFallback(t *testing.T) {
 func TestProxyUpstreamURLsUsesRouteWhenMapped(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
-	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "https://api.ai-box.vn")
-	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "https://api.xkiro.com/v1")
+	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "https://api.provider-a.test")
+	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "https://api.provider-x.test/v1")
 	_ = SaveRouteMap([]RouteEntry{{KeyFP: KeyFingerprint("k"), BaseURL: "https://host/v1"}})
 	a, o := ProxyUpstreamURLs()
 	if a != RouteProxyURL() || o != RouteProxyURL() {
 		t.Fatalf("with routes: %q %q want both %q", a, o, RouteProxyURL())
 	}
 	ra, ro := realUpstreamURLs()
-	if ra != "https://api.ai-box.vn" || ro != "https://api.xkiro.com/v1" {
+	if ra != "https://api.provider-a.test" || ro != "https://api.provider-x.test/v1" {
 		t.Fatalf("real = %q %q", ra, ro)
 	}
 	_ = ClearRouteMap()
 	a, o = ProxyUpstreamURLs()
-	if a != "https://api.ai-box.vn" || o != "https://api.xkiro.com/v1" {
+	if a != "https://api.provider-a.test" || o != "https://api.provider-x.test/v1" {
 		t.Fatalf("without routes: %q %q", a, o)
 	}
 }
