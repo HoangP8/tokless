@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -525,6 +526,51 @@ func TestCleanupLegacyAntigravityContextModeNoLegacyIsNoop(t *testing.T) {
 	got, _ := os.ReadFile(hooksFile)
 	if string(got) != original {
 		t.Fatalf("unexpected mutation:\nbefore:\n%s\nafter:\n%s", original, got)
+	}
+}
+
+// PreInvocation must be a flat handler list.
+func TestInstallAntigravityCodegraphPreInvocationIsFlat(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
+	hooksFile := filepath.Join(home, ".gemini", "config", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	broken := `{"tokless-codegraph-index":{"PostToolUse":[{"matcher":"","hooks":[{"type":"command","command":"tokless agy-hook codegraph-index","timeout":120}]}],"PreInvocation":[{"matcher":"","hooks":[{"type":"command","command":"tokless agy-hook codegraph-index","timeout":120}]}]}}`
+	if err := os.WriteFile(hooksFile, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	InstallAntigravityCodegraphIndexHook()
+	InstallAntigravityRtkHook()
+
+	raw, err := os.ReadFile(hooksFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("hooks.json invalid: %v\n%s", err, raw)
+	}
+	cg := m["tokless-codegraph-index"].(map[string]any)
+	pre := cg["PreInvocation"].([]any)
+	first := pre[0].(map[string]any)
+	if _, ok := first["hooks"]; ok {
+		t.Fatalf("PreInvocation still grouped:\n%s", raw)
+	}
+	cmd, _ := first["command"].(string)
+	if !strings.Contains(cmd, "agy-hook codegraph-index") {
+		t.Fatalf("PreInvocation missing command:\n%s", raw)
+	}
+	post := cg["PostToolUse"].([]any)[0].(map[string]any)
+	if _, ok := post["hooks"]; !ok {
+		t.Fatalf("PostToolUse should stay grouped:\n%s", raw)
+	}
+	if !HasAntigravityCodegraphIndexHook() || !HasAntigravityRtkHook() {
+		t.Fatalf("Has* checks failed after install:\n%s", raw)
 	}
 }
 

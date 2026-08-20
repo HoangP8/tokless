@@ -867,6 +867,7 @@ func TestAntigravityProxyPreservesForeignEnv(t *testing.T) {
 func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	setTestHome(t)
 	t.Setenv(antigravityCloudCodeKey, "")
+	t.Setenv(antigravityProxyEnvKey, "")
 	envFile := antigravityEnvFile()
 	if got := DetectProxy("antigravity"); got.State != ProxyStateAbsent {
 		t.Fatalf("absent = %+v", got)
@@ -874,14 +875,18 @@ func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	if _, _ = ConfigureAntigravityProxy(); !AntigravityProxyWired() {
 		t.Fatal("expected wired")
 	}
+	// Configure sets process env; clear to assert file-only managed detail.
+	t.Setenv(antigravityCloudCodeKey, "")
+	t.Setenv(antigravityProxyEnvKey, "")
 	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged {
 		t.Fatalf("managed = %+v", got)
-	} else if !strings.Contains(got.Detail, "export CLOUD_CODE_URL") {
-		t.Fatalf("managed detail should ask for CLOUD_CODE_URL export: %+v", got)
+	} else if !strings.Contains(got.Detail, "shell/user env wired") {
+		t.Fatalf("managed detail should note shell/user env: %+v", got)
 	}
 	t.Setenv(antigravityCloudCodeKey, "http://127.0.0.1:8787")
+	t.Setenv(antigravityProxyEnvKey, "http://127.0.0.1:8787")
 	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged ||
-		!strings.Contains(got.Detail, "CLOUD_CODE_URL exported") {
+		!strings.Contains(got.Detail, "session env routes") {
 		t.Fatalf("managed with env = %+v", got)
 	}
 	if err := util.WriteFile(envFile, "GOOGLE_GEMINI_BASE_URL=http://user.example\n"); err != nil {

@@ -37,6 +37,10 @@ func antigravitySettingsFiles() []string {
 	}
 }
 
+func antigravityGlobalSettingsFile() string {
+	return filepath.Join(util.Home(), ".gemini", "settings.json")
+}
+
 func antigravityDeadGuiSettingsFiles() []string {
 	gemini := filepath.Join(util.Home(), ".gemini")
 	return []string{
@@ -481,6 +485,12 @@ func hasCodegraphIndexEntry(group *util.OrderedMap, event string) bool {
 	if !ok {
 		return false
 	}
+	// Flat events (PreInvocation/PostInvocation/Stop): handler objects directly.
+	if cmd, ok := entry.Get("command"); ok {
+		cmdStr, ok := cmd.(string)
+		return ok && strings.Contains(cmdStr, "agy-hook codegraph-index")
+	}
+	// Grouped events (PreToolUse/PostToolUse): {matcher, hooks:[{command}]}.
 	hooksObj, ok := entry.Get("hooks")
 	if !ok {
 		return false
@@ -542,17 +552,19 @@ func InstallAntigravityCodegraphIndexHook() {
 	hookCfg.Set("command", command)
 	hookCfg.Set("timeout", 120)
 
-	// PostToolUse: fires in IDE (toolCall=null startup) + CLI (every tool call).
+	// PostToolUse: grouped (matcher + hooks). Fires in IDE + CLI.
 	postToolEntry := util.NewOrderedMap()
 	postToolEntry.Set("matcher", "")
 	postToolEntry.Set("hooks", []interface{}{hookCfg})
 	group.Set("PostToolUse", []interface{}{postToolEntry})
 
-	// PreInvocation: fires in agy CLI at first prompt. IDE does not fire it.
-	preInvEntry := util.NewOrderedMap()
-	preInvEntry.Set("matcher", "")
-	preInvEntry.Set("hooks", []interface{}{hookCfg})
-	group.Set("PreInvocation", []interface{}{preInvEntry})
+	// PreInvocation: flat handler list (agy rejects matcher/hooks wrapper).
+	// Fires in agy CLI at first prompt; IDE does not fire it.
+	preInvHook := util.NewOrderedMap()
+	preInvHook.Set("type", "command")
+	preInvHook.Set("command", command)
+	preInvHook.Set("timeout", 120)
+	group.Set("PreInvocation", []interface{}{preInvHook})
 
 	cfg.Set("tokless-codegraph-index", group)
 
@@ -581,7 +593,11 @@ func SetAntigravityCompactToolOutput(enabled bool) {
 
 // AllowAntigravityEntry adds a permissions.allow rule so agy auto-approves it.
 func AllowAntigravityEntry(entry string) {
-	for _, f := range antigravitySettingsFiles() {
+	files := antigravitySettingsFiles()
+	if strings.HasPrefix(entry, "command(") {
+		files = append(files, antigravityGlobalSettingsFile())
+	}
+	for _, f := range files {
 		_ = util.EnsureDir(filepath.Dir(f))
 		raw, _ := util.ReadFileSafe(f)
 		cfg := util.TryParseJsonc(raw)
@@ -615,7 +631,11 @@ func AllowAntigravityEntry(entry string) {
 // RemoveAntigravityEntry drops a permissions.allow rule.
 func RemoveAntigravityEntry(entry string) {
 	want := entry
-	for _, f := range antigravitySettingsFiles() {
+	files := antigravitySettingsFiles()
+	if strings.HasPrefix(entry, "command(") {
+		files = append(files, antigravityGlobalSettingsFile())
+	}
+	for _, f := range files {
 		raw, ok := util.ReadFileSafe(f)
 		if !ok {
 			continue

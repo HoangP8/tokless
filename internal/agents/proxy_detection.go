@@ -297,10 +297,10 @@ func detectAntigravityProxy(cap ProxyCapability) ProxyDetection {
 		return proxyDetection(cap.ID, "documented endpoint not configured", ProxyStateUnconfigured)
 	}
 	if value == ProxyEndpointFor(cap.ID) {
-		if os.Getenv(antigravityCloudCodeKey) == value {
-			return proxyDetection(cap.ID, "exact managed endpoint; CLOUD_CODE_URL exported", ProxyStateManaged)
+		if AntigravityProxySessionReady() {
+			return proxyDetection(cap.ID, "exact managed endpoint; session env routes agy CLI", ProxyStateManaged)
 		}
-		return proxyDetection(cap.ID, "exact managed endpoint; export CLOUD_CODE_URL so the agy CLI routes through the proxy", ProxyStateManaged)
+		return proxyDetection(cap.ID, "exact managed endpoint; shell/user env wired (open a new shell if CLI still bypasses)", ProxyStateManaged)
 	}
 	return proxyDetection(cap.ID, "documented endpoint differs", ProxyStateForeignBYOK)
 }
