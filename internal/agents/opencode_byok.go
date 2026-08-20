@@ -306,18 +306,42 @@ func rewriteProviderBaseURL(path, id, baseURL string) bool {
 	if !ok {
 		return false
 	}
+	cur := rawProviderBaseURL(m)
+	if cur == baseURL {
+		return false
+	}
+	if cur != "" {
+		if next, n := replaceProviderBaseURL(raw, cur, baseURL); n > 0 {
+			return util.WriteFile(path, next) == nil
+		}
+	}
 	opts, _ := m.Get("options")
 	om, _ := opts.(*util.OrderedMap)
 	if om == nil {
 		om = util.NewOrderedMap()
 		m.Set("options", om)
 	}
-	cur, _ := om.Get("baseURL")
-	if cur == baseURL {
-		return false
-	}
 	om.Set("baseURL", baseURL)
 	return util.WriteFile(path, util.StringifyJSON(cfg)) == nil
+}
+
+func replaceProviderBaseURL(raw, oldURL, newURL string) (string, int) {
+	if oldURL == "" || oldURL == newURL {
+		return raw, 0
+	}
+	n := 0
+	for _, key := range []string{"baseURL", "baseUrl"} {
+		for _, sp := range []string{`: "`, `:"`} {
+			from := `"` + key + `"` + sp + oldURL + `"`
+			to := `"` + key + `"` + sp + newURL + `"`
+			if strings.Contains(raw, from) {
+				raw = strings.Replace(raw, from, to, 1)
+				n++
+				return raw, n
+			}
+		}
+	}
+	return raw, 0
 }
 
 // --- stash: original baseURL per provider id (no secrets) ---

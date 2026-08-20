@@ -100,4 +100,37 @@ func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
 	}
 }
 
+func TestRewriteProviderBaseURLPreservesCompactStyle(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":{"mustc":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://htmustc.id.vn/v1","apiKey":"k"},"models":{}}}}`
+	path := filepath.Join(dir, "config.json")
+	if err := util.WriteFile(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !rewriteProviderBaseURL(path, "mustc", "http://127.0.0.1:8787/v1") {
+		t.Fatal("rewrite no change")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if strings.Count(raw, "\n") > 1 {
+		t.Fatalf("pretty-printed compact config:\n%s", raw)
+	}
+	if !strings.Contains(raw, `"baseURL":"http://127.0.0.1:8787/v1"`) {
+		t.Fatalf("baseURL not swapped: %s", raw)
+	}
+	if !strings.Contains(raw, `"apiKey":"k"`) || !strings.Contains(raw, `"mustc"`) {
+		t.Fatalf("body corrupted: %s", raw)
+	}
+	if !rewriteProviderBaseURL(path, "mustc", "https://htmustc.id.vn/v1") {
+		t.Fatal("restore no change")
+	}
+	raw, _ = util.ReadFileSafe(path)
+	if strings.Count(raw, "\n") > 1 || !strings.Contains(raw, `"baseURL":"https://htmustc.id.vn/v1"`) {
+		t.Fatalf("restore failed: %s", raw)
+	}
+}
+
 

@@ -122,6 +122,15 @@ func TestToklessRunMcpCommandAvoidsTestBinary(t *testing.T) {
 	}
 }
 
+func TestIsEphemeralBinary(t *testing.T) {
+	if !isEphemeralBinary("/tmp/tokless-dev") {
+		t.Fatal("want /tmp ephemeral")
+	}
+	if isEphemeralBinary("/home/u/.local/bin/tokless") {
+		t.Fatal("stable path must not be ephemeral")
+	}
+}
+
 func TestGoTestExecutableWindowsSuffix(t *testing.T) {
 	if !IsGoTestExecutable(`C:\\Temp\\go-build123\\tools.test.exe`) {
 		t.Fatal("Windows .test.exe must be detected as Go test binary")

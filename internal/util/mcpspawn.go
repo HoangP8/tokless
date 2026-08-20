@@ -249,16 +249,26 @@ func readMcpProbeResponse(rd *bufio.Reader, framed bool) ([]byte, error) {
 	return buf, err
 }
 
-// toklessRunMcpCommand is stored separately from its argv, so spaces are safe.
 func toklessRunMcpCommand() string {
 	self, err := os.Executable()
 	if err != nil {
-		return "tokless"
+		return whichToklessOrBare()
 	}
-	if IsGoTestExecutable(self) {
+	if resolved, err := filepath.EvalSymlinks(self); err == nil && resolved != "" {
+		self = resolved
+	}
+	if IsGoTestExecutable(self) || isEphemeralBinary(self) {
 		return whichToklessOrBare()
 	}
 	return self
+}
+
+func isEphemeralBinary(p string) bool {
+	p = filepath.Clean(p)
+	if strings.HasPrefix(filepath.Base(p), "go-build") {
+		return true
+	}
+	return strings.HasPrefix(p, "/tmp/") || strings.Contains(p, string(filepath.Separator)+"tmp"+string(filepath.Separator))
 }
 
 // WrapAutoIndex routes an MCP launch through `tokless run-mcp --agent <id>` so

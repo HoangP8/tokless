@@ -113,6 +113,46 @@ func TestRouteProxyForwardsByKey(t *testing.T) {
 	}
 }
 
+func TestRouteProxyMissReturns502NoFallback(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", fmt.Sprint(freeProxyPortPair(t)))
+	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "https://api.example-fallback.test/v1")
+	t.Setenv("TOKLESS_ROUTE_FALLBACK_OPENAI", "https://api.example-fallback.test/v1")
+	routeProxyInline = true
+	t.Cleanup(func() {
+		_ = StopRouteProxy()
+		routeProxyInline = false
+	})
+	if err := SaveRouteMap([]RouteEntry{{
+		KeyFP:   KeyFingerprint("known-key"),
+		BaseURL: "https://real.example/v1",
+		ID:      "known",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := StartRouteProxy(); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("POST", RouteProxyURL()+"/v1/chat/completions", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer unknown-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "no upstream route") {
+		t.Fatalf("body=%s", body)
+	}
+	if strings.Contains(string(body), "example-fallback") {
+		t.Fatalf("leaked fallback host: %s", body)
+	}
+}
+
 func TestProxyUpstreamURLsUsesRouteWhenMapped(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)

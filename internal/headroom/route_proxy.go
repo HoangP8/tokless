@@ -238,10 +238,7 @@ func serveRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	key := extractRouteKey(r.Header)
 	base, ok := LookupRoute(key)
-	if !ok {
-		base = fallbackUpstream(r.URL.Path)
-	}
-	if base == "" {
+	if !ok || base == "" {
 		http.Error(w, "no upstream route for credential", http.StatusBadGateway)
 		return
 	}
@@ -285,36 +282,6 @@ func extractRouteKey(h http.Header) string {
 		return v
 	}
 	return ""
-}
-
-func fallbackUpstream(path string) string {
-	anthropic, openai := envFallbackUpstreams()
-	if strings.Contains(path, "/messages") {
-		return strings.TrimRight(anthropic, "/")
-	}
-	return strings.TrimRight(openai, "/")
-}
-
-// envFallbackUpstreams reads the *real* provider hosts (not the route proxy).
-func envFallbackUpstreams() (anthropic, openai string) {
-	anthropic, openai = "https://api.anthropic.com", "https://api.openai.com/v1"
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_ANTHROPIC_URL")); v != "" && !isLocalRouteURL(v) {
-		anthropic = v
-	} else if st, ok := util.ReadProxyRuntime(); ok && st.AnthropicURL != "" && !isLocalRouteURL(st.AnthropicURL) {
-		anthropic = st.AnthropicURL
-	}
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_OPENAI_URL")); v != "" && !isLocalRouteURL(v) {
-		openai = v
-	} else if st, ok := util.ReadProxyRuntime(); ok && st.OpenAIURL != "" && !isLocalRouteURL(st.OpenAIURL) {
-		openai = st.OpenAIURL
-	}
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_ROUTE_FALLBACK_ANTHROPIC")); v != "" {
-		anthropic = v
-	}
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_ROUTE_FALLBACK_OPENAI")); v != "" {
-		openai = v
-	}
-	return
 }
 
 func isLocalRouteURL(u string) bool {

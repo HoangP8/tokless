@@ -211,10 +211,6 @@ func ensureRouteProxy() error {
 	if RouteCount() == 0 {
 		return nil
 	}
-	// Fallbacks must be in the environment before the detached worker is spawned.
-	a, o := realUpstreamURLs()
-	_ = os.Setenv("TOKLESS_ROUTE_FALLBACK_ANTHROPIC", a)
-	_ = os.Setenv("TOKLESS_ROUTE_FALLBACK_OPENAI", o)
 	if err := StartRouteProxy(); err != nil {
 		return fmt.Errorf("byok route proxy: %w", err)
 	}
