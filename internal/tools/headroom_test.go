@@ -39,9 +39,7 @@ func TestHeadroomMapsEveryRegisteredAgent(t *testing.T) {
 
 func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	setupHeadroomHome(t)
-	// opencode/omp proxy wiring requires an existing config file (the
-	// agents package refuses to create absent files); seed minimal configs.
-	if err := util.WriteFile(util.OpenCodePathsResolved().Config, `{"$schema": "https://opencode.ai/config.json", "theme": "dark"}
+	if err := util.WriteFile(util.OpenCodePathsResolved().Config, `{"$schema":"https://opencode.ai/config.json","theme":"dark","provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"k"},"models":{}}}}
 `); err != nil {
 		t.Fatal(err)
 	}

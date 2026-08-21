@@ -31,6 +31,7 @@ func headroomWire(agent string) core.AgentFn {
 			if err := headroompkg.StartProxy(); err != nil {
 				return false, err
 			}
+			_ = headroompkg.EnableProxyAutostart()
 		}
 		if !agents.ConfigureProxyAgent(agent) {
 			return false, fmt.Errorf("%s proxy wiring not applied (differing existing config value, or write failed)", agent)
@@ -68,6 +69,9 @@ func headroomVerify(agent string) bool {
 	}
 	if !headroomWired(agent) {
 		return true
+	}
+	if agent == "opencode" {
+		return agents.OpenCodeProxySatisfied()
 	}
 	return agents.ProxyAgentWired(agent)
 }

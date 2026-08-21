@@ -161,35 +161,15 @@ func RemoveOpenCodeProxy() bool {
 	return unwireOpenCodeBYOK()
 }
 
-// OpenCodeProxyWired reports whether at least one registered provider block is
-// managed at the proxy endpoint, or any user BYOK baseURL is routed through it.
 func OpenCodeProxyWired() bool {
+	return openCodeBYOKWired()
+}
+
+func OpenCodeProxySatisfied() bool {
 	if openCodeBYOKWired() {
 		return true
 	}
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	providers, ok := mapChild(cfg, "provider")
-	if !ok {
-		return false
-	}
-	base := ProxyEndpointFor("opencode")
-	for _, spec := range openCodeProxySpecs() {
-		existing, ok := providers.Get(spec.Key)
-		if !ok {
-			continue
-		}
-		if util.StringifyJSON(existing) == util.StringifyJSON(openCodeProxyProviderBlockFor(base, spec)) {
-			return true
-		}
-	}
-	return false
+	return len(DiscoverOpenCodeBYOK()) == 0 && len(loadBYOKStash()) == 0
 }
 
 func notDisabled(m *util.OrderedMap) bool {

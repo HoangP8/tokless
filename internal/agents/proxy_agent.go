@@ -39,6 +39,9 @@ func ConfigureProxyAgent(id string) bool {
 		return false
 	}
 	_, _ = spec.Configure()
+	if id == "opencode" {
+		return OpenCodeProxySatisfied()
+	}
 	return spec.Wired != nil && spec.Wired()
 }
 
