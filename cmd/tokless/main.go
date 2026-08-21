@@ -177,6 +177,20 @@ func run() int {
 	if len(os.Args) >= 2 && os.Args[1] == "__route-proxy-serve" {
 		return headroompkg.RunRouteProxyServe()
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "__proxy-ensure" {
+		if err := headroompkg.StartProxy(); err != nil {
+			util.L.Err(err.Error())
+			return 1
+		}
+		return 0
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "__proxy-stop" {
+		if err := headroompkg.StopProxy(); err != nil {
+			util.L.Err(err.Error())
+			return 1
+		}
+		return 0
+	}
 	if isSessionBootArg(os.Args[1:]) {
 		ensureSessionBoot()
 	}

@@ -94,6 +94,11 @@ func RunProxyUp(opts InitOptions) int {
 		util.L.Err(err.Error())
 		return 1
 	}
+	if err := headroompkg.EnableProxyAutostart(); err != nil {
+		util.L.Sub("autostart: " + err.Error())
+	} else if headroompkg.ProxyAutostartEnabled() {
+		util.L.Sub("autostart: user service enabled (survives reboot)")
+	}
 	util.L.Raw("")
 	if failed > 0 {
 		return 1
@@ -150,6 +155,9 @@ func RunProxyDown(opts InitOptions) int {
 		util.L.Err(err.Error())
 		return 1
 	}
+	if err := headroompkg.DisableProxyAutostart(); err != nil {
+		util.L.Sub("autostart: " + err.Error())
+	}
 	util.L.Raw("")
 	return 0
 }
@@ -162,6 +170,11 @@ func RunProxyStatus(opts InitOptions) int {
 		util.L.Raw("  " + statusOK("proxy: running on "+url))
 	} else {
 		util.L.Raw("  " + statusWarn("proxy: not running ("+url+")"))
+	}
+	if headroompkg.ProxyAutostartEnabled() {
+		util.L.Raw("  " + statusOK("autostart: user service enabled"))
+	} else {
+		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" autostart: off (run proxy up once)"))
 	}
 	for _, id := range resolveProxyAgents(opts) {
 		detection := agents.DetectProxy(id)

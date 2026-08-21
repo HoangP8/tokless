@@ -66,6 +66,7 @@ func runPurge() int {
 		}
 	}
 	_ = headroompkg.StopProxy()
+	_ = headroompkg.DisableProxyAutostart()
 	if err := os.RemoveAll(util.HeadroomPathsResolved().Root); err != nil {
 		return n + 1
 	}
