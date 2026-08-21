@@ -156,6 +156,91 @@ func runRtkHookInput(t *testing.T, payload string, hook func() int) string {
 	return strings.TrimSpace(buf.String())
 }
 
+func TestRunRtkHookAgySkipsNonRtk(t *testing.T) {
+	out := runRtkHookInput(t, `{"toolCall":{"name":"run_command","args":{"CommandLine":"true"}}}`, RunRtkHook)
+	if out != "" {
+		t.Fatalf("want empty for non-rtk, got %q", out)
+	}
+}
+
+func TestRunRtkHookAgyAllowsAlreadyRewritten(t *testing.T) {
+	out := runRtkHookInput(t, `{"toolCall":{"name":"run_command","args":{"CommandLine":"rtk git status"}}}`, RunRtkHook)
+	var resp struct {
+		Decision  string         `json:"decision"`
+		AllowTool bool           `json:"allowTool"`
+		Overwrite map[string]any `json:"overwrite"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("json: %v out=%q", err, out)
+	}
+	if resp.Decision != "allow" {
+		t.Fatalf("decision=%q want allow", resp.Decision)
+	}
+	if !resp.AllowTool {
+		t.Fatal("allowTool=false")
+	}
+	if resp.Overwrite["CommandLine"] != "rtk git status" {
+		t.Fatalf("CommandLine=%v", resp.Overwrite["CommandLine"])
+	}
+}
+
+func TestRunRtkHookAgyRewritesWhenPossible(t *testing.T) {
+	if util.ResolveRtkBin() == "" {
+		t.Skip("rtk not installed")
+	}
+	out := runRtkHookInput(t, `{"toolCall":{"name":"run_command","args":{"CommandLine":"git status"}}}`, RunRtkHook)
+	var resp struct {
+		Decision  string         `json:"decision"`
+		AllowTool bool           `json:"allowTool"`
+		Overwrite map[string]any `json:"overwrite"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("json: %v out=%q", err, out)
+	}
+	if resp.Decision != "allow" {
+		t.Fatalf("decision=%q want allow", resp.Decision)
+	}
+	if !resp.AllowTool {
+		t.Fatal("allowTool=false")
+	}
+	cmd, _ := resp.Overwrite["CommandLine"].(string)
+	if !strings.Contains(cmd, "rtk") {
+		t.Fatalf("expected rtk rewrite, got %q", cmd)
+	}
+}
+
+func TestRunRtkHookAgySegmentRewrite(t *testing.T) {
+	if util.ResolveRtkBin() == "" {
+		t.Skip("rtk not installed")
+	}
+	out := runRtkHookInput(t, `{"toolCall":{"name":"run_command","args":{"CommandLine":"git status && echo hi"}}}`, RunRtkHook)
+	var resp struct {
+		Decision  string         `json:"decision"`
+		AllowTool bool           `json:"allowTool"`
+		Overwrite map[string]any `json:"overwrite"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("json: %v out=%q", err, out)
+	}
+	if resp.Decision != "allow" {
+		t.Fatalf("decision=%q want allow", resp.Decision)
+	}
+	if !resp.AllowTool {
+		t.Fatal("allowTool=false")
+	}
+	cmd, _ := resp.Overwrite["CommandLine"].(string)
+	if !strings.Contains(cmd, "rtk") {
+		t.Fatalf("expected rtk in chain rewrite, got %q", cmd)
+	}
+}
+
+func TestRunRtkHookAgyIgnoresNonRunCommand(t *testing.T) {
+	out := runRtkHookInput(t, `{"toolCall":{"name":"view_file","args":{"AbsolutePath":"/tmp/x"}}}`, RunRtkHook)
+	if out != "" {
+		t.Fatalf("want empty for non-run_command, got %q", out)
+	}
+}
+
 func TestRunRtkHookCodexPreservesToolInputFields(t *testing.T) {
 	for _, toolName := range []string{"Bash", "bash"} {
 		t.Run(toolName, func(t *testing.T) {

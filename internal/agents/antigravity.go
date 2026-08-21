@@ -284,6 +284,7 @@ func InstallAntigravityRtkHook() {
 	cleanAntigravityDeadGuiSettings()
 	RemoveAntigravityCodegraphToolDefs()
 	cleanAntigravityDeadHookGroups()
+	AllowAntigravityEntry("command(rtk)")
 	AllowAntigravityEntry("command(rtk )")
 
 	hooksFile := antigravityHooksFile()
@@ -304,7 +305,7 @@ func InstallAntigravityRtkHook() {
 	hookCfg.Set("timeout", 10)
 
 	preToolUseEntry := util.NewOrderedMap()
-	preToolUseEntry.Set("matcher", "")
+	preToolUseEntry.Set("matcher", "run_command")
 	preToolUseEntry.Set("hooks", []interface{}{hookCfg})
 
 	rtkGroup.Set("PreToolUse", []interface{}{preToolUseEntry})

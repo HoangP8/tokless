@@ -334,7 +334,7 @@ func stripRtkAbsPath(cmdLine string) string {
 	return bin + tail
 }
 
-// RunRtkHook handles the transparent command rewriting for Antigravity's PreToolUse hook.
+// RunRtkHook handles Antigravity PreToolUse for run_command.
 func RunRtkHook() int {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil || len(input) == 0 {
@@ -350,26 +350,32 @@ func RunRtkHook() int {
 	if err := json.Unmarshal(input, &req); err != nil {
 		return 0
 	}
-	if req.ToolCall.Name != "run_command" {
+	if req.ToolCall.Name != "run_command" || req.ToolCall.Args == nil {
 		return 0
 	}
-
 	cmdLine, ok := req.ToolCall.Args["CommandLine"].(string)
-	if !ok {
+	if !ok || cmdLine == "" {
 		return 0
 	}
 
-	newCmd, changed := rtkRewrite(cmdLine)
-	if !changed {
+	finalCmd := cmdLine
+	if newCmd, changed := rtkRewrite(cmdLine); changed {
+		finalCmd = newCmd
+	} else if newCmd, segOK := rtkRewriteBySegment(cmdLine); segOK {
+		finalCmd = newCmd
+	}
+	if finalCmd == cmdLine && !commandUsesRtk(cmdLine) {
 		return 0
 	}
+	req.ToolCall.Args["CommandLine"] = finalCmd
 
-	req.ToolCall.Args["CommandLine"] = newCmd
 	resp := struct {
 		Decision  string                 `json:"decision"`
+		AllowTool bool                   `json:"allowTool"`
 		Overwrite map[string]interface{} `json:"overwrite"`
 	}{
 		Decision:  "allow",
+		AllowTool: true,
 		Overwrite: req.ToolCall.Args,
 	}
 	if out, err := json.Marshal(resp); err == nil {

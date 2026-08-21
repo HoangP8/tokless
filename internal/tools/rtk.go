@@ -974,6 +974,7 @@ var rtk = &core.ToolManifest{
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
 			agents.RemoveAntigravityRtkHook()
+			agents.RemoveAntigravityEntry("command(rtk)")
 			agents.RemoveAntigravityEntry("command(rtk )")
 			RemoveOwner("antigravity", "rtk")
 			return true, nil
