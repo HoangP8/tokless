@@ -71,8 +71,7 @@ func TestContextModeRegistrationsUseToklessProxy(t *testing.T) {
 }
 
 // TestWireCodexManual_BoundedShape verifies that wireCodexManual writes MCP +
-// AGENTS.md with CONTEXT-MODE marker block plus a single minimal context-mode
-// redirect PreToolUse hook.
+// AGENTS.md without a context-mode PreToolUse hook.
 func TestWireCodexManual_BoundedShape(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
@@ -85,22 +84,8 @@ func TestWireCodexManual_BoundedShape(t *testing.T) {
 	}
 
 	hooksPath := filepath.Join(tmp, ".codex", "hooks.json")
-	hooksData, err := os.ReadFile(hooksPath)
-	if err != nil {
-		t.Fatalf("context-mode should create hooks.json with the redirect hook: %v", err)
-	}
-	hooks := string(hooksData)
-	if !strings.Contains(hooks, "context-mode hook codex pretooluse") {
-		t.Fatalf("hooks.json missing context-mode redirect hook:\n%s", hooks)
-	}
-	if !strings.Contains(hooks, `"PreToolUse"`) || !strings.Contains(hooks, `local_shell|shell|shell_command|exec_command|Bash|Shell|apply_patch|Edit|Write|grep_files|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_fetch_and_index|ctx_search|ctx_index|mcp__`) {
-		t.Fatalf("hooks.json redirect hook should match upstream PreToolUse config:\n%s", hooks)
-	}
-	// It must not reinstate any legacy multi-event context-mode hooks.
-	for _, bad := range []string{"SessionStart", "PreCompact", "context-mode hook codex sessionstart", "context-mode hook codex posttooluse"} {
-		if strings.Contains(hooks, bad) {
-			t.Fatalf("hooks.json should not contain legacy %q:\n%s", bad, hooks)
-		}
+	if _, err := os.Stat(hooksPath); !os.IsNotExist(err) {
+		t.Fatalf("context-mode should not create hooks.json, err=%v", err)
 	}
 
 	cfgPath := filepath.Join(tmp, ".codex", "config.toml")
@@ -134,9 +119,6 @@ func TestWireCodexManual_BoundedShape(t *testing.T) {
 	}
 	if strings.Contains(cfg, "[mcp_servers.context-mode]") {
 		t.Error("config.toml still has legacy [mcp_servers.context-mode]")
-	}
-	if !strings.Contains(cfg, "hooks = true") {
-		t.Error("config.toml should enable Codex hooks like upstream context-mode config")
 	}
 	if !ctxVerifyCodex() {
 		t.Error("ctxVerifyCodex returned false for MCP + AGENTS.md install")
@@ -215,6 +197,50 @@ func TestWireCodexManual_PreservesUserHook(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "/usr/bin/user-guard.py") {
 		t.Errorf("user hook overwritten (must be preserved):\n%s", data)
+	}
+}
+
+func TestCtxVerifyCodexRejectsLegacyPreToolUseHook(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	defer util.SetHomeOverride("")
+
+	if !wireCodexManual() {
+		t.Fatal("wireCodexManual returned false")
+	}
+	hooks := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"context-mode hook codex pretooluse"}]}]}}`
+	if err := os.WriteFile(filepath.Join(tmp, ".codex", "hooks.json"), []byte(hooks), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ctxVerifyCodex() {
+		t.Fatal("ctxVerifyCodex accepted legacy context-mode PreToolUse hook")
+	}
+}
+
+func TestCtxVerifyCodexRejectsProjectLegacyPreToolUseHook(t *testing.T) {
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+	util.SetHomeOverride(filepath.Join(tmp, "home"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	defer util.SetHomeOverride("")
+	if err := os.MkdirAll(filepath.Join(project, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	if !wireCodexManual() {
+		t.Fatal("wireCodexManual returned false")
+	}
+	hooks := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"context-mode hook codex pretooluse"}]}]}}`
+	if err := os.WriteFile(filepath.Join(project, ".codex", "hooks.json"), []byte(hooks), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ctxVerifyCodex() {
+		t.Fatal("ctxVerifyCodex accepted project legacy context-mode hook")
 	}
 }
 

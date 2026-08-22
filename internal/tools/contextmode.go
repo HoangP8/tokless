@@ -261,8 +261,6 @@ func wireCodexManual() bool {
 	cleanupWorkspaceCodexContextModeMcp(cx.Dir)
 	writeCodexAgentsMd()
 
-	agents.InstallCodexContextModeHook()
-
 	return true
 }
 
@@ -445,7 +443,6 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 			_ = util.WriteFile(cx.Config, next)
 		}
 	}
-	agents.RemoveCodexContextModeHook()
 	cleanupCodexContextModeHooks()
 	RemoveOwner("codex", "context-mode")
 	return true, nil
@@ -645,14 +642,14 @@ func ctxVerifyCodex() bool {
 	if !ok || !strings.Contains(agentsRaw, util.SectionsByOwner["context-mode"]) {
 		return false
 	}
-	if !agents.HasCodexContextModeHook() {
-		return false
-	}
-	if util.Exists(filepath.Join(cx.Dir, "hooks.json")) {
-		data := loadOrdered(filepath.Join(cx.Dir, "hooks.json"))
+	for _, dir := range codexHookDirs(cx.Dir) {
+		if !util.Exists(filepath.Join(dir, "hooks.json")) {
+			continue
+		}
+		data := loadOrdered(filepath.Join(dir, "hooks.json"))
 		if hv, ok := data.Get("hooks"); ok {
 			if hm, ok := hv.(*util.OrderedMap); ok {
-				for _, ev := range []string{"PreCompact", "Stop", "SessionStart", "PostToolUse", "UserPromptSubmit", "PermissionRequest"} {
+				for _, ev := range []string{"PreToolUse", "PreCompact", "Stop", "SessionStart", "PostToolUse", "UserPromptSubmit", "PermissionRequest"} {
 					if hasCodexHookEntry(hm, ev, "") {
 						return false
 					}
@@ -661,6 +658,16 @@ func ctxVerifyCodex() bool {
 		}
 	}
 	return true
+}
+
+func codexHookDirs(activeCodexDir string) []string {
+	dirs := []string{activeCodexDir}
+	if cwd, err := os.Getwd(); err == nil {
+		if project := filepath.Join(cwd, ".codex"); project != activeCodexDir {
+			dirs = append(dirs, project)
+		}
+	}
+	return dirs
 }
 
 // hasCodexHookEntry returns true when hooks.json contains one of context-mode's entries.

@@ -64,9 +64,6 @@ prefix_rule(pattern = ["myapp"], decision = "allow")
 	if !strings.Contains(string(hooks), "rtk-hook codex") {
 		t.Fatal("rtk hook group not added")
 	}
-	if !strings.Contains(string(hooks), "context-mode hook codex") {
-		t.Fatal("context-mode hook group not added")
-	}
 	// User's hook still present.
 	if !strings.Contains(string(hooks), "my-hook") {
 		t.Fatal("user's PreToolUse hook was removed during wire")
