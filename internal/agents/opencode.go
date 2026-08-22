@@ -3,6 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -149,27 +150,150 @@ func openCodeProxySpecs() []ProviderSpec {
 }
 
 func ConfigureOpenCodeProxy() (changed bool, file string) {
-	p := util.OpenCodePathsResolved()
-	byokChanged, _ := wireOpenCodeBYOK()
-	if byokChanged {
-		return true, filepath.Join(p.Dir, "config.json")
-	}
-	return false, p.Config
+	legacyChanged := unwireOpenCodeBYOK()
+	pluginChanged, file := configureOpenCodeTransportPlugin()
+	return legacyChanged || pluginChanged, file
 }
 
 func RemoveOpenCodeProxy() bool {
-	return unwireOpenCodeBYOK()
+	return removeOpenCodeTransportPlugin() || unwireOpenCodeBYOK()
 }
 
 func OpenCodeProxyWired() bool {
-	return openCodeBYOKWired()
+	return openCodeTransportPluginWired()
 }
 
 func OpenCodeProxySatisfied() bool {
-	if openCodeBYOKWired() {
-		return true
+	return openCodeTransportPluginWired()
+}
+
+func openCodeTransportPluginPath() string {
+	p := util.HeadroomPathsResolved()
+	return filepath.Join(p.Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
+}
+
+func openCodeTransportPluginURL() string {
+	return "file://" + filepath.ToSlash(openCodeTransportPluginPath())
+}
+
+func openCodeTransportPluginEntry() []any {
+	options := util.NewOrderedMap()
+	options.Set("proxyUrl", strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1"))
+	return []any{openCodeTransportPluginURL(), options}
+}
+
+func isOpenCodeTransportPluginEntry(v any) bool {
+	entry, ok := v.([]any)
+	if !ok || len(entry) != 2 {
+		return false
 	}
-	return len(DiscoverOpenCodeBYOK()) == 0 && len(loadBYOKStash()) == 0
+	path, _ := entry[0].(string)
+	if path != openCodeTransportPluginURL() {
+		return false
+	}
+	options, ok := entry[1].(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	proxyURL, _ := options.Get("proxyUrl")
+	return proxyURL == strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")
+}
+
+func configureOpenCodeTransportPlugin() (changed bool, file string) {
+	file = util.OpenCodePathsResolved().Config
+	if !util.Exists(openCodeTransportPluginPath()) {
+		return false, file
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if util.HasJSONCComments(raw) {
+		return false, file
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	}
+	plugins, ok := cfg.Get("plugin")
+	if ok {
+		entries, ok := plugins.([]any)
+		if !ok {
+			return false, file
+		}
+		for _, entry := range entries {
+			if isOpenCodeTransportPluginEntry(entry) {
+				return false, file
+			}
+		}
+		cfg.Set("plugin", append(entries, openCodeTransportPluginEntry()))
+	} else {
+		cfg.Set("plugin", []any{openCodeTransportPluginEntry()})
+	}
+	if _, ok := cfg.Get("$schema"); !ok {
+		cfg.Set("$schema", "https://opencode.ai/config.json")
+	}
+	return util.WriteFile(file, util.StringifyJSON(cfg)) == nil, file
+}
+
+func removeOpenCodeTransportPlugin() bool {
+	file := util.OpenCodePathsResolved().Config
+	raw, ok := util.ReadFileSafe(file)
+	if !ok || util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	plugins, ok := cfg.Get("plugin")
+	if !ok {
+		return false
+	}
+	entries, ok := plugins.([]any)
+	if !ok {
+		return false
+	}
+	next := make([]any, 0, len(entries))
+	removed := false
+	for _, entry := range entries {
+		if isOpenCodeTransportPluginEntry(entry) {
+			removed = true
+			continue
+		}
+		next = append(next, entry)
+	}
+	if !removed {
+		return false
+	}
+	if len(next) == 0 {
+		cfg.Delete("plugin")
+	} else {
+		cfg.Set("plugin", next)
+	}
+	return util.WriteFile(file, util.StringifyJSON(cfg)) == nil
+}
+
+func openCodeTransportPluginWired() bool {
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	if !ok || util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	plugins, ok := cfg.Get("plugin")
+	if !ok {
+		return false
+	}
+	entries, ok := plugins.([]any)
+	if !ok {
+		return false
+	}
+	for _, entry := range entries {
+		if isOpenCodeTransportPluginEntry(entry) {
+			return true
+		}
+	}
+	return false
 }
 
 func notDisabled(m *util.OrderedMap) bool {

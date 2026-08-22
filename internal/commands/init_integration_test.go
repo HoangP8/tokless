@@ -54,6 +54,9 @@ func TestInitSandboxWiring(t *testing.T) {
 	t.Setenv("HOME", tempdir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
+	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 
 	// Antigravity wiring is partly project-scoped — run from a sandbox project dir.
 	proj := filepath.Join(tempdir, "proj")
@@ -108,7 +111,7 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Errorf("opencode.jsonc doesn't contain 'codegraph', got: %s", opencodeStr)
 	}
 
-	// 3. <home>/.codex/config.toml contains "[mcp_servers.codegraph]", "[mcp_servers.context_mode]", and no context-mode hooks.
+	// 3. <home>/.codex/config.toml contains "[mcp_servers.codegraph]" and "[mcp_servers.context_mode]".
 	codexConfigPath := filepath.Join(tempdir, ".codex", "config.toml")
 	codexConfigData, err := os.ReadFile(codexConfigPath)
 	if err != nil {
@@ -124,30 +127,20 @@ func TestInitSandboxWiring(t *testing.T) {
 	if strings.Contains(codexConfigStr, "[mcp_servers.context-mode]") {
 		t.Errorf("config.toml still contains legacy '[mcp_servers.context-mode]', got: %s", codexConfigStr)
 	}
-	if !strings.Contains(codexConfigStr, "hooks = true") {
-		t.Errorf("context-mode should enable Codex hooks like upstream config, got: %s", codexConfigStr)
-	}
 	if !strings.Contains(codexConfigStr, `approval_policy = "on-request"`) {
 		t.Errorf("config.toml doesn't set approval_policy=on-request, got: %s", codexConfigStr)
 	}
 
-	// 4. <home>/.codex/hooks.json contains tokless runtime hooks plus one
-	// minimal context-mode PreToolUse redirect hook. MCP + AGENTS.md stay base.
+	// 4. <home>/.codex/hooks.json contains RTK runtime hooks, not Context Mode hooks.
 	codexHooksPath := filepath.Join(tempdir, ".codex", "hooks.json")
 	codexHooksData, err := os.ReadFile(codexHooksPath)
 	if err != nil {
 		t.Fatalf("failed to read hooks.json: %v", err)
 	}
 	codexHooksStr := string(codexHooksData)
-	if !strings.Contains(codexHooksStr, "context-mode hook codex pretooluse") {
-		t.Errorf("hooks.json missing minimal context-mode hook, got: %s", codexHooksStr)
-	}
-	if !strings.Contains(codexHooksStr, "local_shell|shell|shell_command|exec_command|Bash|Shell|apply_patch|Edit|Write|grep_files|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_fetch_and_index|ctx_search|ctx_index|mcp__") {
-		t.Errorf("Codex PreToolUse matcher should match upstream context-mode config, got: %s", codexHooksStr)
-	}
-	for _, bad := range []string{"SessionStart", "PreCompact", "PostToolUse", "UserPromptSubmit", "context-mode hook codex sessionstart"} {
+	for _, bad := range []string{"context-mode hook codex", "context-mode-hook codex", "SessionStart", "PreCompact", "PostToolUse", "UserPromptSubmit"} {
 		if strings.Contains(codexHooksStr, bad) {
-			t.Errorf("hooks.json should not contain legacy context-mode hook %q, got: %s", bad, codexHooksStr)
+			t.Errorf("hooks.json should not contain context-mode hook %q, got: %s", bad, codexHooksStr)
 		}
 	}
 	if !strings.Contains(codexHooksStr, "rtk-hook codex") {
@@ -273,6 +266,9 @@ func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
 	t.Setenv("HOME", tempdir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
+	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 
 	proj := filepath.Join(tempdir, "proj")
 	if err := os.MkdirAll(filepath.Join(proj, ".git"), 0755); err != nil {
@@ -364,6 +360,9 @@ func TestInitIdempotent(t *testing.T) {
 	t.Setenv("HOME", tempdir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
+	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 
 	// First Run
 	code := commands.RunInit(commands.InitOptions{
