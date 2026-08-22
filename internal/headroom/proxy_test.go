@@ -378,6 +378,26 @@ func TestPersistProxyRuntimeProviderPreservation(t *testing.T) {
 	}
 }
 
+func TestPersistProxyRuntimeRestoresGeminiTargets(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	t.Setenv("TOKLESS_HEADROOM_GEMINI_URL", "https://gemini.example.test")
+	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "https://cloudcode.example.test")
+	if err := persistProxyRuntime(8787); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKLESS_HEADROOM_GEMINI_URL", "")
+	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "")
+	gemini, cloudcode := ProxyUpstreamGeminiURLs()
+	if gemini != "https://gemini.example.test" || cloudcode != "https://cloudcode.example.test" {
+		t.Fatalf("restored Gemini targets = %q, %q", gemini, cloudcode)
+	}
+	args := strings.Join(proxyArgs(8787), " ")
+	if !strings.Contains(args, "--gemini-api-url https://gemini.example.test") || !strings.Contains(args, "--cloudcode-api-url https://cloudcode.example.test") {
+		t.Fatalf("persisted targets absent from args: %s", args)
+	}
+}
+
 func TestAcquireProxyStartLockSerializes(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
@@ -608,7 +628,12 @@ func TestStartProxyRestartsStaleArgsDaemon(t *testing.T) {
 	}
 	proxyKill = func(*os.Process) error { live = false; killed = true; return nil }
 	proxyGone = func(*os.Process) bool { return true }
-	proxySpawn = func(cmd *exec.Cmd) error { live = true; spawned = true; cmd.Process = &os.Process{Pid: 5356}; return nil }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		live = true
+		spawned = true
+		cmd.Process = &os.Process{Pid: 5356}
+		return nil
+	}
 	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
 	if err := StartProxy(); err != nil {
 		t.Fatal(err)

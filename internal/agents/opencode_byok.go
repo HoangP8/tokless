@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -171,34 +170,19 @@ func isAbsoluteHTTP(raw string) bool {
 	return u.Scheme == "http" || u.Scheme == "https"
 }
 
-// SyncOpenCodeBYOKRoutes discovers user BYOK providers and writes the route
-// table (no config rewrite).
+// SyncOpenCodeBYOKRoutes is retained for command output compatibility.
 func SyncOpenCodeBYOKRoutes() int {
-	_, routes := buildBYOKRoutes()
-	return len(routes)
+	return 0
 }
 
-func buildBYOKRoutes() (byoks []openCodeBYOK, routes []headroom.RouteEntry) {
-	byoks = DiscoverOpenCodeBYOK()
-	for _, b := range byoks {
-		fp := headroom.KeyFingerprint(b.APIKey)
-		if fp == "" {
-			continue
-		}
-		routes = append(routes, headroom.RouteEntry{KeyFP: fp, BaseURL: b.BaseURL, ID: b.ID})
-	}
-	_ = headroom.SaveRouteMap(routes)
-	return byoks, routes
-}
-
-// wireOpenCodeBYOK points every discovered BYOK baseURL at headroom and writes
-// the key-fingerprint → real-host route table.
-func wireOpenCodeBYOK() (changed bool, routes []headroom.RouteEntry) {
+// wireOpenCodeBYOK points every discovered BYOK provider at Headroom while
+// retaining its original upstream in Headroom's supported per-request header.
+func wireOpenCodeBYOK() (changed bool, _ []openCodeBYOK) {
 	proxyBase := ProxyEndpointFor("opencode")
 	if proxyBase == "" {
 		return false, nil
 	}
-	byoks, routes := buildBYOKRoutes()
+	byoks := DiscoverOpenCodeBYOK()
 	if len(byoks) == 0 {
 		_ = clearBYOKStash()
 		return false, nil
@@ -206,19 +190,18 @@ func wireOpenCodeBYOK() (changed bool, routes []headroom.RouteEntry) {
 	newStash := map[string]byokStashEntry{}
 	for _, b := range byoks {
 		newStash[b.ID] = byokStashEntry{File: b.File, BaseURL: b.BaseURL}
-		if rewriteProviderBaseURL(b.File, b.ID, proxyBase) {
+		if setOpenCodeProviderRoute(b.File, b.ID, proxyBase, b.BaseURL) {
 			changed = true
 		}
 	}
 	_ = saveBYOKStash(newStash)
-	return changed, routes
+	return changed, byoks
 }
 
-// unwireOpenCodeBYOK restores original baseURLs from stash and clears routes.
+// unwireOpenCodeBYOK restores original baseURLs from stash.
 func unwireOpenCodeBYOK() bool {
 	stashed := loadBYOKStash()
 	if len(stashed) == 0 {
-		_ = headroom.ClearRouteMap()
 		return false
 	}
 	removed := false
@@ -226,13 +209,74 @@ func unwireOpenCodeBYOK() bool {
 		if s.BaseURL == "" || s.File == "" {
 			continue
 		}
-		if rewriteProviderBaseURL(s.File, id, s.BaseURL) {
+		if setOpenCodeProviderRoute(s.File, id, s.BaseURL, "") {
 			removed = true
 		}
 	}
 	_ = clearBYOKStash()
-	_ = headroom.ClearRouteMap()
 	return removed
+}
+
+const headroomBaseURLHeader = "x-headroom-base-url"
+
+func setOpenCodeProviderRoute(path, id, baseURL, upstream string) bool {
+	raw, ok := util.ReadFileSafe(path)
+	if !ok || util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		return false
+	}
+	block, ok := providers.Get(id)
+	if !ok {
+		return false
+	}
+	provider, ok := block.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	options, ok := mapChild(provider, "options")
+	if !ok {
+		return false
+	}
+	current := rawProviderBaseURL(provider)
+	if current == "" {
+		return false
+	}
+	if upstream == "" && current != ProxyEndpointFor("opencode") {
+		return false
+	}
+	headers, ok := mapChild(options, "headers")
+	if !ok {
+		if _, exists := options.Get("headers"); exists {
+			return false
+		}
+		headers = util.NewOrderedMap()
+		options.Set("headers", headers)
+	}
+	if v, exists := headers.Get(headroomBaseURLHeader); exists && upstream != "" && v != upstream {
+		return false
+	}
+	currentUpstream, hasUpstream := headers.Get(headroomBaseURLHeader)
+	if current == baseURL && ((upstream == "" && !hasUpstream) || currentUpstream == upstream) {
+		return false
+	}
+	options.Set("baseURL", baseURL)
+	options.Delete("baseUrl")
+	if upstream == "" {
+		headers.Delete(headroomBaseURLHeader)
+		if headers.Len() == 0 {
+			options.Delete("headers")
+		}
+	} else {
+		headers.Set(headroomBaseURLHeader, upstream)
+	}
+	return util.WriteFile(path, util.StringifyJSON(cfg)) == nil
 }
 
 // openCodeBYOKWired reports whether at least one stashed provider still points at the proxy.

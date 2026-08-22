@@ -174,9 +174,6 @@ func run() int {
 	registerAgents()
 	registerTools()
 	ensureProcessPath()
-	if len(os.Args) >= 2 && os.Args[1] == "__route-proxy-serve" {
-		return headroompkg.RunRouteProxyServe()
-	}
 	if len(os.Args) >= 2 && os.Args[1] == "__proxy-ensure" {
 		if err := headroompkg.StartProxy(); err != nil {
 			util.L.Err(err.Error())

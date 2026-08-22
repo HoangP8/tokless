@@ -19,14 +19,8 @@ const (
 	proxyStopTimeout  = 5 * time.Second
 	proxyProbeTimeout = 2 * time.Second
 	proxyPollInterval = 300 * time.Millisecond
-	// proxyIdentityTimeout bounds how long StartProxy tolerates /proc not yet
-	// describing the just-spawned daemon (transient identity lookup errors).
 	proxyIdentityTimeout = 2 * time.Second
-	// proxyStartLockWait bounds how long a concurrent StartProxy waits for the
-	// start lock before treating the lock as stale.
 	proxyStartLockWait = 30 * time.Second
-	// proxyStartLockStale is how old a start lock may be before it is stolen
-	// (left behind by a crashed tokless process).
 	proxyStartLockStale = 10 * time.Second
 )
 
@@ -53,18 +47,17 @@ func ProxyPort() int         { return util.HeadroomProxyPort() }
 func ProxyURL() string       { return util.HeadroomProxyURL() }
 func ProxyOpenAIURL() string { return util.HeadroomProxyOpenAIURL() }
 
-// realUpstreamURLs are the provider hosts headroom (or the key-router fallback)
-// should reach — never the local route proxy itself.
+// realUpstreamURLs are the provider hosts Headroom should reach.
 func realUpstreamURLs() (anthropic, openai string) {
 	anthropic, openai = "https://api.anthropic.com", "https://api.openai.com"
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_ANTHROPIC_URL")); v != "" && !isLocalRouteURL(v) {
+	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_ANTHROPIC_URL")); v != "" {
 		anthropic = v
-	} else if st, ok := util.ReadProxyRuntime(); ok && st.AnthropicURL != "" && !isLocalRouteURL(st.AnthropicURL) {
+	} else if st, ok := util.ReadProxyRuntime(); ok && st.AnthropicURL != "" {
 		anthropic = st.AnthropicURL
 	}
-	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_OPENAI_URL")); v != "" && !isLocalRouteURL(v) {
+	if v := strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_OPENAI_URL")); v != "" {
 		openai = v
-	} else if st, ok := util.ReadProxyRuntime(); ok && st.OpenAIURL != "" && !isLocalRouteURL(st.OpenAIURL) {
+	} else if st, ok := util.ReadProxyRuntime(); ok && st.OpenAIURL != "" {
 		openai = st.OpenAIURL
 	}
 	return
@@ -72,10 +65,6 @@ func realUpstreamURLs() (anthropic, openai string) {
 
 // ProxyUpstreamURLs returns the URLs passed to `headroom proxy --*-api-url`.
 func ProxyUpstreamURLs() (anthropic, openai string) {
-	if RouteCount() > 0 {
-		u := RouteProxyURL()
-		return u, u
-	}
 	return realUpstreamURLs()
 }
 
@@ -85,6 +74,14 @@ func ProxyUpstreamURLs() (anthropic, openai string) {
 func ProxyUpstreamGeminiURLs() (gemini, cloudcode string) {
 	gemini = strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_GEMINI_URL"))
 	cloudcode = strings.TrimSpace(os.Getenv("TOKLESS_HEADROOM_CLOUDCODE_URL"))
+	if st, ok := util.ReadProxyRuntime(); ok {
+		if gemini == "" {
+			gemini = st.GeminiURL
+		}
+		if cloudcode == "" {
+			cloudcode = st.CloudCodeURL
+		}
+	}
 	return
 }
 
@@ -183,12 +180,7 @@ func acquireProxyStartLock(now func() time.Time) (func(), error) {
 }
 
 // proxyArgsMatchRecorded reports whether the persisted ownership record (when
-// present) lists the argv tokless would launch today. An absent record means a
-// hand-started headroom proxy — leave it alone.
-//
-// Recorded Args may be either the bare subcommand argv (proxyArgs) or the
-// full process argv with the headroom launcher path prepended (what /proc
-// reports for a uv/python-wrapped headroom binary). Both forms match.
+// present) lists the argv tokless would launch today. 
 func proxyArgsMatchRecorded(port int) bool {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
@@ -206,23 +198,8 @@ func proxyArgsMatchRecorded(port int) bool {
 	return len(record.Args) > len(want) && equalStrings(record.Args[len(record.Args)-len(want):], want)
 }
 
-func ensureRouteProxy() error {
-	_ = LoadRouteMap()
-	if RouteCount() == 0 {
-		return nil
-	}
-	if err := StartRouteProxy(); err != nil {
-		return fmt.Errorf("byok route proxy: %w", err)
-	}
-	return nil
-}
-
 func StartProxy() error {
-	// Key-router first when BYOK routes exist so headroom's dual upstream
-	// slots can both point at one in-process router (no N daemons).
-	if err := ensureRouteProxy(); err != nil {
-		return err
-	}
+	cleanupLegacyRouteState()
 	port := ProxyPort()
 	args := proxyArgs(port)
 	// Fast path: already up with matching args. No lock needed — this is the
@@ -246,11 +223,7 @@ func StartProxy() error {
 			return nil
 		}
 		util.L.Sub("headroom proxy running with stale args — restarting (" + ProxyURL() + ")")
-		// Kill headroom only; keep (or re-up) the key-router for the respawn.
 		if err := stopHeadroomDaemon(); err != nil {
-			return err
-		}
-		if err := ensureRouteProxy(); err != nil {
 			return err
 		}
 		args = proxyArgs(port)
@@ -329,17 +302,16 @@ func verifyIdentityWithRetry(pid int, bin string, args []string) (processIdentit
 
 // persistProxyRuntime saves the effective daemon runtime (port + upstreams +
 // selected provider) so a later `tokless proxy` invocation reproduces the same
-// setup without requiring the original env vars. The provider is only updated
-// when the env selector is set; otherwise the previously persisted identity is
-// kept so a clean-shell re-up does not silently resort to the default.
-// Real provider hosts are stored (not the local key-router) so a later up can
-// rebuild the route chain.
+// setup without requiring the original env vars.
 func persistProxyRuntime(port int) error {
 	anthropic, openai := realUpstreamURLs()
+	gemini, cloudcode := ProxyUpstreamGeminiURLs()
 	p := util.ProxyRuntime{
 		Port:         port,
 		AnthropicURL: anthropic,
 		OpenAIURL:    openai,
+		GeminiURL:    gemini,
+		CloudCodeURL: cloudcode,
 	}
 	if v := strings.TrimSpace(os.Getenv(providerEnvVar())); v != "" {
 		p.Provider = v
@@ -353,7 +325,7 @@ func persistProxyRuntime(port int) error {
 // string-stable here so headroom's proxy never depends on the agents package.
 func providerEnvVar() string { return "TOKLESS_PROXY_PROVIDER" }
 
-// stopHeadroomDaemon stops the headroom process only (leaves the key-router up).
+// stopHeadroomDaemon stops the Headroom process.
 func stopHeadroomDaemon() error {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
@@ -401,15 +373,34 @@ func stopHeadroomDaemon() error {
 	return fmt.Errorf("headroom proxy did not stop (pid %d)", record.PID)
 }
 
-// StopProxy stops headroom first (it may still call the key-router), then the router.
+// StopProxy stops the Headroom daemon.
 func StopProxy() error {
 	err := stopHeadroomDaemon()
-	_ = StopRouteProxy()
+	cleanupLegacyRouteState()
 	return err
 }
 
 // clearProxyRuntime drops the persisted runtime after daemon resources are gone.
 func clearProxyRuntime() error { return util.ClearHeadroomProxyRuntime() }
+
+// cleanupLegacyRouteState removes the retired per-key route proxy state.
+func cleanupLegacyRouteState() {
+	root := util.HeadroomPathsResolved().Root
+	pidFile := filepath.Join(root, "proxy.route.pid")
+	raw, ok := util.ReadFileSafe(pidFile)
+	if ok {
+		if pid, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && pid > 0 && processIdentitySupported() {
+			if identity, err := proxyIdentity(pid); err == nil && len(identity.Args) > 0 && identity.Args[0] == "__route-proxy-serve" {
+				if proc, err := os.FindProcess(pid); err == nil {
+					_ = proxyKill(proc)
+				}
+			}
+		}
+		_ = os.Remove(pidFile)
+	}
+	_ = os.Remove(filepath.Join(root, "proxy.routes.json"))
+	_ = os.Remove(filepath.Join(root, "proxy.route.log"))
+}
 
 func (p processIdentityInfo) matches(executable string, args []string) bool {
 	want, err := normalizedExecutable(executable)

@@ -5,11 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
+func TestConfigureOpenCodeProxyUsesTransportPlugin(t *testing.T) {
 	opencodeProxyTestHome(t)
 	dir := util.OpenCodePathsResolved().Dir
 	if err := util.EnsureDir(dir); err != nil {
@@ -41,58 +40,44 @@ func TestDiscoverAndWireOpenCodeBYOK(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	found := DiscoverOpenCodeBYOK()
-	if len(found) != 2 {
-		t.Fatalf("discover = %d %+v", len(found), found)
-	}
-
-	changed, routes := wireOpenCodeBYOK()
+	changed, _ := ConfigureOpenCodeProxy()
 	if !changed {
-		t.Fatal("wire reported no change")
-	}
-	if len(routes) != 2 {
-		t.Fatalf("routes = %d", len(routes))
+		t.Fatal("configure reported no change")
 	}
 	if !OpenCodeProxyWired() {
-		t.Fatal("expected BYOK wired")
+		t.Fatal("expected transport plugin wired")
 	}
 
-	raw, _ := util.ReadFileSafe(filepath.Join(dir, "config.json"))
-	if !strings.Contains(raw, `"baseURL": "http://127.0.0.1:8787/v1"`) {
-		t.Fatalf("baseURL not rewritten: %s", raw)
+	providerRaw, _ := util.ReadFileSafe(filepath.Join(dir, "config.json"))
+	for _, upstream := range []string{"https://api.provider-a.test/v1", "https://api.provider-b.test/v1"} {
+		if !strings.Contains(providerRaw, `"baseURL": "`+upstream+`"`) {
+			t.Fatalf("upstream changed: %s", providerRaw)
+		}
 	}
-	if strings.Contains(raw, "provider-a.test") || strings.Contains(raw, "provider-b.test") {
-		t.Fatalf("real hosts still in config: %s", raw)
+	raw, _ := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	if !strings.Contains(raw, `"plugin"`) || !strings.Contains(raw, `"proxyUrl": "http://127.0.0.1:8787"`) {
+		t.Fatalf("transport plugin missing: %s", raw)
 	}
-	if !strings.Contains(raw, "prov-a-test-key") || !strings.Contains(raw, "prov-b-test-key") {
-		t.Fatalf("keys lost: %s", raw)
+	if !strings.Contains(providerRaw, "prov-a-test-key") || !strings.Contains(providerRaw, "prov-b-test-key") {
+		t.Fatalf("keys lost: %s", providerRaw)
 	}
-
-	base, ok := headroom.LookupRoute("prov-a-test-key")
-	if !ok || base != "https://api.provider-a.test/v1" {
-		t.Fatalf("prov-a route = %q ok=%v", base, ok)
-	}
-	base, ok = headroom.LookupRoute("prov-b-test-key")
-	if !ok || base != "https://api.provider-b.test/v1" {
-		t.Fatalf("prov-b route = %q ok=%v", base, ok)
-	}
-	mapRaw, _ := util.ReadFileSafe(filepath.Join(util.HeadroomPathsResolved().Root, "proxy.routes.json"))
-	if strings.Contains(mapRaw, "prov-a-test") || strings.Contains(mapRaw, "prov-b-test") {
-		t.Fatalf("raw key leaked into route map: %s", mapRaw)
+	if changed, _ := ConfigureOpenCodeProxy(); changed {
+		t.Fatal("second configure was not idempotent")
 	}
 
 	if !RemoveOpenCodeProxy() {
 		t.Fatal("remove failed")
 	}
-	raw, _ = util.ReadFileSafe(filepath.Join(dir, "config.json"))
-	if !strings.Contains(raw, "provider-a.test") || !strings.Contains(raw, "provider-b.test") {
-		t.Fatalf("hosts not restored: %s", raw)
+	raw, _ = util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	providerRaw, _ = util.ReadFileSafe(filepath.Join(dir, "config.json"))
+	if !strings.Contains(providerRaw, "provider-a.test") || !strings.Contains(providerRaw, "provider-b.test") {
+		t.Fatalf("provider upstream changed: %s", providerRaw)
+	}
+	if strings.Contains(raw, `"plugin"`) {
+		t.Fatalf("transport plugin was not removed: %s", raw)
 	}
 	if OpenCodeProxyWired() {
 		t.Fatal("still wired after remove")
-	}
-	if _, ok := headroom.LookupRoute("prov-a-test-key"); ok {
-		t.Fatal("route map not cleared")
 	}
 }
 
@@ -239,15 +224,11 @@ func TestWireUnwireRoundTripNoCrossWire(t *testing.T) {
 	if err := util.WriteFile(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	wantLines := strings.Count(cfg, "\n")
 	changed, routes := wireOpenCodeBYOK()
 	if !changed || len(routes) != 3 {
 		t.Fatalf("wire changed=%v routes=%d", changed, len(routes))
 	}
 	raw, _ := util.ReadFileSafe(path)
-	if strings.Count(raw, "\n") != wantLines {
-		t.Fatalf("wire smashed lines: got %d want %d", strings.Count(raw, "\n"), wantLines)
-	}
 	if strings.Count(raw, `"baseURL": "http://127.0.0.1:8787/v1"`) != 3 {
 		t.Fatalf("not all wired:\n%s", raw)
 	}
@@ -255,9 +236,6 @@ func TestWireUnwireRoundTripNoCrossWire(t *testing.T) {
 		t.Fatal("unwire no change")
 	}
 	raw, _ = util.ReadFileSafe(path)
-	if strings.Count(raw, "\n") != wantLines {
-		t.Fatalf("unwire smashed lines: got %d want %d", strings.Count(raw, "\n"), wantLines)
-	}
 	for _, host := range []string{"provider-a.test", "provider-b.test", "provider-c.test"} {
 		if !strings.Contains(raw, host) {
 			t.Fatalf("host %s not restored:\n%s", host, raw)
@@ -276,5 +254,30 @@ func TestWireUnwireRoundTripNoCrossWire(t *testing.T) {
 	raw2, _ := util.ReadFileSafe(path)
 	if raw2 != raw {
 		t.Fatalf("second round-trip drifted\n--- first ---\n%s\n--- second ---\n%s", raw, raw2)
+	}
+}
+
+func TestUnwireOpenCodeBYOKDoesNotOverwriteUserEdit(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	if err := util.WriteFile(path, `{"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"key-a"},"models":{}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := wireOpenCodeBYOK(); !changed {
+		t.Fatal("wire no change")
+	}
+	if err := util.WriteFile(path, `{"provider":{"prov-a":{"options":{"baseURL":"https://user-edited.example/v1"}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if unwireOpenCodeBYOK() {
+		t.Fatal("unwire should ignore user-edited provider")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, "https://user-edited.example/v1") {
+		t.Fatalf("user edit overwritten: %s", raw)
 	}
 }

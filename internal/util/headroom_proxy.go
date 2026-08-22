@@ -17,6 +17,8 @@ type ProxyRuntime struct {
 	Port         int    `json:"port"`
 	AnthropicURL string `json:"anthropic_api_url"`
 	OpenAIURL    string `json:"openai_api_url"`
+	GeminiURL    string `json:"gemini_api_url"`
+	CloudCodeURL string `json:"cloudcode_api_url"`
 	Provider     string `json:"provider"`
 }
 

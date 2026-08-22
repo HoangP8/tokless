@@ -27,8 +27,6 @@ func TestDefaultProviderSpecByteIdentity(t *testing.T) {
 	}
 }
 
-
-
 func TestProviderSpecActiveDefaultsWithoutEnv(t *testing.T) {
 	util.SetHomeOverride(t.TempDir())
 	t.Setenv(proxyProviderEnv, "")
@@ -37,7 +35,6 @@ func TestProviderSpecActiveDefaultsWithoutEnv(t *testing.T) {
 		t.Fatalf("default active spec = %+v", got)
 	}
 }
-
 
 func TestProxyWireModelAndKeyEnvOverride(t *testing.T) {
 	t.Setenv("TOKLESS_PROXY_MODEL", "deepseek-v4-flash")
@@ -105,15 +102,12 @@ func TestConfigureOpenCodeProxyBYOKOnlyNoHeadroomInject(t *testing.T) {
 		t.Fatal("configure was not idempotent")
 	}
 	raw, _ := util.ReadFileSafe(gatePath)
-	if strings.Contains(raw, `"headroom"`) {
-		t.Fatalf("must not inject headroom provider: %s", raw)
-	}
-	if !strings.Contains(raw, `"baseURL":"http://127.0.0.1:8787/v1"`) && !strings.Contains(raw, `"baseURL": "http://127.0.0.1:8787/v1"`) {
-		t.Fatalf("BYOK baseURL not wired: %s", raw)
+	if strings.Contains(raw, `"headroom"`) || !strings.Contains(raw, `"baseURL":"https://api.provider-a.test/v1"`) {
+		t.Fatalf("provider config changed: %s", raw)
 	}
 	raw, _ = util.ReadFileSafe(cfgPath)
-	if strings.Contains(raw, `"headroom"`) {
-		t.Fatalf("must not touch opencode.json: %s", raw)
+	if !strings.Contains(raw, `"plugin"`) || !strings.Contains(raw, `"proxyUrl": "http://127.0.0.1:8787"`) {
+		t.Fatalf("transport plugin missing: %s", raw)
 	}
 }
 
@@ -127,12 +121,12 @@ func TestConfigureOpenCodeProxyNoBYOKNoOp(t *testing.T) {
 	if err := util.WriteFile(cfgPath, orig); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureOpenCodeProxy(); changed {
-		t.Fatal("no BYOK must be no-op")
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("transport plugin was not installed")
 	}
 	raw, _ := util.ReadFileSafe(cfgPath)
-	if raw != orig {
-		t.Fatalf("config mutated without BYOK: %s", raw)
+	if !strings.Contains(raw, `"theme": "dark"`) || !strings.Contains(raw, `"plugin"`) {
+		t.Fatalf("config missing original content or transport plugin: %s", raw)
 	}
 }
 
@@ -150,14 +144,15 @@ func TestConfigureOpenCodeProxyMalformedGateNoOp(t *testing.T) {
 	if err := util.WriteFile(gatePath, malformed); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureOpenCodeProxy(); changed {
-		t.Fatal("malformed gate must not change")
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("transport plugin was not installed")
 	}
 	raw, _ := util.ReadFileSafe(gatePath)
 	if raw != malformed {
 		t.Fatalf("malformed gate changed: %q", raw)
 	}
+	raw, _ = util.ReadFileSafe(cfgPath)
+	if !strings.Contains(raw, `"plugin"`) {
+		t.Fatalf("transport plugin missing: %s", raw)
+	}
 }
-
-
-

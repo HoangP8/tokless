@@ -32,7 +32,7 @@ func TestHeadroomProxyRuntimePersistsAndRoundTrips(t *testing.T) {
 	if got := HeadroomProxyPort(); got != 8787 {
 		t.Fatalf("default port = %d, want 8787", got)
 	}
-	st := ProxyRuntime{Port: 19787, AnthropicURL: "https://api.provider-a.test", OpenAIURL: "https://api.openai.com"}
+	st := ProxyRuntime{Port: 19787, AnthropicURL: "https://api.provider-a.test", OpenAIURL: "https://api.openai.com", GeminiURL: "https://gemini.provider-a.test", CloudCodeURL: "https://cloudcode.provider-a.test"}
 	if err := SaveHeadroomProxyRuntime(st); err != nil {
 		t.Fatal(err)
 	}
