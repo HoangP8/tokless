@@ -272,7 +272,7 @@ func toklessManagedCommand(command string, args ...string) bool {
 	}
 	exe := strings.Trim(fields[0], `"'`)
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(exe, "\\", "/")))
-	return base == "tokless" || base == "tokless.exe"
+	return base == "tokless" || base == "tokless.exe" || strings.HasPrefix(base, "tokless-")
 }
 
 // InstallAntigravityRtkHook installs the PreToolUse hook for agy.
@@ -682,7 +682,7 @@ func RemoveAntigravityEntry(entry string) {
 func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
+		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 		RemoveAntigravityCodegraphToolDefs()
 	} else {
 		spawn = util.McpSpawnFor(toolID)

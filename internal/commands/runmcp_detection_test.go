@@ -13,6 +13,8 @@ func TestCodegraphMcpCommand(t *testing.T) {
 		{"cmd wrapper", []string{"cmd", "/c", `C:\bin\codegraph.cmd`, "serve"}, `C:\bin\codegraph.cmd`},
 		{"cmd exe wrapper", []string{`C:\Windows\System32\cmd.exe`, "/c", `C:\bin\codegraph.cmd`, "serve"}, `C:\bin\codegraph.cmd`},
 		{"cmd bat", []string{"CMD", "/C", `C:\bin\codegraph.bat`, "serve"}, `C:\bin\codegraph.bat`},
+		{"npx fallback", []string{"npx", "--no-install", "@colbymchenry/codegraph", "serve"}, "npx"},
+		{"cmd npx fallback", []string{"cmd", "/c", "npx", "--no-install", "@colbymchenry/codegraph", "serve"}, "npx"},
 		{"other", []string{"context-mode", "serve"}, ""},
 	}
 	for _, tt := range tests {

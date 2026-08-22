@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRunCodegraphIndexHookUsesSharedBlockingIndex(t *testing.T) {
+func TestRunCodegraphIndexHookUsesPlainInit(t *testing.T) {
 	binDir := t.TempDir()
 	project := t.TempDir()
 	log := filepath.Join(binDir, "calls")
@@ -45,7 +45,7 @@ func TestRunCodegraphIndexHookUsesSharedBlockingIndex(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, ".codegraph")); err != nil {
 		t.Fatalf("init did not finish before hook returned: %v", err)
 	}
-	if got, err := os.ReadFile(log); err != nil || string(got) != "init -i\n" {
+	if got, err := os.ReadFile(log); err != nil || string(got) != "init\n" {
 		t.Fatalf("calls = %q, err = %v", got, err)
 	}
 }

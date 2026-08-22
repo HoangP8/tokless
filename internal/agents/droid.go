@@ -87,7 +87,7 @@ var droidEnabledTools = map[string][]string{
 func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
+		spawn = util.WrapAutoIndex("droid", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.McpSpawnFor(toolID)
 	}

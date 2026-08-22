@@ -89,8 +89,8 @@ func TestConfigureCopilotMcp_Codegraph(t *testing.T) {
 	if !strings.Contains(raw, `"*"`) {
 		t.Fatal("missing wildcard tool")
 	}
-	if strings.Contains(raw, "run-mcp") {
-		t.Fatal("codegraph should spawn directly, not via run-mcp proxy")
+	if !strings.Contains(raw, "run-mcp") {
+		t.Fatal("codegraph must use Tokless readiness proxy")
 	}
 
 	// Idempotent re-run

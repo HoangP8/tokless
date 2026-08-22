@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/HoangP8/tokless/internal/core"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
+	"github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -54,25 +56,45 @@ command:
 		util.PrependProcessPath(filepath.Dir(argv[0]))
 	}
 	codegraphPath := codegraphMcpCommand(argv)
-	if codegraphPath != "" && codegraphPath == argv[0] && !strings.Contains(argv[0], string(filepath.Separator)) && !util.CodegraphBinaryHealthy(argv[0]) {
+	if codegraphPath != "" && isCodegraphCommand(argv[0]) && !strings.Contains(argv[0], string(filepath.Separator)) && !util.CodegraphBinaryHealthy(argv[0]) {
 		if p := util.ResolveCodegraphBin(); p != "" {
 			argv[0] = p
 		}
 	}
 	if codegraphPath != "" {
+		if root := codegraphWorkspace(workspace); root != "" {
+			if ok, err := tools.EnsureCodegraphIndex(root, core.RunOpts{}); err != nil || !ok {
+				if err != nil {
+					util.L.Err("CodeGraph index: " + err.Error())
+				}
+				return 1
+			}
+		}
 		argv = injectCodegraphPath(argv, workspace)
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		path = argv[0]
 	}
-	var afterStart func()
-	if codegraphPath != "" {
-		afterStart = func() {
-			go func() { _ = RunCodegraphMcpBootstrap(workspace) }()
+	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), tool, nil)
+}
+
+func codegraphWorkspace(workspace string) string {
+	if workspace == "${workspaceFolder}" {
+		workspace = ""
+	}
+	if workspace == "" {
+		var err error
+		workspace, err = os.Getwd()
+		if err != nil {
+			return ""
 		}
 	}
-	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), tool, afterStart)
+	root := findProjectDir(workspace)
+	if !looksLikeProject(root) {
+		return ""
+	}
+	return root
 }
 
 // codegraphMcpCommand returns CodeGraph executable for direct and cmd /c forms.
@@ -80,14 +102,25 @@ func codegraphMcpCommand(argv []string) string {
 	if len(argv) > 0 && isCodegraphCommand(argv[0]) {
 		return argv[0]
 	}
+	if isCodegraphNpxCommand(argv) {
+		return argv[0]
+	}
 	if len(argv) < 3 {
 		return ""
 	}
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(argv[0], "\\", "/")))
-	if (base == "cmd" || base == "cmd.exe") && strings.EqualFold(argv[1], "/c") && isCodegraphCommand(argv[2]) {
+	if (base == "cmd" || base == "cmd.exe") && strings.EqualFold(argv[1], "/c") && (isCodegraphCommand(argv[2]) || isCodegraphNpxCommand(argv[2:])) {
 		return argv[2]
 	}
 	return ""
+}
+
+func isCodegraphNpxCommand(argv []string) bool {
+	if len(argv) < 3 {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(argv[0], "\\", "/")))
+	return (base == "npx" || base == "npx.cmd" || base == "npx.exe") && argv[1] == "--no-install" && argv[2] == "@colbymchenry/codegraph"
 }
 
 // injectCodegraphPath pins the CodeGraph project root with --path when the MCP
@@ -101,6 +134,9 @@ func injectCodegraphPath(argv []string, workspace ...string) []string {
 	dir := ""
 	if len(workspace) > 0 {
 		dir = workspace[0]
+	}
+	if dir == "${workspaceFolder}" {
+		dir = ""
 	}
 	if dir == "" {
 		var err error

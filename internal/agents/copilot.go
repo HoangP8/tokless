@@ -302,7 +302,7 @@ func ConfigureCopilotMcp(toolID string) (changed bool, file string) {
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
+		spawn = util.WrapAutoIndex("copilot", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.McpSpawnFor(toolID)
 	}
@@ -387,7 +387,7 @@ func ConfigureCopilotIdeMcp(toolID string) (changed bool, file string) {
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
-		spawn = util.PickMcpSpawn("codegraph", "serve", "--mcp")
+		spawn = util.WrapAutoIndex("copilot", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.McpSpawnFor(toolID)
 	}

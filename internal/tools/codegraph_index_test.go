@@ -36,7 +36,7 @@ func TestRunCodegraphIndexInitializesBeforeReturn(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
 	}
-	if !codegraphLogHas(t, log, "init -i") || !dirExists(filepath.Join(project, ".codegraph")) {
+	if !codegraphLogHas(t, log, "init") || !dirExists(filepath.Join(project, ".codegraph")) {
 		t.Fatalf("init did not complete before return: %q", readCodegraphLog(t, log))
 	}
 }
@@ -54,8 +54,8 @@ func TestRunCodegraphIndexIgnoresHostileCodegraphDir(t *testing.T) {
 	}
 }
 
-func TestRunCodegraphIndexSyncsExistingIndex(t *testing.T) {
-	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = sync ] || exit 1")
+func TestRunCodegraphIndexSkipsHealthyIndex(t *testing.T) {
+	_, log := writeCodegraphIndexScript(t, "if [ \"$1\" = status ]; then echo '{\"initialized\":true,\"reindexRecommended\":false,\"index\":{\"state\":\"complete\",\"pendingRefs\":0}}'; exit 0; fi\nexit 1")
 	project := t.TempDir()
 	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
 		t.Fatal(err)
@@ -68,20 +68,58 @@ func TestRunCodegraphIndexSyncsExistingIndex(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
 	}
-	if got := readCodegraphLog(t, log); got != "sync\n" {
-		t.Fatalf("calls = %q, want sync only", got)
+	if got := readCodegraphLog(t, log); got != "status --json\n" {
+		t.Fatalf("calls = %q, want health probe only", got)
 	}
 }
 
-func TestRunCodegraphIndexFallsBackToPlainInit(t *testing.T) {
-	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] && [ \"$2\" != -i ] || exit 1\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db")
+func TestRunCodegraphIndexRebuildsUnhealthyIndex(t *testing.T) {
+	_, log := writeCodegraphIndexScript(t, "if [ \"$1\" = status ]; then exit 1; fi\n[ \"$1\" = index ] || exit 1")
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".codegraph", "codegraph.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := RunCodegraphIndex(project, core.RunOpts{})
+	if err != nil || !ok {
+		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
+	}
+	if got := readCodegraphLog(t, log); got != "status --json\nindex --quiet\n" {
+		t.Fatalf("calls = %q, want health probe and rebuild", got)
+	}
+}
+
+func TestRunCodegraphIndexRebuildsRecommendedIndex(t *testing.T) {
+	_, log := writeCodegraphIndexScript(t, "if [ \"$1\" = status ]; then echo '{\"initialized\":true,\"index\":{\"state\":\"complete\",\"pendingRefs\":0,\"reindexRecommended\":true}}'; exit 0; fi\n[ \"$1\" = index ] || exit 1")
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".codegraph", "codegraph.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := RunCodegraphIndex(project, core.RunOpts{})
+	if err != nil || !ok {
+		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
+	}
+	if got := readCodegraphLog(t, log); got != "status --json\nindex --quiet\n" {
+		t.Fatalf("calls = %q, want health probe and rebuild", got)
+	}
+}
+
+func TestRunCodegraphIndexUsesPlainInit(t *testing.T) {
+	_, log := writeCodegraphIndexScript(t, "[ \"$1\" = init ] && [ \"$2\" = '' ] || exit 1\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db")
 
 	ok, err := RunCodegraphIndex(t.TempDir(), core.RunOpts{})
 	if err != nil || !ok {
 		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
 	}
-	if got := readCodegraphLog(t, log); got != "init -i\ninit\n" {
-		t.Fatalf("calls = %q, want init fallback", got)
+	if got := readCodegraphLog(t, log); got != "init\n" {
+		t.Fatalf("calls = %q, want plain init", got)
 	}
 }
 
@@ -94,7 +132,7 @@ func TestRunCodegraphIndexInitializesEmptyIndexDir(t *testing.T) {
 	if ok, err := RunCodegraphIndex(project, core.RunOpts{}); err != nil || !ok {
 		t.Fatalf("RunCodegraphIndex: ok=%v err=%v", ok, err)
 	}
-	if got := readCodegraphLog(t, log); got != "init -i\n" {
+	if got := readCodegraphLog(t, log); got != "init\n" {
 		t.Fatalf("calls = %q, want init only", got)
 	}
 }

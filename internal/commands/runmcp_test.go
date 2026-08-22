@@ -37,7 +37,7 @@ func TestInjectCodegraphPathUsesWorkspace(t *testing.T) {
 	}
 }
 
-func TestRunMcpStartsProxyBeforeSlowCodegraphIndex(t *testing.T) {
+func TestRunMcpWaitsForCodegraphIndexBeforeStartingProxy(t *testing.T) {
 	binDir := t.TempDir()
 	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
@@ -46,6 +46,7 @@ func TestRunMcpStartsProxyBeforeSlowCodegraphIndex(t *testing.T) {
 	proxy := filepath.Join(project, "proxy")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
+		"if [ \"$1\" = status ]; then echo '{\"initialized\":true,\"index\":{\"state\":\"complete\",\"pendingRefs\":0}}'; exit 0; fi\n" +
 		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
 		"if [ \"$1\" = init ]; then touch \"$CODEGRAPH_INDEXING\"; sleep 1; mkdir -p .codegraph; touch .codegraph/codegraph.db \"$CODEGRAPH_COMPLETE\"; exit 0; fi\n" +
 		"touch \"$CODEGRAPH_PROXY\"\n" +
@@ -75,30 +76,20 @@ func TestRunMcpStartsProxyBeforeSlowCodegraphIndex(t *testing.T) {
 	if code := RunMcp([]string{"codegraph", "serve"}); code != 0 {
 		t.Fatalf("RunMcp = %d", code)
 	}
-	if elapsed := time.Since(started); elapsed >= 900*time.Millisecond {
-		t.Fatalf("RunMcp blocked for slow CodeGraph index: %s", elapsed)
+	if elapsed := time.Since(started); elapsed < 900*time.Millisecond {
+		t.Fatalf("RunMcp did not wait for slow CodeGraph index: %s", elapsed)
 	}
 	if _, err := os.Stat(proxy); err != nil {
 		t.Fatalf("proxy did not start: %v", err)
 	}
-	if _, err := os.Stat(complete); !os.IsNotExist(err) {
-		t.Fatalf("CodeGraph index completed before proxy returned: err=%v", err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, err := os.Stat(complete); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("CodeGraph index did not complete")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if _, err := os.Stat(complete); err != nil {
+		t.Fatalf("CodeGraph index did not complete before proxy launch: %v", err)
 	}
 	got, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatalf("read calls: %v", err)
 	}
-	if !strings.Contains(string(got), "init -i\n") || !strings.Contains(string(got), "serve --path "+project+"\n") {
+	if !strings.Contains(string(got), "init\n") || !strings.Contains(string(got), "serve --path "+project+"\n") {
 		t.Fatalf("calls = %q; want index and valid proxy launch", got)
 	}
 }
@@ -206,6 +197,7 @@ func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {
 	log := filepath.Join(binDir, "calls")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
+		"if [ \"$1\" = status ]; then echo '{\"initialized\":true,\"index\":{\"state\":\"complete\",\"pendingRefs\":0}}'; exit 0; fi\n" +
 		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
 		"[ -f .codegraph/codegraph.db ] || exit 1\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
@@ -240,6 +232,75 @@ func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {
 	}
 	if strings.Contains(string(got), "sync\n") || !strings.Contains(string(got), "serve --path "+project+"\n") {
 		t.Fatalf("calls = %q; want proxy launch without external sync", got)
+	}
+}
+
+func TestCodegraphWorkspaceResolvesCursorVariable(t *testing.T) {
+	project := tempProjectDir(t)
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	if got := codegraphWorkspace("${workspaceFolder}"); got != project {
+		t.Fatalf("workspace = %q, want %q", got, project)
+	}
+	got := injectCodegraphPath([]string{"codegraph", "serve", "--mcp"}, "${workspaceFolder}")
+	if !strings.Contains(strings.Join(got, " "), "--path "+project) {
+		t.Fatalf("args = %q, want workspace path", got)
+	}
+}
+
+func TestRunMcpRepairsUnhealthyExistingCodegraphBeforeLaunch(t *testing.T) {
+	binDir := t.TempDir()
+	project := tempProjectDir(t)
+	log := filepath.Join(binDir, "calls")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
+		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
+		"if [ \"$1\" = status ]; then exit 1; fi\n" +
+		"if [ \"$1\" = index ]; then mkdir -p .codegraph; touch .codegraph/codegraph.db; exit 0; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(project, ".codegraph"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".codegraph", "codegraph.db"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CODEGRAPH_LOG", log)
+	t.Setenv("TOKLESS_TEST", "")
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+	if code := RunMcp([]string{"codegraph", "serve"}); code != 0 {
+		t.Fatalf("RunMcp = %d", code)
+	}
+	got, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "status --json\n") || !strings.Contains(string(got), "index --quiet\n") || !strings.Contains(string(got), "serve --path "+project+"\n") {
+		t.Fatalf("calls = %q; want health probe and repair", got)
 	}
 }
 

@@ -40,8 +40,9 @@ func codegraphEnsureInstalled(opts core.RunOpts) (bool, error) {
 }
 
 var (
-	realInstallOnce sync.Once
-	realInstallRes  bool
+	realInstallOnce  sync.Once
+	realInstallRes   bool
+	codegraphIndexMu sync.Mutex
 )
 
 // codegraphRealInstall runs `codegraph install --target <agent>` per call.
@@ -182,46 +183,136 @@ func HasCodegraphIndex(dir string) bool {
 	return util.Exists(filepath.Join(dir, indexDir, "codegraph.db"))
 }
 
-// RunCodegraphIndex initializes or synchronizes CodeGraph before returning.
+// CodegraphIndexHealthy reports if CodeGraph can open and use its index.
+func CodegraphIndexHealthy(dir string) bool {
+	if !HasCodegraphIndex(dir) {
+		return false
+	}
+	command, args, ok := resolveCodegraphCommand("status", "--json")
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result := util.Run(command, args, util.RunOptions{
+		Cwd:     dir,
+		Capture: true,
+		Ctx:     ctx,
+		Env:     []string{"CODEGRAPH_DIR="},
+	})
+	if result.Code != 0 {
+		return false
+	}
+	var status struct {
+		Initialized bool `json:"initialized"`
+		Index       struct {
+			State              string `json:"state"`
+			PendingRefs        int    `json:"pendingRefs"`
+			ReindexRecommended bool   `json:"reindexRecommended"`
+		} `json:"index"`
+	}
+	if json.Unmarshal([]byte(result.Stdout), &status) != nil {
+		return false
+	}
+	return status.Initialized && !status.Index.ReindexRecommended && status.Index.State == "complete" && status.Index.PendingRefs == 0
+}
+
+// RunCodegraphIndex initializes missing or rebuilds unusable CodeGraph indexes.
 func RunCodegraphIndex(dir string, opts core.RunOpts) (bool, error) {
+	codegraphIndexMu.Lock()
+	defer codegraphIndexMu.Unlock()
 	if isTest() {
 		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
 		return true, nil
 	}
-	bin := util.ResolveCodegraphBin()
-	if bin == "" {
+	if _, _, ok := resolveCodegraphCommand(); !ok {
 		return false, fmt.Errorf("codegraph executable not found")
 	}
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would run codegraph in " + dir)
 		return true, nil
 	}
-	return codegraphSync(bin, dir)
-}
-
-func codegraphSync(bin, dir string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), codegraphIndexTimeout)
-	defer cancel()
-	run := func(args ...string) util.ExecResult {
-		command, commandArgs := codegraphRunCommand(bin, args...)
-		return util.Run(command, commandArgs, util.RunOptions{Cwd: dir, Capture: true, Ctx: ctx, Env: []string{"CODEGRAPH_DIR="}})
-	}
-	if util.Exists(filepath.Join(dir, ".codegraph", "codegraph.db")) {
-		if result := run("sync"); result.Code != 0 {
-			return false, fmt.Errorf("codegraph sync failed%s", codegraphFailure(result.Stderr))
-		}
+	if CodegraphIndexHealthy(dir) {
 		return true, nil
 	}
-	if result := run("init", "-i"); result.Code == 0 {
+	if HasCodegraphIndex(dir) {
+		ok, err := RebuildCodegraphIndex(dir, opts)
+		if !ok && CodegraphIndexHealthy(dir) {
+			return true, nil
+		}
+		return ok, err
+	}
+	ok, err := initializeCodegraphIndex(dir)
+	if !ok && CodegraphIndexHealthy(dir) {
+		return true, nil
+	}
+	return ok, err
+}
+
+// RebuildCodegraphIndex replaces an unusable existing index with a fresh one.
+// `sync` cannot recover a database whose schema is missing or corrupt.
+func RebuildCodegraphIndex(dir string, opts core.RunOpts) (bool, error) {
+	if isTest() {
+		_ = os.MkdirAll(filepath.Join(dir, ".codegraph"), 0o755)
+		return true, nil
+	}
+	if _, _, ok := resolveCodegraphCommand(); !ok {
+		return false, fmt.Errorf("codegraph executable not found")
+	}
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would rebuild codegraph in " + dir)
+		return true, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), codegraphIndexTimeout)
+	defer cancel()
+	command, args, _ := resolveCodegraphCommand("index", "--quiet")
+	result := util.Run(command, args, util.RunOptions{
+		Cwd:     dir,
+		Capture: true,
+		Ctx:     ctx,
+		Env:     []string{"CODEGRAPH_DIR="},
+	})
+	if result.Code != 0 {
+		if ctx.Err() != nil {
+			return false, fmt.Errorf("codegraph rebuild failed: timed out")
+		}
+		return false, fmt.Errorf("codegraph rebuild failed%s", codegraphFailure(result.Stderr))
+	}
+	return true, nil
+}
+
+// EnsureCodegraphIndex makes CodeGraph ready before an MCP client can call it.
+func EnsureCodegraphIndex(dir string, opts core.RunOpts) (bool, error) {
+	return RunCodegraphIndex(dir, opts)
+}
+
+func initializeCodegraphIndex(dir string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), codegraphIndexTimeout)
+	defer cancel()
+	command, args, _ := resolveCodegraphCommand("init")
+	result := util.Run(command, args, util.RunOptions{Cwd: dir, Capture: true, Ctx: ctx, Env: []string{"CODEGRAPH_DIR="}})
+	if result.Code == 0 {
 		return true, nil
 	}
 	if ctx.Err() != nil {
 		return false, fmt.Errorf("codegraph init failed: timed out")
 	}
-	if result := run("init"); result.Code != 0 {
-		return false, fmt.Errorf("codegraph init failed%s", codegraphFailure(result.Stderr))
+	return false, fmt.Errorf("codegraph init failed%s", codegraphFailure(result.Stderr))
+}
+
+// resolveCodegraphCommand returns the installed binary or the package-local
+// npx fallback used by MCP configuration when no global binary is on PATH.
+func resolveCodegraphCommand(args ...string) (string, []string, bool) {
+	if bin := util.ResolveCodegraphBin(); bin != "" {
+		command, commandArgs := codegraphRunCommand(bin, args...)
+		return command, commandArgs, true
 	}
-	return true, nil
+	npx := util.Which("npx")
+	if npx == "" {
+		return "", nil, false
+	}
+	command, commandArgs := codegraphRunCommand(npx, append([]string{"--no-install", "@colbymchenry/codegraph"}, args...)...)
+	return command, commandArgs, true
 }
 
 func codegraphRunCommand(bin string, args ...string) (string, []string) {

@@ -171,7 +171,7 @@ func RunCodegraphAutoIndex(workspace ...string) int {
 	return runCodegraphAutoIndex(dir)
 }
 
-// RunCodegraphMcpBootstrap initializes only a missing CodeGraph index.
+// RunCodegraphMcpBootstrap initializes or repairs the CodeGraph index.
 func RunCodegraphMcpBootstrap(workspace ...string) int {
 	dir := ""
 	if len(workspace) > 0 {
@@ -185,7 +185,7 @@ func RunCodegraphMcpBootstrap(workspace ...string) int {
 		}
 	}
 	dir = findProjectDir(dir)
-	if !looksLikeProject(dir) || tools.HasCodegraphIndex(dir) {
+	if !looksLikeProject(dir) || tools.CodegraphIndexHealthy(dir) {
 		return 0
 	}
 	return runCodegraphAutoIndex(dir)
