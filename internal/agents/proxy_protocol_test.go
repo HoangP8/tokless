@@ -17,7 +17,7 @@ func TestProxyEndpointForRouting(t *testing.T) {
 	openai := proxyTestURL + "/v1"
 	bare := proxyTestURL
 
-	for _, id := range []string{"opencode", "kilo", "pi", "droid", "grok", "copilot", "cline"} {
+	for _, id := range []string{"codex", "opencode", "kilo", "pi", "droid", "grok", "copilot", "cline"} {
 		if got := ProxyEndpointFor(id); got != openai {
 			t.Errorf("ProxyEndpointFor(%q) = %q, want %q", id, got, openai)
 		}
@@ -27,7 +27,7 @@ func TestProxyEndpointForRouting(t *testing.T) {
 			t.Errorf("ProxyEndpointFor(%q) = %q, want bare %q", id, got, bare)
 		}
 	}
-	for _, id := range []string{"codex", "cursor", "unknown"} {
+	for _, id := range []string{"cursor", "unknown"} {
 		if got := ProxyEndpointFor(id); got != "" {
 			t.Errorf("ProxyEndpointFor(%q) = %q, want empty", id, got)
 		}

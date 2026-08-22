@@ -96,10 +96,26 @@ func DetectProxy(id string) ProxyDetection {
 	case "omp":
 		return detectOmpProxy(capability)
 	case "codex":
-		return proxyDetection(id, "manual configuration not observable", ProxyStateUnknown)
+		if CodexProxyWired() {
+			return proxyDetection(id, "exact managed endpoint; model_providers.headroom through proxy", ProxyStateManaged)
+		}
+		raw, err := readProxyConfig(util.CodexPathsResolved().Config)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return proxyDetection(id, "config absent", ProxyStateAbsent)
+			}
+			return proxyDetection(id, "config unreadable", ProxyStateUnreadable)
+		}
+		if strings.TrimSpace(raw) == "" {
+			return proxyDetection(id, "config empty", ProxyStateUnreadable)
+		}
+		if util.HasBlock(raw, codexProxyProvider) {
+			return proxyDetection(id, "headroom provider differs", ProxyStateConflict)
+		}
+		return proxyDetection(id, "headroom provider not configured", ProxyStateUnconfigured)
 	case "opencode":
-		if openCodeBYOKWired() {
-			return proxyDetection(id, "managed (byok baseURL through proxy)", ProxyStateManaged)
+		if OpenCodeProxyWired() {
+			return proxyDetection(id, "managed transport plugin preserves provider endpoint and credentials", ProxyStateManaged)
 		}
 		spec := ProviderSpecActive()
 		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(id), spec))

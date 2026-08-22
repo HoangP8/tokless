@@ -32,6 +32,7 @@ func TestInstallCodexRtkHookMigratesManagedOnly(t *testing.T) {
 	cfg := codexHookFixture("PreToolUse", codexHookMatcher,
 		`C:\old\tokless.exe rtk-hook codex`,
 		`D:\old\tokless.exe rtk-hook codex`,
+		"/tmp/tokless-dev rtk-hook codex",
 		"custom-wrapper rtk-hook codex",
 	)
 	if err := util.WriteFile(codexHooksFile(), util.StringifyJSON(cfg)); err != nil {
@@ -114,6 +115,7 @@ func TestCodexPermissionHookManagedOwnership(t *testing.T) {
 	cfg := codexHookFixture("PermissionRequest", codexPermHookMatcher,
 		`C:\old\tokless.exe codex-perm codex`,
 		`D:\old\tokless.exe codex-perm codex`,
+		"/tmp/tokless-dev codex-perm codex",
 		"custom-wrapper codex-perm codex",
 	)
 	if err := util.WriteFile(codexHooksFile(), util.StringifyJSON(cfg)); err != nil {

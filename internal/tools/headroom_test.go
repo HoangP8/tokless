@@ -19,6 +19,9 @@ func setupHeadroomHome(t *testing.T) string {
 	t.Setenv("TOKLESS_TEST", "1")
 	agents.SetIdeProjectRoot(home)
 	ConfigureInstructionConflicts(true)
+	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { util.SetHomeOverride(""); agents.SetIdeProjectRoot(""); ConfigureInstructionConflicts(false) })
 	return home
 }
@@ -55,7 +58,7 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	if err := util.WriteFile(filepath.Join(util.ClinePathsResolved().DataDir, "settings", "providers.json"), `{}`); err != nil {
 		t.Fatal(err)
 	}
-	for _, agent := range []string{"claude", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline"} {
+	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline"} {
 		t.Run(agent, func(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				ok, err := headroom.WireFor[agent](core.RunOpts{})
@@ -71,11 +74,11 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	}
 }
 
-// Codex and Cursor are manual agents: no config tokless writes, wiring
+// Cursor is a manual agent: no config tokless writes, wiring
 // is a no-op, and verify always passes (nothing observable to check).
 func TestHeadroomManualAgentsAreNoOps(t *testing.T) {
 	setupHeadroomHome(t)
-	for _, agent := range []string{"codex", "cursor"} {
+	for _, agent := range []string{"cursor"} {
 		ok, err := headroom.WireFor[agent](core.RunOpts{})
 		if err != nil || !ok {
 			t.Fatalf("wire %s = %v, %v", agent, ok, err)

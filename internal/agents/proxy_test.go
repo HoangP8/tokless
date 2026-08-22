@@ -256,7 +256,7 @@ base_url = "http://user.example"
 `); err != nil {
 		t.Fatal(err)
 	}
-	if got := DetectProxy("codex"); got.State != ProxyStateUnknown {
+	if got := DetectProxy("codex"); got.State != ProxyStateConflict {
 		t.Fatalf("codex existing state = %s", got.State)
 	}
 	if err := util.WriteFile(path, `# model_provider = "headroom"
@@ -282,26 +282,29 @@ func TestDetectCodexRequiresExactManagedProviderBlock(t *testing.T) {
 [model_providers.headroom]
 name = "Foreign proxy"
 base_url = "` + endpoint + `"
-supports_websockets = true
-`, state: ProxyStateUnknown},
+wire_api = "responses"
+experimental_bearer_token = "tokless"
+supports_websockets = false
+`, state: ProxyStateConflict},
 		{name: "exact block", block: `
 [model_providers.headroom]
-supports_websockets = true # text [model_providers.headroom] name = "wrong"
+wire_api = "responses" # text [model_providers.headroom] name = "wrong"
 name = "Headroom persistent proxy"
 base_url = "` + endpoint + `#not-a-comment"
-`, state: ProxyStateUnknown},
-		{name: "exact desired block", block: `
-[model_providers.headroom]
-name = "Headroom persistent proxy" # foreign text [model_providers.headroom]
-base_url = "` + endpoint + `"
-supports_websockets = true
-`, state: ProxyStateUnknown},
+`, state: ProxyStateConflict},
+		{name: "exact desired block", block: `model_provider = "headroom"
+openai_base_url = "` + endpoint + `"
+
+` + codexProxySeed(false) + codexDesiredBlock(endpoint), state: ProxyStateManaged},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := `model_provider = "headroom"
 openai_base_url = "` + endpoint + `"
 ` + tc.block
+			if tc.name == "exact desired block" {
+				raw = tc.block
+			}
 			if err := util.WriteFile(path, raw); err != nil {
 				t.Fatal(err)
 			}
@@ -324,7 +327,7 @@ openai_base_url = "` + endpoint + `"
 		t.Fatal(err)
 	}
 	got := DetectProxy("codex")
-	if got.State != ProxyStateUnknown {
+	if got.State != ProxyStateUnconfigured {
 		t.Fatalf("codex managed endpoint text state = %s", got.State)
 	}
 }
@@ -343,8 +346,8 @@ supports_websockets = true
 	if err := util.WriteFile(path, raw); err != nil {
 		t.Fatal(err)
 	}
-	if got := DetectProxy("codex"); got.State != ProxyStateUnknown {
-		t.Fatalf("codex state = %s, want %s", got.State, ProxyStateUnknown)
+	if got := DetectProxy("codex"); got.State != ProxyStateConflict {
+		t.Fatalf("codex state = %s, want %s", got.State, ProxyStateConflict)
 	}
 }
 
@@ -372,12 +375,238 @@ use_system_prompt_optimizer = true
 }
 
 func TestCodexProxyIsManual(t *testing.T) {
-	setTestHome(t)
-	if ConfigureProxyAgent("codex") || RemoveProxyAgent("codex") || ProxyAgentWired("codex") {
-		t.Fatal("codex proxy must be manual and unwired")
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(path, `model_provider = "headroom"
+openai_base_url = "`+ProxyEndpointFor("codex")+`"
+
+`+codexProxySeed(false)+codexDesiredBlock(ProxyEndpointFor("codex"))); err != nil {
+		t.Fatal(err)
 	}
-	if got := DetectProxy("codex"); got.State != ProxyStateUnknown || got.Capability.WireKind != ProxyWireManual {
+	if !ConfigureProxyAgent("codex") && !ProxyAgentWired("codex") {
+		t.Fatal("codex proxy must be wired via managed route")
+	}
+	if got := DetectProxy("codex"); got.State != ProxyStateManaged || got.Capability.WireKind != ProxyWireManagedRoute {
 		t.Fatalf("codex detection = %+v", got)
+	}
+	if !RemoveProxyAgent("codex") {
+		t.Fatal("codex proxy remove failed")
+	}
+}
+
+func codexDesiredBlock(endpoint string) string {
+	return `
+[model_providers.headroom]
+name = "Headroom persistent proxy"
+base_url = "` + endpoint + `"
+wire_api = "responses"
+supports_websockets = false
+`
+}
+
+func TestConfigureCodexProxyUsesChatGPTOAuthWhenLoggedIn(t *testing.T) {
+	codexProxyTestHome(t)
+	if err := util.EnsureDir(util.CodexPathsResolved().Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := ConfigureCodexProxy()
+	if !changed {
+		t.Fatal("Codex proxy configuration was not written")
+	}
+	raw, ok := util.ReadFileSafe(util.CodexPathsResolved().Config)
+	if !ok {
+		t.Fatal("Codex proxy configuration missing")
+	}
+	for _, want := range []string{
+		`model_provider = "headroom"`,
+		`openai_base_url = "` + ProxyEndpointFor("codex") + `"`,
+		`requires_openai_auth = true`,
+		`supports_websockets = false`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("Codex proxy config missing %q:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "experimental_bearer_token") || strings.Contains(raw, "env_key") {
+		t.Fatalf("Codex config must preserve native OAuth auth:\n%s", raw)
+	}
+	if info, err := os.Stat(util.CodexPathsResolved().Config); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("Codex config mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+}
+
+func TestCodexProxyRefusesSimilarForeignProvider(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	foreign := `model_provider = "headroom"
+openai_base_url = "` + ProxyEndpointFor("codex") + `"
+
+[model_providers.headroom]
+name = "Headroom persistent proxy"
+base_url = "` + ProxyEndpointFor("codex") + `"
+user_option = true
+`
+	if err := util.WriteFile(path, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); changed {
+		t.Fatal("configure rewrote a similar foreign provider")
+	}
+	if RemoveCodexProxy() {
+		t.Fatal("remove deleted a similar foreign provider")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if raw != foreign {
+		t.Fatalf("foreign provider changed:\n%s", raw)
+	}
+}
+
+func TestConfigureCodexProxyMigratesHistoricalWebsocketFlavor(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	historical := strings.Replace(codexProxySection(ProxyEndpointFor("codex"), nil), "supports_websockets = false", "supports_websockets = true", 1)
+	if err := util.WriteFile(path, historical); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := ConfigureCodexProxy()
+	if !changed {
+		t.Fatal("historical managed flavor was not migrated")
+	}
+	migrated, _ := util.ReadFileSafe(path)
+	if !strings.Contains(migrated, "supports_websockets = false") || strings.Contains(migrated, "supports_websockets = true") {
+		t.Fatalf("migration did not rewrite the managed block:\n%s", migrated)
+	}
+	if !RemoveCodexProxy() {
+		t.Fatal("remove rejected a historical managed flavor")
+	}
+}
+
+func TestCodexProxyRefusesEditedMarkedProvider(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	foreign := strings.Replace(codexProxySection(ProxyEndpointFor("codex"), nil), "supports_websockets = false", "supports_websockets = false\nuser_option = true", 1)
+	if err := util.WriteFile(path, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); changed {
+		t.Fatal("configure rewrote an edited marked provider")
+	}
+	if RemoveCodexProxy() {
+		t.Fatal("remove deleted an edited marked provider")
+	}
+}
+
+func TestCodexProxyPreservesTUIRootExtras(t *testing.T) {
+	codexProxyTestHome(t)
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	path := util.CodexPathsResolved().Config
+	base := codexProxySection(ProxyEndpointFor("codex"), nil)
+	withExtra := strings.Replace(base, `openai_base_url = "`+ProxyEndpointFor("codex")+`"`, "openai_base_url = \""+ProxyEndpointFor("codex")+"\"\nmodel_reasoning_effort = \"medium\"", 1)
+	if err := util.WriteFile(path, withExtra); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := ConfigureCodexProxy()
+	if changed {
+		t.Fatal("canonical-plus-extras should need no rewrite")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, "model_reasoning_effort = \"medium\"") || !strings.Contains(raw, codexMarkerStart) {
+		t.Fatalf("extras lost on no-op configure:\n%s", raw)
+	}
+	if !RemoveCodexProxy() {
+		t.Fatal("remove failed on canonical-plus-extras")
+	}
+	raw, _ = util.ReadFileSafe(path)
+	if !strings.Contains(raw, "model_reasoning_effort = \"medium\"") {
+		t.Fatalf("extras lost on removal:\n%s", raw)
+	}
+	if strings.Contains(raw, codexMarkerStart) {
+		t.Fatalf("managed block survived removal:\n%s", raw)
+	}
+}
+
+func TestConfigureCodexProxyMigratesHistoricalKeepingExtras(t *testing.T) {
+	codexProxyTestHome(t)
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	path := util.CodexPathsResolved().Config
+	historical := strings.Replace(codexProxySection(ProxyEndpointFor("codex"), nil), "supports_websockets = false", "supports_websockets = true", 1)
+	withExtra := strings.Replace(historical, `openai_base_url = "`+ProxyEndpointFor("codex")+`"`, "openai_base_url = \""+ProxyEndpointFor("codex")+"\"\nnotify_favorite = \"x\"", 1)
+	if err := util.WriteFile(path, withExtra); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := ConfigureCodexProxy()
+	if !changed {
+		t.Fatal("historical flavor was not migrated")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if strings.Contains(raw, "supports_websockets = true") || !strings.Contains(raw, "notify_favorite = \"x\"") {
+		t.Fatalf("migration lost extras or kept old ws value:\n%s", raw)
+	}
+}
+
+func TestCodexProxyRefusesUserEditedManagedKeys(t *testing.T) {
+	codexProxyTestHome(t)
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	path := util.CodexPathsResolved().Config
+	oauthBase := codexProxySection(ProxyEndpointFor("codex"), nil)
+	byokBase := codexProxySection(ProxyEndpointFor("codex"), &openCodeBYOK{})
+	cases := []struct {
+		name        string
+		base        string
+		needle      string
+		replacement string
+	}{
+		{"user flips oauth off", oauthBase, "requires_openai_auth = true", "requires_openai_auth = false"},
+		{"user swaps env_key", byokBase, `env_key = "TOKLESS_CODEX_API_KEY"`, `env_key = "MY_USER_KEY"`},
+		{"comment on managed line", oauthBase, "supports_websockets = false", "supports_websockets = false # user choice"},
+	}
+	for _, tc := range cases {
+		name, needle, replacement := tc.name, tc.needle, tc.replacement
+		foreign := strings.Replace(tc.base, needle, replacement, 1)
+		if foreign == tc.base {
+			t.Fatalf("%s: needle %q not found", name, needle)
+		}
+		if err := util.WriteFile(path, foreign); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := util.ReadFileSafe(path)
+		if changed, _ := ConfigureCodexProxy(); changed {
+			t.Fatalf("%s: configure rewrote user-edited managed key", name)
+		}
+		if RemoveCodexProxy() {
+			t.Fatalf("%s: remove deleted user-edited marked provider", name)
+		}
+		after, _ := util.ReadFileSafe(path)
+		if after != before {
+			t.Fatalf("%s: bytes changed", name)
+		}
+	}
+}
+
+func TestConfigureCodexProxyRotatesManagedBearer(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(path, codexProxySectionWithBearer(ProxyEndpointFor("codex"))); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); !changed {
+		t.Fatal("configure did not migrate managed bearer")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if strings.Contains(raw, "experimental_bearer_token") || !strings.Contains(raw, "supports_websockets = false") || !strings.Contains(raw, codexMarkerStart) {
+		t.Fatalf("managed config was not migrated to native API-key auth:\n%s", raw)
 	}
 }
 
@@ -405,32 +634,37 @@ func opencodeProxyTestHome(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.WriteFile(openCodeTransportPluginPath(), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOpenCodeProxyScenarios(t *testing.T) {
 	byokSeed := `{"$schema": "https://opencode.ai/config.json", "theme": "dark", "provider": {"prov-a": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "https://api.provider-a.test/v1", "apiKey": "prov-a-key"}, "models": {"m1": {"name": "M1"}}}}}`
 	cases := []proxyScenario{
-		{name: "wire rewrites BYOK baseURL, no headroom inject", seed: byokSeed,
+		{name: "wire installs transport plugin without rewriting BYOK", seed: byokSeed,
 			wantChange: true, wantWired: true, wantContains: []string{
 				`"prov-a"`,
-				`"baseURL": "http://127.0.0.1:8787/v1"`,
+				`"baseURL": "https://api.provider-a.test/v1"`,
+				`"plugin"`,
+				`"proxyUrl": "http://127.0.0.1:8787"`,
 				`"theme": "dark"`,
-			}, wantAbsent: []string{`"headroom"`, `"provider-a.test"`}},
+			}},
 		{name: "second inject idempotent", seed: byokSeed, preConfigure: true,
 			wantChange: false, wantWired: true},
-		{name: "no BYOK no-op", seed: openCodeProxySeed(false),
-			wantChange: false, wantWired: false},
-		{name: "foreign headroom ignored (BYOK-only)", seed: openCodeProxySeed(true),
-			wantChange: false, wantWired: false, keepContains: []string{"User Proxy", "user.example"}},
+		{name: "no BYOK still routes native and future providers", seed: openCodeProxySeed(false),
+			wantChange: true, wantWired: true},
+		{name: "foreign headroom preserved", seed: openCodeProxySeed(true),
+			wantChange: true, wantWired: true, keepContains: []string{"User Proxy", "user.example"}},
 		{name: "refuses non-map provider", seed: `{"provider": "junk"}
 `,
-			wantChange: false, wantWired: false, keepContains: []string{`"junk"`}},
-		{name: "remove restores BYOK baseURL", seed: byokSeed, preConfigure: true,
+			wantChange: true, wantWired: true, keepContains: []string{`"junk"`}},
+		{name: "remove preserves BYOK baseURL", seed: byokSeed, preConfigure: true,
 			remove: true, wantRemoved: true, wantWired: false, wantContains: []string{"provider-a.test"}, wantAbsent: []string{"127.0.0.1:8787"}},
-		{name: "remove leaves foreign headroom", seed: openCodeProxySeed(true),
-			remove: true, wantRemoved: false, wantWired: false, keepContains: []string{"User Proxy", "user.example"}},
-		{name: "absent file not created", seed: "", absent: true,
-			wantChange: false, wantWired: false},
+		{name: "remove leaves foreign provider", seed: openCodeProxySeed(true), preConfigure: true,
+			remove: true, wantRemoved: true, wantWired: false, keepContains: []string{"User Proxy", "user.example"}},
+		{name: "absent file receives plugin", seed: "",
+			wantChange: true, wantWired: true},
 	}
 	runProxyScenarios(t, cases, opencodeProxyTestHome,
 		ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired, func() string { return util.OpenCodePathsResolved().Config })

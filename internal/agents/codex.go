@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -26,7 +27,11 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	} else {
 		spawn = util.McpSpawnFor(toolID)
 	}
-	block := util.NewTomlBlock("mcp_servers." + toolID)
+	section := "mcp_servers." + toolID
+	if toolID == "context-mode" {
+		section = "mcp_servers.context_mode"
+	}
+	block := util.NewTomlBlock(section)
 	block.Set("command", spawn.Command)
 	block.Set("args", spawn.Args)
 	block.Set("enabled", true)
@@ -85,44 +90,534 @@ func sweepStaleHookStateEntries(raw string) string {
 // (headroom/providers/codex/install.py apply_provider_scope).
 const codexProxyProvider = "model_providers.headroom"
 
-func codexProxyBlock(endpoint string) *util.TomlBlock {
+const codexMarkerStart = "# --- Headroom persistent provider ---"
+const codexMarkerEnd = "# --- end Headroom persistent provider ---"
+
+func codexProxyBlock(endpoint string, byok *openCodeBYOK) *util.TomlBlock {
 	block := util.NewTomlBlock(codexProxyProvider)
 	block.Set("name", "Headroom persistent proxy")
 	block.Set("base_url", endpoint)
 	block.Set("wire_api", "responses")
-	block.Set("env_key", "OPENAI_API_KEY")
+	if byok == nil {
+		block.Set("supports_websockets", false)
+		if codexUsesChatGPTAuth() {
+			block.Set("requires_openai_auth", true)
+		}
+		return block
+	}
+	block.Set("env_key", codexByokKeyVar)
+	block.Set("env_http_headers", map[string]string{headroomBaseURLHeader: codexByokURLVar})
 	block.Set("supports_websockets", false)
 	return block
 }
 
+func codexUsesChatGPTAuth() bool {
+	raw, ok := util.ReadFileSafe(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"))
+	if !ok {
+		return false
+	}
+	var auth struct {
+		Mode   string `json:"auth_mode"`
+		Tokens struct {
+			AccountID string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal([]byte(raw), &auth) != nil {
+		return false
+	}
+	return strings.EqualFold(auth.Mode, "chatgpt") || strings.TrimSpace(auth.Tokens.AccountID) != ""
+}
+
+func codexProxyBlockWithBearer(endpoint string) *util.TomlBlock {
+	block := util.NewTomlBlock(codexProxyProvider)
+	block.Set("name", "Headroom persistent proxy")
+	block.Set("base_url", endpoint)
+	block.Set("experimental_bearer_token", "tokless")
+	block.Set("supports_websockets", true)
+	return block
+}
+
+func codexLegacyProxyBlock(endpoint string) *util.TomlBlock {
+	block := util.NewTomlBlock(codexProxyProvider)
+	block.Set("name", "Headroom persistent proxy")
+	block.Set("base_url", endpoint)
+	block.Set("env_key", "OPENAI_API_KEY")
+	block.Set("supports_websockets", true)
+	return block
+}
+
+func stripCodexManagedBlock(raw string) string {
+	re := regexp.MustCompile(`(?s)` + regexp.QuoteMeta(codexMarkerStart) + `.*?` + regexp.QuoteMeta(codexMarkerEnd))
+	return re.ReplaceAllString(raw, "")
+}
+
+func stripCodexRootProviderAssignments(raw string) string {
+	lines := strings.SplitAfter(raw, "\n")
+	var out strings.Builder
+	inRoot := true
+	reHeader := regexp.MustCompile(`^[ \t]*(?:\[\[[^\]\r\n]+\]\]|\[[^\]\r\n]+\])[ \t]*(?:#.*)?$`)
+	reModel := regexp.MustCompile(`^[ \t]*model_provider[ \t]*=`)
+	reURL := regexp.MustCompile(`^[ \t]*openai_base_url[ \t]*=`)
+	for _, line := range lines {
+		noNL := strings.TrimRight(line, "\r\n")
+		if inRoot && reHeader.MatchString(noNL) {
+			inRoot = false
+		}
+		if inRoot && (reModel.MatchString(line) || reURL.MatchString(line)) {
+			continue
+		}
+		out.WriteString(line)
+	}
+	return out.String()
+}
+
+func codexRootValue(raw, key string) string {
+	re := regexp.MustCompile(`^[ \t]*` + regexp.QuoteMeta(key) + `[ \t]*=[ \t]*"([^"]*)"`)
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			break
+		}
+		if m := re.FindStringSubmatch(line); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+func codexMarkedProxy(raw string) bool {
+	return strings.Count(raw, codexMarkerStart) == 1 && strings.Count(raw, codexMarkerEnd) == 1 &&
+		strings.Index(raw, codexMarkerStart) < strings.Index(raw, codexMarkerEnd)
+}
+
+// codexMarkedCurrentProxy matches a marker-wrapped section written by tokless
+// in either flavor (OAuth-native or BYOK).
+func codexMarkedCurrentProxy(raw, endpoint string) bool {
+	_, _, ok := codexMatchedMarkedSection(raw, endpoint)
+	return ok
+}
+
+// codexRootExtras returns top-level scalar lines inside the marked span.
+func codexRootExtras(section string) []string {
+	managed := map[string]bool{"model_provider": true, "openai_base_url": true}
+	var extras []string
+	inBlock := false
+	for _, line := range strings.Split(section, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "[") {
+			inBlock = true
+			continue
+		}
+		if inBlock || t == "" || strings.HasPrefix(t, "#") || !strings.Contains(t, "=") {
+			continue
+		}
+		key := strings.TrimSpace(t[:strings.Index(t, "=")])
+		if !managed[key] {
+			extras = append(extras, line)
+		}
+	}
+	return extras
+}
+
+func codexWithoutLines(section string, drop []string) string {
+	var kept []string
+	for _, line := range strings.Split(section, "\n") {
+		skip := false
+		for _, d := range drop {
+			if line == d {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// codexMatchedMarkedSection reports whether the marker-wrapped section is one
+// tokless authored, ignoring user-owned top-level scalar lines.
+func codexMatchedMarkedSection(raw, endpoint string) (string, []string, bool) {
+	if !codexMarkedProxy(raw) {
+		return "", nil, false
+	}
+	start := strings.Index(raw, codexMarkerStart)
+	end := strings.Index(raw, codexMarkerEnd) + len(codexMarkerEnd)
+	section := strings.TrimSpace(raw[start:end])
+	extras := codexRootExtras(section)
+	core := strings.TrimSpace(codexWithoutLines(section, extras))
+	ok := core == strings.TrimSpace(codexProxySection(endpoint, nil)) ||
+		core == strings.TrimSpace(codexProxySection(endpoint, &openCodeBYOK{})) ||
+		core == strings.TrimSpace(strings.Replace(
+			codexProxySection(endpoint, nil),
+			"supports_websockets = false",
+			"supports_websockets = true",
+			1,
+		))
+	return section, extras, ok
+}
+
+func codexInjectRootExtras(content string, extras []string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines)+len(extras))
+	inSpan := false
+	inserted := false
+	for _, line := range lines {
+		out = append(out, line)
+		if inserted {
+			continue
+		}
+		if strings.Contains(line, codexMarkerStart) {
+			inSpan = true
+			continue
+		}
+		if strings.Contains(line, codexMarkerEnd) {
+			inSpan = false
+			continue
+		}
+		if inSpan && strings.HasPrefix(strings.TrimSpace(line), "openai_base_url ") {
+			out = append(out, extras...)
+			inserted = true
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func codexMarkedLegacyBearerProxy(raw, endpoint string) bool {
+	if !codexMarkedProxy(raw) {
+		return false
+	}
+	start := strings.Index(raw, codexMarkerStart)
+	end := strings.Index(raw, codexMarkerEnd) + len(codexMarkerEnd)
+	want := regexp.MustCompile(`(?m)^experimental_bearer_token = "[^"]*"$`).ReplaceAllString(
+		strings.TrimSpace(codexProxySectionWithBearer(endpoint)), `experimental_bearer_token = "__TOKLESS_BEARER__"`)
+	actual := regexp.MustCompile(`(?m)^experimental_bearer_token = "[^"]*"$`).ReplaceAllString(
+		strings.TrimSpace(raw[start:end]), `experimental_bearer_token = "__TOKLESS_BEARER__"`)
+	return actual == want
+}
+
+func codexLegacyProxy(raw, endpoint string) bool {
+	block := codexProviderBlock(raw)
+	if block == "" {
+		return false
+	}
+	return strings.TrimSpace(block) == strings.TrimSpace(util.RenderBlock(codexLegacyProxyBlock(endpoint)))
+}
+
+func codexProviderBlock(raw string) string {
+	header := "[" + codexProxyProvider + "]"
+	start := -1
+	offset := 0
+	for _, line := range strings.SplitAfter(raw, "\n") {
+		if strings.TrimSpace(line) == header {
+			start = offset
+			break
+		}
+		offset += len(line)
+	}
+	if start < 0 {
+		return ""
+	}
+	block := raw[start:]
+	if next := regexp.MustCompile(`(?m)^\[`).FindStringIndex(block[len(header):]); next != nil {
+		block = block[:len(header)+next[0]]
+	}
+	return block
+}
+
+func codexUnmarkedCurrentProxy(raw, endpoint string, byok *openCodeBYOK) bool {
+	block := codexProviderBlock(raw)
+	if block == "" {
+		return false
+	}
+	return strings.TrimSpace(block) == strings.TrimSpace(util.RenderBlock(codexProxyBlock(endpoint, byok)))
+}
+
+func codexUnmarkedLegacyBearerProxy(raw, endpoint string) bool {
+	block := codexProviderBlock(raw)
+	if block == "" {
+		return false
+	}
+	want := regexp.MustCompile(`(?m)^experimental_bearer_token = "[^"]*"$`).ReplaceAllString(
+		strings.TrimSpace(util.RenderBlock(codexProxyBlockWithBearer(endpoint))), `experimental_bearer_token = "__TOKLESS_BEARER__"`)
+	actual := regexp.MustCompile(`(?m)^experimental_bearer_token = "[^"]*"$`).ReplaceAllString(
+		strings.TrimSpace(block), `experimental_bearer_token = "__TOKLESS_BEARER__"`)
+	return actual == want
+}
+
+func codexProxyOwned(raw, endpoint string) bool {
+	return codexMarkedCurrentProxy(raw, endpoint) || codexMarkedLegacyBearerProxy(raw, endpoint) || codexLegacyProxy(raw, endpoint) || codexUnmarkedCurrentProxy(raw, endpoint, codexByokFlavor(raw)) || codexUnmarkedLegacyBearerProxy(raw, endpoint)
+}
+
+// codexByokFlavor reports whether an existing headroom provider block was
+// written in the BYOK flavor.
+func codexByokFlavor(raw string) *openCodeBYOK {
+	if strings.Contains(codexProviderBlock(raw), "env_http_headers") {
+		return &openCodeBYOK{}
+	}
+	return nil
+}
+
+func insertCodexBlockAtRoot(content, block string) string {
+	block = strings.TrimSpace(block)
+	lines := strings.Split(content, "\n")
+	headerRe := regexp.MustCompile(`^[ \t]*(?:\[\[[^\]\r\n]+\]\]|\[[^\]\r\n]+\])[ \t]*(?:#.*)?$`)
+	for i, line := range lines {
+		if headerRe.MatchString(line) {
+			head := strings.Join(lines[:i], "\n")
+			tail := strings.Join(lines[i:], "\n")
+			head = strings.TrimRight(head, "\n")
+			tail = strings.TrimLeft(tail, "\n")
+			prefix := ""
+			if head != "" {
+				prefix = head + "\n\n"
+			}
+			return strings.TrimRight(prefix+block+"\n\n"+tail, "\n") + "\n"
+		}
+	}
+	return strings.TrimLeft(strings.TrimRight(content, "\n")+"\n\n"+block+"\n", "\n")
+}
+
 func codexProxyWritable(raw, endpoint string) bool {
 	for _, kv := range [][2]string{{"model_provider", "headroom"}, {"openai_base_url", endpoint}} {
-		if have := util.GetTomlTopKey(raw, kv[0]); have != "" && have != kv[1] {
+		if have := codexRootValue(raw, kv[0]); have != "" && have != kv[1] {
 			return false
 		}
 	}
-	return !util.HasBlock(raw, codexProxyProvider) || strings.Contains(raw, util.RenderBlock(codexProxyBlock(endpoint)))
+	if !util.HasBlock(raw, codexProxyProvider) {
+		return codexRootValue(raw, "model_provider") == "" && codexRootValue(raw, "openai_base_url") == ""
+	}
+	return codexProxyOwned(raw, endpoint)
+}
+
+// codexTakeoverTarget reports the BYOK provider tokless may take over the root
+// model_provider.
+func codexTakeoverTarget(raw string) *openCodeBYOK {
+	id := codexRootValue(raw, "model_provider")
+	if id == "" || id == "headroom" {
+		return nil
+	}
+	for _, b := range byokProvidersCached() {
+		if b.ID == id && stripV1Suffix(codexNamedProviderBaseURL(raw, id)) == stripV1Suffix(b.BaseURL) {
+			bb := b
+			return &bb
+		}
+	}
+	return nil
+}
+
+func codexNamedProviderBaseURL(raw, id string) string {
+	re := regexp.MustCompile(`(?s)\[model_providers\.` + regexp.QuoteMeta(id) + `\](.*?)(?:\n\[|\z)`)
+	m := re.FindStringSubmatch(raw)
+	if m == nil {
+		return ""
+	}
+	mm := regexp.MustCompile(`(?m)^\s*base_url\s*=\s*"([^"]*)"`)
+	if v := mm.FindStringSubmatch(m[1]); v != nil {
+		return v[1]
+	}
+	return ""
+}
+
+func stripV1Suffix(u string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(u, "/"), "/v1")
+}
+
+// codexPickBYOK chooses the BYOK provider codex should ride: an already-wired
+// .env keeps its provider, else the user's current provider when discovered,
+// else the first discovered one.
+func codexPickBYOK(raw string) *openCodeBYOK {
+	if codexUsesChatGPTAuth() {
+		return nil
+	}
+	byoks := byokProvidersCached()
+	if len(byoks) == 0 {
+		return nil
+	}
+	if url := codexDotEnvValue(codexByokURLVar); url != "" {
+		for i := range byoks {
+			if stripV1Suffix(byoks[i].BaseURL) == stripV1Suffix(url) {
+				return &byoks[i]
+			}
+		}
+	}
+	if id := codexRootValue(raw, "model_provider"); id != "" && id != "headroom" {
+		for i := range byoks {
+			if byoks[i].ID == id {
+				return &byoks[i]
+			}
+		}
+	}
+	return &byoks[0]
+}
+
+// codexDotEnvValue reads one KEY=value line from CODEX_HOME/.env.
+func codexDotEnvValue(key string) string {
+	raw, _ := util.ReadFileSafe(codexDotEnvPath())
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), key+"=") {
+			return strings.TrimSpace(line[len(key)+1:])
+		}
+	}
+	return ""
+}
+
+var (
+	byokProvidersOnce sync.Once
+	byokProvidersList []openCodeBYOK
+)
+
+func byokProvidersCached() []openCodeBYOK {
+	byokProvidersOnce.Do(func() { byokProvidersList = DiscoverOpenCodeBYOK() })
+	return byokProvidersList
+}
+
+// --- codex BYOK .env + takeover stash ---
+
+const codexByokKeyVar = "TOKLESS_CODEX_API_KEY"
+const codexByokURLVar = "TOKLESS_HEADROOM_BASE_URL"
+
+func codexDotEnvPath() string {
+	return filepath.Join(util.CodexPathsResolved().Dir, ".env")
+}
+
+func upsertCodexDotEnv(kv [][2]string, remove bool) bool {
+	path := codexDotEnvPath()
+	raw, _ := util.ReadFileSafe(path)
+	var out []string
+	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n") {
+		if raw == "" {
+			break
+		}
+		managed := false
+		for _, k := range kv {
+			if strings.HasPrefix(strings.TrimSpace(line), k[0]+"=") {
+				managed = true
+				break
+			}
+		}
+		if managed && remove {
+			continue
+		}
+		if !managed {
+			out = append(out, line)
+		}
+	}
+	if !remove {
+		for _, k := range kv {
+			out = append(out, k[0]+"="+k[1])
+		}
+	}
+	next := strings.Join(out, "\n")
+	if next != "" {
+		next += "\n"
+	}
+	if next == raw {
+		return true
+	}
+	if util.WriteFileMode(path, next, 0o600) != nil {
+		return false
+	}
+	return os.Chmod(path, 0o600) == nil
+}
+
+func writeCodexByokDotEnv(b *openCodeBYOK) bool {
+	return upsertCodexDotEnv([][2]string{
+		{codexByokKeyVar, b.APIKey},
+		{codexByokURLVar, stripV1Suffix(b.BaseURL)},
+	}, false)
+}
+
+type codexStash struct {
+	ProviderID    string `json:"provider_id"`
+	OpenAIBaseURL string `json:"openai_base_url,omitempty"`
+}
+
+func codexStashPath() string {
+	return filepath.Join(util.HeadroomPathsResolved().Root, "codex.proxy.stash.json")
+}
+
+func loadCodexStash() (codexStash, bool) {
+	raw, ok := util.ReadFileSafe(codexStashPath())
+	if !ok {
+		return codexStash{}, true
+	}
+	var s codexStash
+	if json.Unmarshal([]byte(raw), &s) != nil || s.ProviderID == "" {
+		return codexStash{}, false
+	}
+	return s, true
+}
+
+func saveCodexStash(s codexStash) bool {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return false
+	}
+	return util.WriteFileMode(codexStashPath(), string(b), 0o600) == nil
+}
+
+func clearCodexStash() {
+	_ = os.Remove(codexStashPath())
 }
 
 // ConfigureCodexProxy injects headroom's persistent-provider scope into
 // config.toml.
 func ConfigureCodexProxy() (changed bool, file string) {
 	p := util.CodexPathsResolved()
+	_ = util.EnsureDir(p.Dir)
 	raw, ok := util.ReadFileSafe(p.Config)
 	if !ok {
-		return false, p.Config
+		raw = ""
 	}
 	endpoint := ProxyEndpointFor("codex")
+	byok := codexPickBYOK(raw)
+	tookOver := false
 	if !codexProxyWritable(raw, endpoint) {
+		takeover := codexTakeoverTarget(raw)
+		if takeover == nil {
+			return false, p.Config
+		}
+		if !saveCodexStash(codexStash{
+			ProviderID:    codexRootValue(raw, "model_provider"),
+			OpenAIBaseURL: codexRootValue(raw, "openai_base_url"),
+		}) {
+			return false, p.Config
+		}
+		byok = takeover
+		tookOver = true
+	}
+	var rootExtras []string
+	original := raw
+	if codexMarkedCurrentProxy(raw, endpoint) {
+		_, rootExtras, _ = codexMatchedMarkedSection(raw, endpoint)
+		raw = stripCodexManagedBlock(raw)
+	} else if codexMarkedLegacyBearerProxy(raw, endpoint) {
+		raw = stripCodexManagedBlock(raw)
+	} else if codexLegacyProxy(raw, endpoint) || codexUnmarkedCurrentProxy(raw, endpoint, codexByokFlavor(raw)) || codexUnmarkedLegacyBearerProxy(raw, endpoint) {
+		raw = stripCodexRootProviderAssignments(raw)
+		raw = util.RemoveBlock(raw, codexProxyProvider)
+	}
+	if tookOver {
+		raw = stripCodexRootProviderAssignments(raw)
+	}
+	if util.HasBlock(raw, codexProxyProvider) {
 		return false, p.Config
 	}
-	next := util.UpsertBlock(raw, codexProxyBlock(endpoint), false)
-	next = util.SetTomlTopKey(next, "model_provider", "headroom")
-	next = util.SetTomlTopKey(next, "openai_base_url", endpoint)
-	if next == raw {
+	next := insertCodexBlockAtRoot(raw, codexProxySection(endpoint, byok))
+	if len(rootExtras) > 0 {
+		next = codexInjectRootExtras(next, rootExtras)
+	}
+	if next == original {
 		return false, p.Config
 	}
-	_ = util.WriteFile(p.Config, next)
+	if byok != nil && !writeCodexByokDotEnv(byok) {
+		return false, p.Config
+	}
+	if util.WriteFile(p.Config, next) != nil {
+		return false, p.Config
+	}
+	_ = os.Chmod(p.Config, 0o600)
 	return true, p.Config
 }
 
@@ -135,33 +630,80 @@ func RemoveCodexProxy() bool {
 		return false
 	}
 	endpoint := ProxyEndpointFor("codex")
-	if !codexProxyWritable(raw, endpoint) {
+	if !codexProxyOwned(raw, endpoint) {
 		return false
 	}
-	next := util.RemoveBlock(raw, codexProxyProvider)
-	next = util.RemoveTomlTopKey(next, "model_provider")
-	next = util.RemoveTomlTopKey(next, "openai_base_url")
+	next := raw
+	if codexMarkedCurrentProxy(next, endpoint) || codexMarkedLegacyBearerProxy(next, endpoint) {
+		if codexMarkedCurrentProxy(next, endpoint) {
+			_, rootExtras, _ := codexMatchedMarkedSection(next, endpoint)
+			start := strings.Index(next, codexMarkerStart)
+			end := strings.Index(next, codexMarkerEnd) + len(codexMarkerEnd)
+			replacement := ""
+			if len(rootExtras) > 0 {
+				replacement = strings.Join(rootExtras, "\n") + "\n"
+			}
+			next = next[:start] + replacement + next[end:]
+		} else {
+			next = stripCodexManagedBlock(next)
+		}
+	} else {
+		next = stripCodexRootProviderAssignments(next)
+		next = util.RemoveBlock(next, codexProxyProvider)
+	}
+	stash, stashOK := loadCodexStash()
+	if !stashOK {
+		return false
+	}
+	if stash.ProviderID != "" {
+		next = util.SetTomlTopKey(next, "model_provider", stash.ProviderID)
+		if stash.OpenAIBaseURL != "" {
+			next = util.SetTomlTopKey(next, "openai_base_url", stash.OpenAIBaseURL)
+		} else {
+			next = util.RemoveTomlTopKey(next, "openai_base_url")
+		}
+	}
+	next = strings.TrimSpace(next)
+	if next != "" {
+		next += "\n"
+	}
 	if next == raw {
 		return false
 	}
-	_ = util.WriteFile(p.Config, next)
-	return true
+	if util.WriteFile(p.Config, next) != nil {
+		return false
+	}
+	if stash.ProviderID != "" {
+		clearCodexStash()
+	}
+	return upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true)
 }
 
-// CodexProxyWired reports whether config.toml routes through the proxy.
+func codexProxySection(endpoint string, byok *openCodeBYOK) string {
+	return codexMarkerStart + "\n" + `model_provider = "headroom"` + "\n" + `openai_base_url = "` + endpoint + "\"\n\n" + strings.TrimSpace(util.RenderBlock(codexProxyBlock(endpoint, byok))) + "\n" + codexMarkerEnd + "\n"
+}
+
+func codexProxySectionWithBearer(endpoint string) string {
+	return codexMarkerStart + "\n" + `model_provider = "headroom"` + "\n" + `openai_base_url = "` + endpoint + "\"\n\n" + strings.TrimSpace(util.RenderBlock(codexProxyBlockWithBearer(endpoint))) + "\n" + codexMarkerEnd + "\n"
+}
+
+func codexHasManagedHeadroomBlock(raw, endpoint string) bool {
+	return codexMarkedCurrentProxy(raw, endpoint) || codexUnmarkedCurrentProxy(raw, endpoint, codexByokFlavor(raw))
+}
+
 func CodexProxyWired() bool {
 	raw, ok := util.ReadFileSafe(util.CodexPathsResolved().Config)
 	if !ok {
 		return false
 	}
 	endpoint := ProxyEndpointFor("codex")
-	if util.GetTomlTopKey(raw, "model_provider") != "headroom" {
+	if codexRootValue(raw, "model_provider") != "headroom" {
 		return false
 	}
-	if util.GetTomlTopKey(raw, "openai_base_url") != endpoint {
+	if codexRootValue(raw, "openai_base_url") != endpoint {
 		return false
 	}
-	return strings.Contains(raw, util.RenderBlock(codexProxyBlock(endpoint)))
+	return codexHasManagedHeadroomBlock(raw, endpoint)
 }
 
 // --- Codex rtk PreToolUse hook ---
@@ -383,189 +925,6 @@ func codexPermGroup(command string) *util.OrderedMap {
 	group.Set("matcher", codexPermHookMatcher)
 	group.Set("hooks", []interface{}{hook})
 	return group
-}
-
-const (
-	codexCtxHookMatcher = "local_shell|shell|shell_command|exec_command|Bash|Shell|apply_patch|Edit|Write|grep_files|ctx_execute|ctx_execute_file|ctx_batch_execute|ctx_fetch_and_index|ctx_search|ctx_index|mcp__"
-	codexCtxHookTimeout = 10
-)
-
-// codexCtxHookCommand matches upstream context-mode's Codex PreToolUse command.
-func codexCtxHookCommand() string {
-	return "context-mode hook codex pretooluse"
-}
-
-func codexCtxHookTrustHash(command string) string {
-	handler := map[string]interface{}{
-		"async":   false,
-		"command": command,
-		"timeout": codexCtxHookTimeout,
-		"type":    "command",
-	}
-	identity := map[string]interface{}{
-		"event_name": "pre_tool_use",
-		"matcher":    codexCtxHookMatcher,
-		"hooks":      []interface{}{handler},
-	}
-	b, _ := json.Marshal(identity)
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func codexGroupHasCtx(group *util.OrderedMap) bool {
-	hooksObj, ok := group.Get("hooks")
-	if !ok {
-		return false
-	}
-	arr, ok := hooksObj.([]interface{})
-	if !ok {
-		return false
-	}
-	for _, h := range arr {
-		hm, ok := h.(*util.OrderedMap)
-		if !ok {
-			continue
-		}
-		if cmd, ok := hm.Get("command"); ok {
-			if s, ok := cmd.(string); ok && (strings.Contains(s, "context-mode hook codex pretooluse") || strings.Contains(s, "context-mode-hook codex")) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func codexCtxGroup(command string) *util.OrderedMap {
-	hook := util.NewOrderedMap()
-	hook.Set("type", "command")
-	hook.Set("command", command)
-	hook.Set("timeout", codexCtxHookTimeout)
-
-	group := util.NewOrderedMap()
-	group.Set("matcher", codexCtxHookMatcher)
-	group.Set("hooks", []interface{}{hook})
-	return group
-}
-
-// InstallCodexContextModeHook merges the context-mode redirect PreToolUse hook
-// into ~/.codex/hooks.json and pre-seeds its trust hash in config.toml.
-func InstallCodexContextModeHook() {
-	p := util.CodexPathsResolved()
-	_ = util.EnsureDir(p.Dir)
-	command := codexCtxHookCommand()
-
-	hooksFile := codexHooksFile()
-	raw, _ := util.ReadFileSafe(hooksFile)
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		cfg = util.NewOrderedMap()
-	}
-	hooks, ok := mapChild(cfg, "hooks")
-	if !ok {
-		hooks = util.NewOrderedMap()
-		cfg.Set("hooks", hooks)
-	}
-	var preArr []interface{}
-	if v, ok := hooks.Get("PreToolUse"); ok {
-		preArr, _ = v.([]interface{})
-	}
-	idx := -1
-	for i, g := range preArr {
-		if gm, ok := g.(*util.OrderedMap); ok && codexGroupHasCtx(gm) {
-			idx = i
-			break
-		}
-	}
-	group := codexCtxGroup(command)
-	if idx == -1 {
-		preArr = append(preArr, group)
-		idx = len(preArr) - 1
-	} else {
-		preArr[idx] = group
-	}
-	hooks.Set("PreToolUse", preArr)
-	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(hooksFile, next)
-	}
-
-	craw, _ := util.ReadFileSafe(p.Config)
-	craw = sweepStaleHookStateEntries(craw)
-	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(idx) + ":0"
-	block := util.NewTomlBlock(codexHookStateHeader(key))
-	block.Set("trusted_hash", codexCtxHookTrustHash(command))
-	cnext := util.UpsertBlock(craw, block, false)
-	cnext = applyCodexApprovalPolicy(cnext)
-	features := util.NewTomlBlock("features")
-	features.Set("hooks", true)
-	cnext = util.UpsertBlock(cnext, features, false)
-	if cnext != craw {
-		_ = util.WriteFile(p.Config, cnext)
-	}
-}
-
-// RemoveCodexContextModeHook removes the context-mode redirect group from
-// hooks.json and its trust entry from config.toml.
-func RemoveCodexContextModeHook() {
-	p := util.CodexPathsResolved()
-	hooksFile := codexHooksFile()
-	raw, ok := util.ReadFileSafe(hooksFile)
-	if !ok {
-		return
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return
-	}
-	hooks, ok := mapChild(cfg, "hooks")
-	if !ok {
-		return
-	}
-	v, ok := hooks.Get("PreToolUse")
-	if !ok {
-		return
-	}
-	preArr, ok := v.([]interface{})
-	if !ok {
-		return
-	}
-	kept := make([]interface{}, 0, len(preArr))
-	removedIdx := -1
-	for i, g := range preArr {
-		if gm, ok := g.(*util.OrderedMap); ok && codexGroupHasCtx(gm) {
-			removedIdx = i
-			continue
-		}
-		kept = append(kept, g)
-	}
-	if removedIdx < 0 {
-		return
-	}
-	if len(kept) == 0 {
-		hooks.Delete("PreToolUse")
-	} else {
-		hooks.Set("PreToolUse", kept)
-	}
-	if hooks.Len() == 0 {
-		_ = os.Remove(hooksFile)
-	} else {
-		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
-	}
-	craw, _ := util.ReadFileSafe(p.Config)
-	key := hooksFile + ":pre_tool_use:" + strconv.Itoa(removedIdx) + ":0"
-	if cnext := util.RemoveBlock(craw, codexHookStateHeader(key)); cnext != craw {
-		_ = util.WriteFile(p.Config, cnext)
-	}
-	codexCleanupOrphanedConfig()
-}
-
-// HasCodexContextModeHook reports whether the context-mode redirect hook is
-// present in ~/.codex/hooks.json.
-func HasCodexContextModeHook() bool {
-	raw, ok := util.ReadFileSafe(codexHooksFile())
-	if !ok {
-		return false
-	}
-	return strings.Contains(raw, "context-mode hook codex pretooluse")
 }
 
 // InstallCodexRtkHook merges the rtk PreToolUse hook into ~/.codex/hooks.json.
@@ -863,7 +1222,7 @@ func codexCleanupOrphanedConfig() {
 // codexHasAnyToklessHook reports whether any tokless-managed hook group
 // is still present in hooks.json.
 func codexHasAnyToklessHook() bool {
-	return HasCodexRtkHook() || HasCodexContextModeHook() || HasCodexPermissionHook()
+	return HasCodexRtkHook() || HasCodexPermissionHook()
 }
 
 // mapChild fetches an OrderedMap child by key.

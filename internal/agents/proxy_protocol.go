@@ -15,7 +15,7 @@ import "github.com/HoangP8/tokless/internal/util"
 // It returns "" for agents tokless does not wire through a config file.
 func ProxyEndpointFor(id string) string {
 	switch id {
-	case "opencode", "kilo", "pi", "droid", "grok", "copilot", "cline":
+	case "codex", "opencode", "kilo", "pi", "droid", "grok", "copilot", "cline":
 		return util.HeadroomProxyOpenAIURL()
 	case "claude", "omp", "antigravity":
 		return util.HeadroomProxyURL()

@@ -34,11 +34,11 @@ func TestProxyInstructionsEndpointShapes(t *testing.T) {
 		t.Fatalf("cursor instructions must state deprecation/native OAuth: %q", cursor)
 	}
 
-	if proxyInstructions("claude") != nil || proxyInstructions("antigravity") != nil {
+	if proxyInstructions("claude") != nil || proxyInstructions("antigravity") != nil || proxyInstructions("codex") != nil {
 		t.Fatal("wired agents must have no manual instructions")
 	}
-	if got := strings.Join(proxyInstructions("codex"), " "); !strings.Contains(got, "DEPRECATED") || !strings.Contains(got, "native provider") {
-		t.Fatalf("codex instructions = %q", got)
+	if got := strings.Join(proxyInstructions("cursor"), " "); !strings.Contains(got, "DEPRECATED") {
+		t.Fatalf("cursor instructions = %q", got)
 	}
 }
 

@@ -1,8 +1,6 @@
 package commands
 
 import (
-	"strconv"
-
 	"github.com/HoangP8/tokless/internal/agents"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
@@ -12,8 +10,8 @@ import (
 // wired agents first (config-file injection), then manual/env agents.
 func ProxyAgentIDs() []string {
 	return []string{
-		"claude", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", // wired
-		"codex", "cursor", // manual / launch-env
+		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", // wired
+		"cursor", // manual / launch-env
 	}
 }
 
@@ -28,8 +26,6 @@ func resolveProxyAgents(opts InitOptions) []string {
 // tokless cannot wire via a config file.
 func proxyInstructions(id string) []string {
 	switch id {
-	case "codex":
-		return []string{"codex-via-proxy is DEPRECATED — headroom cannot compress the /v1/responses shape (upstream prefix-cache safety) and codex no longer supports wire_api=chat; keep codex on its native provider."}
 	case "cursor":
 		return []string{
 			"cursor-via-proxy is DEPRECATED — upstream supports manual settings-UI setup only.",
@@ -68,9 +64,6 @@ func RunProxyUp(opts InitOptions) int {
 	if headroompkg.ResolveHeadroomBin() == "" {
 		util.L.Err("headroom binary not found — run `tokless` first to install headroom")
 		return 1
-	}
-	if n := agents.SyncOpenCodeBYOKRoutes(); n > 0 {
-		util.L.Sub("byok routes: " + strconv.Itoa(n))
 	}
 	if err := headroompkg.StartProxy(); err != nil {
 		util.L.Err(err.Error())
