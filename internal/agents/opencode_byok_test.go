@@ -55,8 +55,31 @@ func TestConfigureOpenCodeProxyUsesTransportPlugin(t *testing.T) {
 		}
 	}
 	raw, _ := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
-	if !strings.Contains(raw, `"plugin"`) || !strings.Contains(raw, `"proxyUrl": "http://127.0.0.1:8787"`) {
-		t.Fatalf("transport plugin missing: %s", raw)
+	parsedCfg := util.TryParseJsonc(raw)
+	if parsedCfg == nil {
+		t.Fatalf("invalid OpenCode config: %s", raw)
+	}
+	toolsValue, ok := parsedCfg.Get("tools")
+	if !ok {
+		t.Fatalf("tools missing: %s", raw)
+	}
+	tools, ok := toolsValue.(*util.OrderedMap)
+	if !ok {
+		t.Fatalf("tools has wrong type: %T", toolsValue)
+	}
+	if value, ok := tools.Get("headroom_retrieve"); !ok || value != false {
+		t.Fatalf("retrieve tool not disabled: %s", raw)
+	}
+	pluginsValue, ok := parsedCfg.Get("plugin")
+	if !ok {
+		t.Fatalf("plugin missing: %s", raw)
+	}
+	plugins, ok := pluginsValue.([]any)
+	if !ok || len(plugins) != 1 || !isOpenCodeTransportPluginEntry(plugins[0]) {
+		t.Fatalf("transport plugin malformed: %s", raw)
+	}
+	if !OpenCodeProxyWired() {
+		t.Fatal("OpenCode proxy must require retrieve tool suppression")
 	}
 	if !strings.Contains(providerRaw, "prov-a-test-key") || !strings.Contains(providerRaw, "prov-b-test-key") {
 		t.Fatalf("keys lost: %s", providerRaw)
@@ -78,6 +101,33 @@ func TestConfigureOpenCodeProxyUsesTransportPlugin(t *testing.T) {
 	}
 	if OpenCodeProxyWired() {
 		t.Fatal("still wired after remove")
+	}
+	raw, _ = util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	parsedCfg = util.TryParseJsonc(raw)
+	if _, ok := parsedCfg.Get("tools"); ok {
+		t.Fatal("remove must restore absent retrieve-tool setting")
+	}
+}
+
+func TestOpenCodeRetrieveSettingRestoresUserValue(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(path, `{"tools":{"headroom_retrieve":true}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("configure no change")
+	}
+	if !RemoveOpenCodeProxy() {
+		t.Fatal("remove no change")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, `"headroom_retrieve": true`) {
+		t.Fatalf("retrieve setting not restored: %s", raw)
 	}
 }
 

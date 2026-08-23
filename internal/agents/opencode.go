@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,11 +161,11 @@ func RemoveOpenCodeProxy() bool {
 }
 
 func OpenCodeProxyWired() bool {
-	return openCodeTransportPluginWired()
+	return openCodeTransportPluginWired() && openCodeRetrieveToolDisabled()
 }
 
 func OpenCodeProxySatisfied() bool {
-	return openCodeTransportPluginWired()
+	return OpenCodeProxyWired()
 }
 
 func openCodeTransportPluginPath() string {
@@ -212,6 +213,18 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 	if cfg == nil {
 		cfg = util.NewOrderedMap()
 	}
+	tools := getOrCreateMap(cfg, "tools")
+	if value, ok := tools.Get("headroom_retrieve"); !ok || value != false {
+		var previous any
+		if value, ok := tools.Get("headroom_retrieve"); ok {
+			previous = value
+		}
+		if err := saveOpenCodeRetrieveState(previous); err != nil {
+			return false, file
+		}
+		tools.Set("headroom_retrieve", false)
+		changed = true
+	}
 	plugins, ok := cfg.Get("plugin")
 	if ok {
 		entries, ok := plugins.([]any)
@@ -220,17 +233,27 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 		}
 		for _, entry := range entries {
 			if isOpenCodeTransportPluginEntry(entry) {
-				return false, file
+				if changed {
+					if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+						return false, file
+					}
+				}
+				return changed, file
 			}
 		}
 		cfg.Set("plugin", append(entries, openCodeTransportPluginEntry()))
+		changed = true
 	} else {
 		cfg.Set("plugin", []any{openCodeTransportPluginEntry()})
+		changed = true
 	}
 	if _, ok := cfg.Get("$schema"); !ok {
 		cfg.Set("$schema", "https://opencode.ai/config.json")
 	}
-	return util.WriteFile(file, util.StringifyJSON(cfg)) == nil, file
+	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+		return false, file
+	}
+	return changed, file
 }
 
 func removeOpenCodeTransportPlugin() bool {
@@ -263,12 +286,67 @@ func removeOpenCodeTransportPlugin() bool {
 	if !removed {
 		return false
 	}
+	if value, ok := loadOpenCodeRetrieveState(); ok {
+		if value == nil {
+			tools, _ := mapChild(cfg, "tools")
+			if tools != nil {
+				tools.Delete("headroom_retrieve")
+				if tools.Len() == 0 {
+					cfg.Delete("tools")
+				}
+			}
+		} else {
+			tools := getOrCreateMap(cfg, "tools")
+			tools.Set("headroom_retrieve", value)
+		}
+		_ = clearOpenCodeRetrieveState()
+	}
 	if len(next) == 0 {
 		cfg.Delete("plugin")
 	} else {
 		cfg.Set("plugin", next)
 	}
 	return util.WriteFile(file, util.StringifyJSON(cfg)) == nil
+}
+
+func openCodeRetrieveStatePath() string {
+	return filepath.Join(util.HeadroomPathsResolved().Root, "opencode.retrieve.stash.json")
+}
+
+func saveOpenCodeRetrieveState(value any) error {
+	b, err := json.Marshal(struct {
+		Present bool `json:"present"`
+		Value   any  `json:"value"`
+	}{Present: value != nil, Value: value})
+	if err != nil {
+		return err
+	}
+	return util.WriteFileMode(openCodeRetrieveStatePath(), string(b), 0o600)
+}
+
+func loadOpenCodeRetrieveState() (any, bool) {
+	raw, ok := util.ReadFileSafe(openCodeRetrieveStatePath())
+	if !ok {
+		return nil, false
+	}
+	var state struct {
+		Present bool `json:"present"`
+		Value   any  `json:"value"`
+	}
+	if json.Unmarshal([]byte(raw), &state) != nil {
+		return nil, false
+	}
+	if !state.Present {
+		return nil, true
+	}
+	return state.Value, true
+}
+
+func clearOpenCodeRetrieveState() error {
+	if err := os.Remove(openCodeRetrieveStatePath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func openCodeTransportPluginWired() bool {
@@ -294,6 +372,27 @@ func openCodeTransportPluginWired() bool {
 		}
 	}
 	return false
+}
+
+func openCodeRetrieveToolDisabled() bool {
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	if !ok || util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	toolsV, ok := cfg.Get("tools")
+	if !ok {
+		return false
+	}
+	tools, ok := toolsV.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	value, ok := tools.Get("headroom_retrieve")
+	return ok && value == false
 }
 
 func notDisabled(m *util.OrderedMap) bool {
