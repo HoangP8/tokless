@@ -406,10 +406,10 @@ func PiUpdatePackages() {
 // --- MCP (~/.pi/agent/mcp.json) ---
 
 func ConfigurePiMcp(toolID string) (changed bool, file string) {
-	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
 	if toolID == "headroom" {
-		spawn = util.McpSpawnFor(toolID)
+		return false, piMcpFile()
 	}
+	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
 	f := piMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)

@@ -278,3 +278,10 @@ func TestGrokCodegraphSessionHookInstallHas(t *testing.T) {
 		t.Fatal("HasGrokCodegraphSessionHook = true after removal")
 	}
 }
+
+func TestConfigureGrokMcpRejectsHeadroom(t *testing.T) {
+	setGrokTestHome(t)
+	if changed, _, err := ConfigureGrokMcp("headroom"); err == nil || changed {
+		t.Fatalf("ConfigureGrokMcp(headroom) = (%v, %v), want unchanged error", changed, err)
+	}
+}

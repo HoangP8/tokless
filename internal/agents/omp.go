@@ -101,6 +101,9 @@ var omp = &core.AgentManifest{
 }
 
 func ConfigureOmpMcp(toolID string) (changed bool, file string) {
+	if toolID == "headroom" {
+		return false, ompMcpFile()
+	}
 	f := ompMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
@@ -175,7 +178,7 @@ func ompMcpManaged(toolID string, existing any) bool {
 	if toolID == "context-mode" {
 		return len(values) >= 3 && values[0] == "run-mcp" && values[1] == "--context-mode" && ompContextModeTarget(values[2:])
 	}
-	return toolID == "headroom" && len(values) == 5 && values[0] == "run-mcp" && values[1] == "--tool" && values[2] == "headroom" && ompHeadroomTarget(values[3:])
+	return false
 }
 
 func ompCodegraphTarget(args []string) bool {
@@ -200,10 +203,6 @@ func ompContextModeTarget(args []string) bool {
 	}
 	return len(args) == 3 && isOmpBinary(args[0], "npx") && args[1] == "--no-install" && args[2] == "context-mode" ||
 		len(args) == 5 && isOmpCmd(args[0]) && args[1] == "/c" && isOmpBinary(args[2], "npx") && args[3] == "--no-install" && args[4] == "context-mode"
-}
-
-func ompHeadroomTarget(args []string) bool {
-	return len(args) == 3 && isOmpBinary(args[0], "headroom") && args[1] == "mcp" && args[2] == "serve"
 }
 
 func isOmpCmd(command string) bool { return isOmpBinary(command, "cmd") }

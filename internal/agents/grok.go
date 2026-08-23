@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,9 @@ var grok = &core.AgentManifest{
 
 // ConfigureGrokMcp upserts a native Grok MCP server block in config.toml.
 func ConfigureGrokMcp(toolID string) (changed bool, file string, err error) {
+	if toolID == "headroom" {
+		return false, grokConfigFile(), fmt.Errorf("Headroom is HTTP proxy-only; MCP wiring is disabled")
+	}
 	raw, _ := util.ReadFileSafe(grokConfigFile())
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
@@ -197,13 +201,13 @@ func grokMcpFields(raw, name string) (string, []string, bool, bool) {
 			}
 			argsSet = true
 		case "enabled":
-			if enabledSet || grokTomlValue(value) != "true" {
+			if enabledSet {
 				return "", nil, false, false
 			}
-			enabled, enabledSet = true, true
+			enabled, enabledSet = grokTomlValue(value) == "true", true
 		}
 	}
-	return command, args, enabled, inside && commandSet && argsSet && enabledSet
+	return command, args, enabled, inside && commandSet && argsSet
 }
 
 // grokTomlArray collects a TOML string array, including native multiline args.

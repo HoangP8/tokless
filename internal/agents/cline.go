@@ -16,6 +16,9 @@ func ClineInstructionsPath() string {
 
 // ConfigureClineMcpSafe wires Tokless MCP in Cline's global settings only.
 func ConfigureClineMcpSafe(toolID string, command []string) (bool, string, error) {
+	if toolID == "headroom" {
+		return false, util.ClinePathsResolved().McpConfig, fmt.Errorf("Headroom is HTTP proxy-only; MCP wiring is disabled")
+	}
 	if !clineExpectedCommand(toolID, command) {
 		return false, util.ClinePathsResolved().McpConfig, fmt.Errorf("unrecognized Tokless MCP command for Cline tool %q; refusing to adopt or overwrite entry", toolID)
 	}
@@ -202,8 +205,6 @@ func clineExpectedCommand(toolID string, command []string) bool {
 		return len(command) >= 4 && command[2] == "--context-mode" && kiloContextServer(command[3:])
 	case "codegraph":
 		return len(command) >= 7 && command[2] == "--agent" && command[3] == "cline" && kiloCodegraphServer(command[4:])
-	case "headroom":
-		return len(command) == 7 && command[2] == "--tool" && command[3] == "headroom" && kiloHeadroomServer(command[4:])
 	default:
 		return false
 	}
