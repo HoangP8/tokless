@@ -24,6 +24,11 @@ func TestAgentInstructionsContent(t *testing.T) {
 	if strings.Contains(body, "hook") || strings.Contains(body, "Hook") {
 		t.Error("instructions contain 'hook' — should be zero hooks")
 	}
+	for _, forbidden := range []string{"headroom_compress", "headroom_retrieve", "Headroom (headroom)"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("instructions contain retired Headroom MCP guidance: %s", forbidden)
+		}
+	}
 
 	for _, kw := range []string{
 		"Drop articles", "terse", "YAGNI", "codegraph_explore",
@@ -35,6 +40,12 @@ func TestAgentInstructionsContent(t *testing.T) {
 		}
 	}
 	t.Logf("body length: %d bytes", len(body))
+}
+
+func TestFullAgentBodyMatchesTemplate(t *testing.T) {
+	if got, want := ToklessAgentBody(ToklessOwners)+"\n", normalizedAgentInstructions(); got != want {
+		t.Fatal("full generated agent body drifted from embedded instructions template")
+	}
 }
 
 func TestPerOwnerRendering(t *testing.T) {

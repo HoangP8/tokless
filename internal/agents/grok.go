@@ -20,7 +20,7 @@ func grokDir() string {
 
 func grokConfigFile() string { return filepath.Join(grokDir(), "config.toml") }
 
-func GrokInstructionsFile() string { return filepath.Join(grokDir(), "rules", "tokless.md") }
+func GrokInstructionsFile() string { return filepath.Join(grokDir(), "rules", "AGENTS.md") }
 
 var grok = &core.AgentManifest{
 	ID:        "grok",

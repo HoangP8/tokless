@@ -285,3 +285,14 @@ func TestConfigureGrokMcpRejectsHeadroom(t *testing.T) {
 		t.Fatalf("ConfigureGrokMcp(headroom) = (%v, %v), want unchanged error", changed, err)
 	}
 }
+
+func TestGrokInstructionsUseGlobalAgentsMarkdown(t *testing.T) {
+	setGrokTestHome(t)
+	dir := t.TempDir()
+	t.Setenv("GROK_HOME", dir)
+
+	want := filepath.Join(dir, "rules", "AGENTS.md")
+	if got := GrokInstructionsFile(); got != want {
+		t.Fatalf("GrokInstructionsFile = %q, want %q", got, want)
+	}
+}

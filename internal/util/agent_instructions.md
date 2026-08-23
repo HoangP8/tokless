@@ -7,7 +7,6 @@ Apply on every coding task:
 - **Build Discipline (ponytail)** — reuse first, write only what must exist.
 - **Code Index (codegraph)** — one call for structure, flows, dependencies.
 - **Context Tools (context-mode)** — keep raw bytes out, derive answers in-sandbox.
-- **Headroom (headroom)** — explicitly compress large self-contained text when useful.
 
 ## Principles
 
@@ -165,10 +164,6 @@ Examples:
 ```
 ctx_execute(language:"shell", code:"grep -rn 'TODO' src/ | head -20")
 ```
-
-## Headroom (headroom)
-
-For large, self-contained text that must remain in current task, call `headroom_compress` explicitly. It is lossy. Call `headroom_retrieve` with returned hash only when original retained text is needed soon; retrieval is local and expires. Never send credentials, tokens, private keys, or sensitive content.
 
 ```
 ctx_execute_file(path:"app.log", language:"javascript", code:`

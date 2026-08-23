@@ -250,7 +250,7 @@ func agentInstructionPath(t *testing.T, agent string) string {
 	case "antigravity":
 		return filepath.Join(util.Home(), ".gemini", "GEMINI.md")
 	case "grok":
-		return filepath.Join(util.Home(), ".grok", "rules", "tokless.md")
+		return filepath.Join(util.Home(), ".grok", "rules", "AGENTS.md")
 	}
 	t.Fatalf("unknown agent %q", agent)
 	return ""
