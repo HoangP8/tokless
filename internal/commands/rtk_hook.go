@@ -713,6 +713,64 @@ func clineShellTool(name string) bool {
 	}
 }
 
+// Grok's shell tool is run_terminal_cmd; older builds used run_terminal_command.
+func isGrokShellTool(name string) bool {
+	return strings.EqualFold(name, "run_terminal_cmd") ||
+		strings.EqualFold(name, "run_terminal_command") ||
+		strings.EqualFold(name, "bash")
+}
+
+// RunRtkHookGrok handles Grok's pre_tool_use hook contract.
+func RunRtkHookGrok() int {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(input) == 0 {
+		return 0
+	}
+
+	var req struct {
+		ToolName       string         `json:"toolName"`
+		ToolNameSnake  string         `json:"tool_name"`
+		ToolInput      map[string]any `json:"toolInput"`
+		ToolInputSnake map[string]any `json:"tool_input"`
+	}
+	if err := json.Unmarshal(input, &req); err != nil {
+		return 0
+	}
+	toolName := req.ToolName
+	if toolName == "" {
+		toolName = req.ToolNameSnake
+	}
+	toolInput := req.ToolInput
+	if toolInput == nil {
+		toolInput = req.ToolInputSnake
+	}
+	if !isGrokShellTool(toolName) || toolInput == nil {
+		return 0
+	}
+	cmdLine, ok := toolInput["command"].(string)
+	if !ok || cmdLine == "" {
+		return 0
+	}
+
+	newCmd := cmdLine
+	if v, changed := rtkRewrite(cmdLine); changed {
+		newCmd = v
+	}
+	if newCmd == cmdLine {
+		return 0
+	}
+
+	updated := cloneMap(toolInput)
+	updated["command"] = newCmd
+	resp := map[string]any{
+		"hookSpecificOutput": map[string]any{"updatedInput": updated},
+	}
+	if out, err := json.Marshal(resp); err == nil {
+		fmt.Println(string(out))
+	}
+	return 0
+}
+
 // copilotRtkPost traces the rtk-wrapped command to stderr for verification.
 func copilotRtkPost(req map[string]json.RawMessage, snake bool) int {
 	var toolName string

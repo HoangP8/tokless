@@ -848,6 +848,22 @@ func rtkWireCodex() core.AgentFn {
 	}
 }
 
+func rtkWireGrok() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install grok PreToolUse hook (~/.grok/hooks/tokless-rtk.json) routing shell commands through rtk")
+			return true, nil
+		}
+		if err := agents.InstallGrokRtkHook(); err != nil {
+			return false, err
+		}
+		if err := agents.InstallGrokCodegraphSessionHook(); err != nil {
+			return false, err
+		}
+		return agents.HasGrokRtkHook() && agents.HasGrokCodegraphSessionHook(), nil
+	}
+}
+
 func rtkWireCopilot() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -935,6 +951,7 @@ var rtk = &core.ToolManifest{
 		"omp":         rtkWireOmp(),
 		"kilo":        kiloRtkWire,
 		"cline":       clineRtkWire,
+		"grok":        rtkWireGrok(),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -1009,6 +1026,12 @@ var rtk = &core.ToolManifest{
 		},
 		"kilo":  kiloRtkUnwire,
 		"cline": clineRtkUnwire,
+		"grok": func(core.RunOpts) (bool, error) {
+			agents.RemoveGrokRtkHook()
+			agents.RemoveGrokCodegraphSessionHook()
+			RemoveOwner("grok", "rtk")
+			return true, nil
+		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude": func() *bool {
@@ -1038,5 +1061,8 @@ var rtk = &core.ToolManifest{
 		"omp":   func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
 		"kilo":  func() *bool { return core.BoolPtr(kiloRtkVerify()) },
 		"cline": func() *bool { return core.BoolPtr(clineRtkVerify()) },
+		"grok": func() *bool {
+			return core.BoolPtr(agents.HasGrokRtkHook() && agents.HasGrokCodegraphSessionHook())
+		},
 	},
 }

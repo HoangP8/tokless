@@ -7,6 +7,7 @@ func TestIsSessionBootArg(t *testing.T) {
 		{"run-mcp", "claude", "codegraph"},
 		{"rtk-hook", "codex"},
 		{"rtk-hook", "copilot"},
+		{"grok-hook", "session-start"},
 		{"rtk", "hook", "cursor"},
 		{"codex-perm", "codex"},
 		{"agy-hook", "codegraph-index"},

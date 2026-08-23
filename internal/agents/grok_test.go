@@ -224,3 +224,57 @@ func TestGrokMcpArgsAcceptWindowsCmdWrapper(t *testing.T) {
 		t.Fatal("wrapped npx Context Mode args did not validate")
 	}
 }
+
+func TestGrokRtkHookInstallRemoveHas(t *testing.T) {
+	setGrokTestHome(t)
+
+	if err := InstallGrokRtkHook(); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := util.ReadFileSafe(grokRtkHookPath())
+	if !ok {
+		t.Fatal("hook file missing after install")
+	}
+	if !strings.Contains(raw, `"PreToolUse"`) || !strings.Contains(raw, "rtk-hook grok") {
+		t.Fatalf("managed hook content missing:\n%s", raw)
+	}
+	if !HasGrokRtkHook() {
+		t.Fatal("HasGrokRtkHook = false after install")
+	}
+
+	foreign := filepath.Join(grokDir(), "hooks", "user-hooks.json")
+	if err := util.WriteFile(foreign, `{"hooks":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	RemoveGrokRtkHook()
+	if _, ok := util.ReadFileSafe(grokRtkHookPath()); ok {
+		t.Fatal("managed hook file not removed")
+	}
+	if _, ok := util.ReadFileSafe(foreign); !ok {
+		t.Fatal("foreign hooks must survive removal")
+	}
+	if HasGrokRtkHook() {
+		t.Fatal("HasGrokRtkHook = true after removal")
+	}
+}
+
+func TestGrokCodegraphSessionHookInstallHas(t *testing.T) {
+	setGrokTestHome(t)
+	if err := InstallGrokCodegraphSessionHook(); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := util.ReadFileSafe(grokCodegraphSessionHookPath())
+	if !ok {
+		t.Fatal("session hook file missing after install")
+	}
+	if !strings.Contains(raw, `"SessionStart"`) || !strings.Contains(raw, "grok-hook session-start") {
+		t.Fatalf("managed session hook content missing:\n%s", raw)
+	}
+	if !HasGrokCodegraphSessionHook() {
+		t.Fatal("HasGrokCodegraphSessionHook = false after install")
+	}
+	RemoveGrokCodegraphSessionHook()
+	if HasGrokCodegraphSessionHook() {
+		t.Fatal("HasGrokCodegraphSessionHook = true after removal")
+	}
+}

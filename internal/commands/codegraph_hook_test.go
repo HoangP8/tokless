@@ -50,6 +50,56 @@ func TestRunCodegraphIndexHookUsesPlainInit(t *testing.T) {
 	}
 }
 
+func TestRunGrokSessionStartHookUsesWorkspaceCwd(t *testing.T) {
+	binDir := t.TempDir()
+	project := t.TempDir()
+	log := filepath.Join(binDir, "calls")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
+		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
+		"[ \"$1\" = init ] || exit 1\nmkdir -p .codegraph\ntouch .codegraph/codegraph.db\n"
+	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CODEGRAPH_LOG", log)
+	input := `{"cwd":"` + project + `"}`
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := write.WriteString(input); err != nil {
+		t.Fatal(err)
+	}
+	_ = write.Close()
+	oldStdin := os.Stdin
+	os.Stdin = read
+	t.Cleanup(func() { os.Stdin = oldStdin })
+
+	if code := RunGrokSessionStartHook(); code != 0 {
+		t.Fatalf("RunGrokSessionStartHook = %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".codegraph", "codegraph.db")); err != nil {
+		t.Fatalf("session hook did not initialize CodeGraph: %v", err)
+	}
+	if got, err := os.ReadFile(log); err != nil || string(got) != "init\n" {
+		t.Fatalf("calls = %q, err = %v", got, err)
+	}
+}
+
+func TestRunGrokSessionStartHookUsesWorkspaceRoot(t *testing.T) {
+	project := t.TempDir()
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveHookProjectDirFromInput([]byte(`{"workspaceRoot":"` + project + `"}`)); got != project {
+		t.Fatalf("workspaceRoot project dir = %q, want %q", got, project)
+	}
+}
+
 func TestResolveHookProjectDirAcceptsCursorWorkspaceRoots(t *testing.T) {
 	project := t.TempDir()
 	if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {

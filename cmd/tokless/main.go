@@ -35,6 +35,7 @@ func isSessionBootArg(args []string) bool {
 	switch {
 	case len(args) >= 2 && args[0] == "run-mcp",
 		len(args) >= 2 && args[0] == "rtk-hook",
+		len(args) >= 2 && args[0] == "grok-hook",
 		len(args) >= 3 && args[0] == "rtk" && args[1] == "hook",
 		len(args) >= 2 && args[0] == "codex-perm",
 		len(args) >= 2 && (args[0] == "agy-hook" || args[0] == "cursor-hook" || args[0] == "copilot-hook"):
@@ -206,7 +207,12 @@ func run() int {
 			return commands.RunRtkHookDroid()
 		case "cline":
 			return commands.RunRtkHookCline()
+		case "grok":
+			return commands.RunRtkHookGrok()
 		}
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "grok-hook" && os.Args[2] == "session-start" {
+		return commands.RunGrokSessionStartHook()
 	}
 	if len(os.Args) >= 4 && os.Args[1] == "rtk" && os.Args[2] == "hook" && os.Args[3] == "cursor" {
 		return commands.RunRtkHookCursor()

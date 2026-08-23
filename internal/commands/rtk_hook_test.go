@@ -138,6 +138,114 @@ func TestRtkUnsafeFindChecksEverySegment(t *testing.T) {
 	}
 }
 
+func TestRunRtkHookGrokSkipsNonBash(t *testing.T) {
+	out := runRtkHookInput(t, `{"hookEventName":"pre_tool_use","toolName":"read_file","toolInput":{"command":"git status"}}`, RunRtkHookGrok)
+	if out != "" {
+		t.Fatalf("want empty for non-bash tool, got %q", out)
+	}
+	out = runRtkHookInput(t, `{"hookEventName":"pre_tool_use","toolName":"bash","toolInput":{"path":"x"}}`, RunRtkHookGrok)
+	if out != "" {
+		t.Fatalf("want empty for bash without command, got %q", out)
+	}
+}
+
+func TestRunRtkHookGrokAllowsAlreadyRewritten(t *testing.T) {
+	out := runRtkHookInput(t, `{"hookEventName":"pre_tool_use","toolName":"bash","toolInput":{"command":"rtk git status"}}`, RunRtkHookGrok)
+	if out != "" {
+		t.Fatalf("want silent passthrough for already-rewritten command, got %q", out)
+	}
+}
+
+func TestRunRtkHookGrokSkipsUnsupportedMixedCommand(t *testing.T) {
+	installFakeRtk(t, `case "$2" in
+  rtk\ *) printf '%s\n' "$2" ;;
+  *) printf 'rtk %s\n' "$2" ;;
+esac`)
+	out := runRtkHookInput(t, `{"toolName":"run_terminal_command","toolInput":{"command":"find . -name x -delete; git status"}}`, RunRtkHookGrok)
+	if out != "" {
+		t.Fatalf("want passthrough when command contains unsupported find flags, got %q", out)
+	}
+}
+
+func TestRunRtkHookGrokRewrites(t *testing.T) {
+	installFakeRtk(t, `case "$2" in
+  rtk\ *) printf '%s\n' "$2" ;;
+  *) printf 'rtk %s\n' "$2" ;;
+esac`)
+	for _, toolName := range []string{"bash", "run_terminal_cmd", "run_terminal_command"} {
+		out := runRtkHookInput(t, `{"hookEventName":"pre_tool_use","toolName":"`+toolName+`","toolInput":{"command":"git status","cwd":"/tmp"}}`, RunRtkHookGrok)
+		var resp struct {
+			HookSpecificOutput struct {
+				UpdatedInput map[string]any `json:"updatedInput"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal([]byte(out), &resp); err != nil {
+			t.Fatalf("json: %v out=%q", err, out)
+		}
+		cmd, _ := resp.HookSpecificOutput.UpdatedInput["command"].(string)
+		if !strings.Contains(cmd, "rtk") || cmd == "git status" {
+			t.Fatalf("expected rtk rewrite for %s, got %q", toolName, cmd)
+		}
+		if resp.HookSpecificOutput.UpdatedInput["cwd"] != "/tmp" {
+			t.Fatalf("unrelated toolInput keys must be preserved: %v", resp.HookSpecificOutput.UpdatedInput)
+		}
+	}
+}
+
+func TestRunRtkHookGrokAcceptsSnakeCasePayload(t *testing.T) {
+	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
+	out := runRtkHookInput(t, `{"hook_event_name":"pre_tool_use","tool_name":"run_terminal_command","tool_input":{"command":"git status","cwd":"/tmp"}}`, RunRtkHookGrok)
+	var resp struct {
+		HookSpecificOutput struct {
+			UpdatedInput map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("json: %v out=%q", err, out)
+	}
+	if got, _ := resp.HookSpecificOutput.UpdatedInput["command"].(string); !strings.Contains(got, "rtk") || got == "git status" {
+		t.Fatalf("expected rtk rewrite, got %q", got)
+	}
+}
+
+func TestRunRtkHookGrokPassthroughCases(t *testing.T) {
+	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
+	for _, tc := range []struct {
+		name    string
+		payload string
+	}{
+		{"malformed JSON", "{"},
+		{"missing command", `{"toolName":"bash","toolInput":{"cwd":"/tmp"}}`},
+		{"non-shell", `{"toolName":"read_file","toolInput":{"command":"git status"}}`},
+		{"already rewritten", `{"toolName":"bash","toolInput":{"command":"rtk git status"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if out := runRtkHookInput(t, tc.payload, RunRtkHookGrok); out != "" {
+				t.Fatalf("expected passthrough, got %q", out)
+			}
+		})
+	}
+}
+
+func TestRunRtkHookGrokRtkFailurePassesThrough(t *testing.T) {
+	installFakeRtk(t, `exit 1`)
+	out := runRtkHookInput(t, `{"toolName":"bash","toolInput":{"command":"git status"}}`, RunRtkHookGrok)
+	if out != "" {
+		t.Fatalf("expected passthrough after rtk failure, got %q", out)
+	}
+}
+
+func installFakeRtk(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rtk")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'rtk 1.0.0\\n'; exit 0; fi\nif [ \"$1\" != \"rewrite\" ]; then exit 1; fi\n" + body + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func runRtkHookInput(t *testing.T, payload string, hook func() int) string {
 	t.Helper()
 	oldIn, oldOut := os.Stdin, os.Stdout

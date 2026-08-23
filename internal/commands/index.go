@@ -214,6 +214,16 @@ func RunCodegraphIndexHook() int {
 	return runCodegraphAutoIndex(dir)
 }
 
+// RunGrokSessionStartHook initializes CodeGraph for a new Grok workspace.
+func RunGrokSessionStartHook() int {
+	input, _ := io.ReadAll(os.Stdin)
+	dir := resolveHookProjectDirFromInput(input)
+	if dir == "" {
+		return 0
+	}
+	return runCodegraphAutoIndex(dir)
+}
+
 // RunCursorProjectRulesHook refreshes project rules on Cursor workspace startup.
 func RunCursorProjectRulesHook() int {
 	input, _ := io.ReadAll(os.Stdin)
@@ -235,6 +245,7 @@ func resolveHookProjectDirs(input []byte) []string {
 	var req struct {
 		WorkspacePaths []string `json:"workspacePaths"`
 		WorkspaceRoots []string `json:"workspace_roots"`
+		WorkspaceRoot  string   `json:"workspaceRoot"`
 		Cwd            string   `json:"cwd"`
 	}
 	if len(input) > 0 {
@@ -243,6 +254,9 @@ func resolveHookProjectDirs(input []byte) []string {
 	paths := append(append([]string{}, req.WorkspaceRoots...), req.WorkspacePaths...)
 	if req.Cwd != "" {
 		paths = append(paths, req.Cwd)
+	}
+	if req.WorkspaceRoot != "" {
+		paths = append(paths, req.WorkspaceRoot)
 	}
 	if len(paths) == 0 {
 		if cwd, err := os.Getwd(); err == nil {

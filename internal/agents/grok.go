@@ -313,3 +313,106 @@ func grokTomlStrings(value string) ([]string, bool) {
 	}
 	return args, true
 }
+
+// --- rtk PreToolUse hook ---
+
+const grokRtkHookFile = "tokless-rtk.json"
+const grokCodegraphSessionHookFile = "tokless-codegraph-session.json"
+
+type grokRtkCommandHook struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+	Timeout int    `json:"timeout"`
+}
+
+type grokRtkPreToolUse struct {
+	Hooks []grokRtkCommandHook `json:"hooks"`
+}
+
+type grokRtkHook struct {
+	Hooks struct {
+		PreToolUse []grokRtkPreToolUse `json:"PreToolUse"`
+	} `json:"hooks"`
+}
+
+func grokRtkHookPath() string {
+	return filepath.Join(grokDir(), "hooks", grokRtkHookFile)
+}
+
+func grokCodegraphSessionHookPath() string {
+	return filepath.Join(grokDir(), "hooks", grokCodegraphSessionHookFile)
+}
+
+// InstallGrokRtkHook writes ~/.grok/hooks/tokless-rtk.json.
+func InstallGrokRtkHook() error {
+	command := toklessCommand("rtk-hook", "grok")
+	payload := grokRtkHook{}
+	payload.Hooks.PreToolUse = []grokRtkPreToolUse{{Hooks: []grokRtkCommandHook{{
+		Type: "command", Command: command, Timeout: 10,
+	}}}}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	return util.WriteFile(grokRtkHookPath(), string(raw)+"\n")
+}
+
+// RemoveGrokRtkHook removes ~/.grok/hooks/tokless-rtk.json.
+func RemoveGrokRtkHook() {
+	_ = os.Remove(grokRtkHookPath())
+}
+
+// HasGrokRtkHook reports whether the managed rtk hook file is present.
+func HasGrokRtkHook() bool {
+	raw, ok := util.ReadFileSafe(grokRtkHookPath())
+	if !ok {
+		return false
+	}
+	var payload grokRtkHook
+	if json.Unmarshal([]byte(raw), &payload) != nil || len(payload.Hooks.PreToolUse) != 1 {
+		return false
+	}
+	hooks := payload.Hooks.PreToolUse[0].Hooks
+	return len(hooks) == 1 && hooks[0].Type == "command" &&
+		hooks[0].Command == toklessCommand("rtk-hook", "grok") && hooks[0].Timeout == 10
+}
+
+type grokSessionStartHook struct {
+	Hooks struct {
+		SessionStart []grokRtkPreToolUse `json:"SessionStart"`
+	} `json:"hooks"`
+}
+
+// InstallGrokCodegraphSessionHook writes the Grok SessionStart bootstrap hook.
+func InstallGrokCodegraphSessionHook() error {
+	command := toklessCommand("grok-hook", "session-start")
+	payload := grokSessionStartHook{}
+	payload.Hooks.SessionStart = []grokRtkPreToolUse{{Hooks: []grokRtkCommandHook{{
+		Type: "command", Command: command, Timeout: 120,
+	}}}}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	return util.WriteFile(grokCodegraphSessionHookPath(), string(raw)+"\n")
+}
+
+// HasGrokCodegraphSessionHook validates the managed Grok SessionStart hook.
+func HasGrokCodegraphSessionHook() bool {
+	raw, ok := util.ReadFileSafe(grokCodegraphSessionHookPath())
+	if !ok {
+		return false
+	}
+	var payload grokSessionStartHook
+	if json.Unmarshal([]byte(raw), &payload) != nil || len(payload.Hooks.SessionStart) != 1 {
+		return false
+	}
+	hooks := payload.Hooks.SessionStart[0].Hooks
+	return len(hooks) == 1 && hooks[0].Type == "command" &&
+		hooks[0].Command == toklessCommand("grok-hook", "session-start") && hooks[0].Timeout == 120
+}
+
+// RemoveGrokCodegraphSessionHook removes the managed Grok SessionStart hook.
+func RemoveGrokCodegraphSessionHook() {
+	_ = os.Remove(grokCodegraphSessionHookPath())
+}
