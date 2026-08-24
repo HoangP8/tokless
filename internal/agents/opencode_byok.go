@@ -167,7 +167,7 @@ func isAbsoluteHTTP(raw string) bool {
 	if err != nil {
 		return false
 	}
-	return u.Scheme == "http" || u.Scheme == "https"
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // SyncOpenCodeBYOKRoutes is retained for command output compatibility.

@@ -9,12 +9,9 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-// headroomWired reports agents whose proxy config tokless manages by writing a
-// config file (claude, omp, codex, opencode, kilo, pi, droid, antigravity).
-// Manual agents (grok, copilot, cline, cursor) and any unregistered agent are
-// not wired and are handled as no-ops.
+// headroomWired reports agents with an applicable config that tokless can wire.
 func headroomWired(id string) bool {
-	return agents.ProxyEndpointFor(id) != ""
+	return agents.ProxyEndpointFor(id) != "" && agents.ProxyAgentApplicable(id)
 }
 
 // headroomWire configures the headroom HTTP proxy for a single agent and

@@ -74,6 +74,9 @@ func RunProxyUp(opts InitOptions) int {
 		if proxyInstructions(id) != nil {
 			continue
 		}
+		if !agents.ProxyAgentApplicable(id) {
+			continue
+		}
 		switch {
 		case configureProxyAgent(id):
 			util.L.Ok(id + ": wired to " + agents.ProxyEndpointFor(id))

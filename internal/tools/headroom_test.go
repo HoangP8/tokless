@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,8 +42,8 @@ func TestHeadroomMapsEveryRegisteredAgent(t *testing.T) {
 }
 
 func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
-	setupHeadroomHome(t)
-	if err := util.WriteFile(util.OpenCodePathsResolved().Config, `{"$schema":"https://opencode.ai/config.json","theme":"dark","provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"k"},"models":{}}}}
+	home := setupHeadroomHome(t)
+	if err := util.WriteFile(util.OpenCodePathsResolved().Config, `{"$schema":"https://opencode.ai/config.json","theme":"dark","provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"k"},"models":{"m-1":{}}}}}
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +57,13 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 		}
 	}
 	if err := util.WriteFile(filepath.Join(util.ClinePathsResolved().DataDir, "settings", "providers.json"), `{}`); err != nil {
+		t.Fatal(err)
+	}
+	grokConfig := filepath.Join(home, ".grok", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(grokConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(grokConfig, "[models]\n\n[model_providers.demo]\nbase_url = \"https://demo.example/v1\"\napi_key = \"sk-demo\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline"} {

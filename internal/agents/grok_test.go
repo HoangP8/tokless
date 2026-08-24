@@ -18,55 +18,6 @@ func setGrokTestHome(t *testing.T) string {
 	return home
 }
 
-func TestGrokProxyHealsPoisonedProfile(t *testing.T) {
-	setGrokTestHome(t)
-	dir := t.TempDir()
-	t.Setenv("GROK_HOME", dir)
-	t.Setenv("TOKLESS_OPENCODE_GO_KEY", "test-key")
-
-	poisoned := "[model.dsv4-flash]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"https://opencode.ai/zen/go/v1\"\nname = \"original\"\napi_key = \"k\"\n\n[model.headroom]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"\"\napi_backend = \"chat_completions\"\nstream_tool_calls = false\napi_key = \"test-key\"\n"
-	file := filepath.Join(dir, "config.toml")
-	if err := util.WriteFile(file, poisoned); err != nil {
-		t.Fatal(err)
-	}
-
-	changed, gotFile := ConfigureGrokProxy()
-	if !changed || gotFile != file {
-		t.Fatalf("ConfigureGrokProxy = (%v, %q), want (true, %q)", changed, gotFile, file)
-	}
-	raw, _ := util.ReadFileSafe(file)
-	if !strings.Contains(raw, `base_url = "`+ProxyEndpointFor("grok")+`"`) {
-		t.Fatalf("headroom profile not healed to managed endpoint:\n%s", raw)
-	}
-	if !strings.Contains(raw, "[model.dsv4-flash]") || !strings.Contains(raw, "https://opencode.ai/zen/go/v1") {
-		t.Fatalf("unrelated profiles must be preserved:\n%s", raw)
-	}
-	if strings.Contains(raw, `base_url = ""`) {
-		t.Fatalf("empty base_url remains after heal:\n%s", raw)
-	}
-	if !GrokProxyWired() {
-		t.Fatal("GrokProxyWired = false after heal")
-	}
-}
-
-func TestGrokProxyHealsOnlyPoisonedProfile(t *testing.T) {
-	setGrokTestHome(t)
-	dir := t.TempDir()
-	t.Setenv("GROK_HOME", dir)
-	t.Setenv("TOKLESS_OPENCODE_GO_KEY", "test-key")
-
-	foreign := "[model.headroom]\nmodel = \"deepseek-v4-flash\"\nbase_url = \"https://foreign.example/v1\"\napi_backend = \"chat_completions\"\nstream_tool_calls = false\napi_key = \"test-key\"\n"
-	file := filepath.Join(dir, "config.toml")
-	if err := util.WriteFile(file, foreign); err != nil {
-		t.Fatal(err)
-	}
-
-	changed, _ := ConfigureGrokProxy()
-	if changed {
-		t.Fatal("ConfigureGrokProxy must refuse to overwrite foreign headroom profile")
-	}
-}
-
 func TestGrokConfigUsesGrokHome(t *testing.T) {
 	setGrokTestHome(t)
 	dir := t.TempDir()
@@ -80,6 +31,422 @@ func TestGrokConfigUsesGrokHome(t *testing.T) {
 	}
 	if !GrokMcpHas("codegraph") {
 		t.Fatal("codegraph MCP missing")
+	}
+}
+
+// --- in-place BYOK routing ---
+
+const grokUserConfig = `[models]
+default = "my-model"
+
+[model_providers.myprov]
+base_url = "https://provider.example/v1"
+api_key = "sk-user-key"
+api_backend = "chat_completions"
+
+[model.my-model]
+name = "My Model"
+model = "deepseek-v4-flash"
+model_provider = "myprov"
+`
+
+func grokSeedConfig(t *testing.T, content string) {
+	t.Helper()
+	setGrokTestHome(t)
+	if err := util.WriteFile(grokConfigFile(), content); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConfigureGrokProxyRewritesUserProviderInPlace(t *testing.T) {
+	grokSeedConfig(t, grokUserConfig)
+
+	changed, _ := ConfigureGrokProxy()
+	if !changed {
+		t.Fatal("configure did not change config")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	for _, want := range []string{
+		`base_url = "` + ProxyEndpointFor("grok") + `"`,
+		`x-headroom-base-url = "https://provider.example/v1"`,
+		`x-headroom-original-path = "/chat/completions"`,
+		`api_key = "sk-user-key"`,
+		`api_backend = "chat_completions"`,
+		`[model_providers.myprov]`,
+		`model_provider = "myprov"`,
+		`default = "my-model"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("missing %q after wire:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "tokless") {
+		t.Fatalf("tokless must never appear:\n%s", raw)
+	}
+
+	// Idempotent refresh.
+	if changed2, _ := ConfigureGrokProxy(); changed2 {
+		raw2, _ := util.ReadFileSafe(grokConfigFile())
+		t.Fatalf("second run must be a no-op:\n%s", raw2)
+	}
+	if !GrokProxyWired() {
+		t.Fatal("wired false after configure")
+	}
+}
+
+func TestConfigureGrokProxyRefreshesStaleHeader(t *testing.T) {
+	grokSeedConfig(t, grokUserConfig)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	stale := strings.Replace(raw, "https://provider.example/v1", "https://provider.example/api", 1)
+	if err := util.WriteFile(grokConfigFile(), stale); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureGrokProxy(); !changed {
+		t.Fatal("stale header was not refreshed")
+	}
+	raw, _ = util.ReadFileSafe(grokConfigFile())
+	if !strings.Contains(raw, `x-headroom-base-url = "https://provider.example/v1"`) {
+		t.Fatalf("full upstream path not restored:\n%s", raw)
+	}
+}
+
+func TestGrokProxyWiredRequiresManagedHeaders(t *testing.T) {
+	for _, field := range []string{"x-headroom-base-url", "x-headroom-original-path"} {
+		t.Run(field, func(t *testing.T) {
+			grokSeedConfig(t, grokUserConfig)
+			if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+				t.Fatal("not wired")
+			}
+			raw, _ := util.ReadFileSafe(grokConfigFile())
+			line := "\t" + field + " = "
+			if !strings.Contains(raw, line) {
+				line = field + " = "
+			}
+			start := strings.Index(raw, line)
+			if start < 0 {
+				t.Fatalf("managed header %q missing before removal:\n%s", field, raw)
+			}
+			end := strings.IndexByte(raw[start:], '\n')
+			if end < 0 {
+				end = len(raw) - start
+			}
+			raw = raw[:start] + raw[start+end+1:]
+			if err := util.WriteFile(grokConfigFile(), raw); err != nil {
+				t.Fatal(err)
+			}
+			if GrokProxyWired() {
+				t.Fatalf("wired with %q removed", field)
+			}
+		})
+	}
+}
+
+func TestGrokProxyPreservesUserOwnedOriginalPathHeader(t *testing.T) {
+	cfg := `[model_providers.custom]
+base_url = "https://up.example/v1"
+api_key = "sk-c"
+extra_headers = { x-headroom-original-path = "/custom/chat/completions", x-tag = "t" }
+`
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if !strings.Contains(raw, `x-headroom-original-path = "/chat/completions"`) {
+		t.Fatalf("managed original path missing:\n%s", raw)
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(grokConfigFile())
+	if raw != cfg {
+		t.Fatalf("user-owned original path not restored:\n%s", raw)
+	}
+}
+
+func TestConfigureGrokProxySupportsQuotedProviderAndKeys(t *testing.T) {
+	cfg := `[model_providers."my.provider"]
+"base_url" = 'https://provider.example/v1' # keep
+"api_key" = 'key#fragment'
+`
+	grokSeedConfig(t, cfg)
+	if changed, _ := ConfigureGrokProxy(); !changed || !GrokProxyWired() {
+		t.Fatal("quoted provider was not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if !strings.Contains(raw, `"base_url" = "`+ProxyEndpointFor("grok")+`"`) ||
+		!strings.Contains(raw, `"api_key" = 'key#fragment'`) {
+		t.Fatalf("quoted provider fields changed incorrectly:\n%s", raw)
+	}
+}
+
+func TestGrokProxySupportsQuotedExtraHeadersKey(t *testing.T) {
+	cfg := `[model_providers.custom]
+base_url = "https://up.example/v1"
+api_key = "sk-c"
+"extra_headers" = { x-tag = "keep" }
+`
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("quoted extra_headers key was not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if strings.Count(raw, `"extra_headers"`) != 1 || !strings.Contains(raw, `x-headroom-base-url = "https://up.example/v1"`) {
+		t.Fatalf("quoted extra_headers key was duplicated or not routed:\n%s", raw)
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(grokConfigFile())
+	if raw != cfg {
+		t.Fatalf("quoted extra_headers key not restored:\n%s", raw)
+	}
+}
+
+func TestConfigureGrokProxyRestoresSingleQuotedBaseLine(t *testing.T) {
+	cfg := `[model_providers.'my.provider']
+base_url = 'https://provider.example/v1' # keep
+api_key = 'key'
+
+[model.m]
+model = "m"
+model_provider = "my.provider"
+`
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !RemoveGrokProxy() {
+		t.Fatal("quoted provider round trip failed")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if raw != cfg {
+		t.Fatalf("base_url syntax not restored: got=%q want=%q", raw, cfg)
+	}
+}
+
+func TestRemoveGrokProxyRestoresByteExact(t *testing.T) {
+	grokSeedConfig(t, grokUserConfig)
+
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove reported no change")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if raw != grokUserConfig {
+		t.Fatalf("restore not byte-exact:\n%s", raw)
+	}
+	if GrokProxyWired() {
+		t.Fatal("still wired after remove")
+	}
+}
+
+func TestWirePreservesCustomHeadersAndChildTable(t *testing.T) {
+	cfg := `[model_providers.custom]
+base_url = "https://up.example/v1"
+api_key = "sk-c"
+extra_headers = { x-client-tag = "keepme" }
+
+[model_providers.custom.extra_headers_doc]
+x-note = "doc"
+
+[model.m]
+name = "M"
+model = "m1"
+model_provider = "custom"
+`
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if !strings.Contains(raw, `x-headroom-base-url = "https://up.example/v1"`) ||
+		!strings.Contains(raw, `x-client-tag = "keepme"`) ||
+		!strings.Contains(raw, `[model_providers.custom.extra_headers_doc]`) {
+		t.Fatalf("header merge broken:\n%s", raw)
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(grokConfigFile())
+	if raw != cfg {
+		t.Fatalf("restore not byte-exact with child tables:\n%s", raw)
+	}
+}
+
+func TestConfigureRoutesAllProvidersAndPreservesUserNames(t *testing.T) {
+	cfg := `[models]
+default = "tokless"
+
+[model_providers.a]
+base_url = "https://a.example/v1"
+api_key = "ka"
+
+[model_providers.b]
+base_url = "https://b.example/v1"
+api_key = "kb"
+
+[model.tokless]
+name = "old"
+model = "old"
+model_provider = "tokless"
+`
+	grokSeedConfig(t, cfg)
+	changed, _ := ConfigureGrokProxy()
+	if !changed {
+		t.Fatal("no change")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if !strings.Contains(raw, "[model.tokless]") || !strings.Contains(raw, `default = "tokless"`) {
+		t.Fatalf("user-owned tokless names changed:\n%s", raw)
+	}
+	for _, id := range []string{"a", "b"} {
+		if got := util.TomlBlockField(raw, "model_providers."+id, "base_url"); got != ProxyEndpointFor("grok") {
+			t.Fatalf("provider %s base_url = %q", id, got)
+		}
+	}
+	d := detectGrokProxy(ProxyCapabilities()["grok"])
+	if d.State != ProxyStateManaged || !strings.Contains(d.Detail, "2 provider(s)") {
+		t.Fatalf("detection = %s %s", d.State, d.Detail)
+	}
+}
+
+func TestUserOwnedHeaderValueSurvivesRoundTrip(t *testing.T) {
+	cfg := `[model_providers.custom]
+base_url = "https://up.example/v1"
+api_key = "sk-c"
+extra_headers = { x-headroom-base-url = "https://my-own.example" , x-tag = "t" }
+
+[model.m]
+name = "M"
+model = "m1"
+model_provider = "custom"
+`
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if !strings.Contains(raw, `x-headroom-base-url = "https://up.example/v1"`) {
+		t.Fatalf("routing header missing:\n%s", raw)
+	}
+	if !strings.Contains(raw, `x-tag = "t"`) {
+		t.Fatal("user tag lost")
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(grokConfigFile())
+	if raw != cfg {
+		t.Fatalf("user-owned header not restored:\n%s", raw)
+	}
+}
+
+func TestEmptyUserOwnedHeaderSurvivesRoundTrip(t *testing.T) {
+	cfg := `[model_providers.custom]
+base_url = "https://up.example/v1"
+api_key = "sk-c"
+extra_headers = { x-headroom-base-url = "" }
+`
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if raw != cfg {
+		t.Fatalf("empty user-owned header not restored:\n%s", raw)
+	}
+}
+
+func TestIndentedChildHeaderKeysHandled(t *testing.T) {
+	cfg := "[model_providers.custom]\nbase_url = \"https://up.example/v1\"\napi_key = \"sk-c\"\n\n[model_providers.custom.extra_headers]\n  x-note = \"doc\"\n"
+	grokSeedConfig(t, cfg)
+	if _, _ = ConfigureGrokProxy(); !GrokProxyWired() {
+		t.Fatal("not wired")
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	if strings.Count(raw, "x-headroom-base-url") != 1 {
+		t.Fatalf("expected exactly one routing header:\n%s", raw)
+	}
+	if !RemoveGrokProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(grokConfigFile())
+	if strings.Contains(raw, headroomBaseURLHeader) || !strings.Contains(raw, `x-note = "doc"`) {
+		t.Fatalf("indented child restore broken:\n%s", raw)
+	}
+}
+
+func TestDetectStatesOAuthOnlyAndStale(t *testing.T) {
+	grokSeedConfig(t, "[models]\ndefault = \"grok-4.6\"\n")
+	if ProxyAgentApplicable("grok") {
+		t.Fatal("oauth-only config must not be applicable")
+	}
+	d := detectGrokProxy(ProxyCapabilities()["grok"])
+	if d.State != ProxyStateUnconfigured {
+		t.Fatalf("state = %s (%s)", d.State, d.Detail)
+	}
+
+	// Stale: stash present, user hand-restored the route.
+	grokSeedConfig(t, grokUserConfig)
+	_, _ = ConfigureGrokProxy()
+	stash := loadGrokStash()
+	if len(stash) != 1 {
+		t.Fatalf("stash entries = %d", len(stash))
+	}
+	raw, _ := util.ReadFileSafe(grokConfigFile())
+	next := strings.Replace(raw, ProxyEndpointFor("grok"), "https://provider.example/v1", 1)
+	if err := util.WriteFile(grokConfigFile(), next); err != nil {
+		t.Fatal(err)
+	}
+	if GrokProxyWired() {
+		t.Fatal("hand-restored route must read unwired")
+	}
+	d = detectGrokProxy(ProxyCapabilities()["grok"])
+	if d.State != ProxyStateUnconfigured || !strings.Contains(d.Detail, "not routed") {
+		t.Fatalf("opted-out state = %s (%s)", d.State, d.Detail)
+	}
+}
+
+func TestRemoveBlockSparesArrayTables(t *testing.T) {
+	setGrokTestHome(t)
+	src := "[model.tokless]\nname = \"x\"\n\n[[items]]\nname = \"keep\"\n"
+	if err := util.WriteFile(grokConfigFile(), src); err != nil {
+		t.Fatal(err)
+	}
+	next := util.RemoveBlock(src, "model.tokless")
+	if !strings.Contains(next, "[[items]]") || !strings.Contains(next, `name = "keep"`) {
+		t.Fatalf("array table consumed by block removal:\n%q", next)
+	}
+}
+
+func TestGrokProxyCapabilityIsAdditiveProvider(t *testing.T) {
+	cap := ProxyCapabilities()["grok"]
+	if cap.WireKind != ProxyWireAdditiveProvider {
+		t.Fatalf("Grok wire kind = %s, want additive-provider/model", cap.WireKind)
+	}
+}
+
+func TestGrokInstructionsUseGlobalAgentsMarkdown(t *testing.T) {
+	setGrokTestHome(t)
+	dir := t.TempDir()
+	t.Setenv("GROK_HOME", dir)
+
+	want := filepath.Join(dir, "rules", "AGENTS.md")
+	if got := GrokInstructionsFile(); got != want {
+		t.Fatalf("GrokInstructionsFile = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureGrokMcpRejectsHeadroom(t *testing.T) {
+	setGrokTestHome(t)
+	if changed, _, err := ConfigureGrokMcp("headroom"); err == nil || changed {
+		t.Fatalf("ConfigureGrokMcp(headroom) = (%v, %v), want unchanged error", changed, err)
 	}
 }
 
@@ -279,20 +646,19 @@ func TestGrokCodegraphSessionHookInstallHas(t *testing.T) {
 	}
 }
 
-func TestConfigureGrokMcpRejectsHeadroom(t *testing.T) {
-	setGrokTestHome(t)
-	if changed, _, err := ConfigureGrokMcp("headroom"); err == nil || changed {
-		t.Fatalf("ConfigureGrokMcp(headroom) = (%v, %v), want unchanged error", changed, err)
+func TestDetectGrokProxyUnreadableState(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits meaningless as root")
 	}
-}
-
-func TestGrokInstructionsUseGlobalAgentsMarkdown(t *testing.T) {
 	setGrokTestHome(t)
-	dir := t.TempDir()
-	t.Setenv("GROK_HOME", dir)
-
-	want := filepath.Join(dir, "rules", "AGENTS.md")
-	if got := GrokInstructionsFile(); got != want {
-		t.Fatalf("GrokInstructionsFile = %q, want %q", got, want)
+	if err := util.WriteFile(grokConfigFile(), "[models]\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(grokConfigFile(), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(grokConfigFile(), 0o644) })
+	if got := DetectProxy("grok").State; got != ProxyStateUnreadable {
+		t.Fatalf("state = %q, want unreadable", got)
 	}
 }

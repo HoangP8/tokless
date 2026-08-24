@@ -22,6 +22,11 @@ func TomlSingleQuoted(s string) string {
 	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
 }
 
+// TomlQuoted returns a TOML basic string (double quotes, escaped).
+func TomlQuoted(s string) string {
+	return `"` + tomlEscapeStr(s) + `"`
+}
+
 // TomlDottedTableHeader is the inner name for [prefix.'pathKey'] (no brackets).
 func TomlDottedTableHeader(prefix, pathKey string) string {
 	return prefix + "." + TomlSingleQuoted(pathKey)
@@ -103,31 +108,70 @@ func escapeRe(s string) string {
 
 type blockRange struct{ start, end int }
 
-// findBlockRange locates [header] and the slice up to the next sibling header.
+// findBlockRange locates [header] and the slice up to the next header line.
 func findBlockRange(src, header string) *blockRange {
-	reHeader := regexp.MustCompile(`(?m)^\[\s*` + escapeRe(header) + `\s*\]\s*$`)
+	reHeader := regexp.MustCompile(`(?m)^\[\s*` + escapeRe(header) + `\s*\](?:[ \t]*#.*)?$`)
 	loc := reHeader.FindStringIndex(src)
 	if loc == nil {
 		return nil
 	}
 	start := loc[0]
-	reNext := regexp.MustCompile(`(?m)^\[(\s*[^\]]+)\]\s*$`)
 	rest := src[loc[1]:]
 	offset := loc[1]
-	for _, m := range reNext.FindAllStringSubmatchIndex(rest, -1) {
-		candidate := strings.TrimSpace(rest[m[2]:m[3]])
-		if candidate == "" {
-			continue
+	pos := 0
+	for _, line := range strings.SplitAfter(rest, "\n") {
+		t := stripTomlComment(strings.TrimSpace(line))
+		if isHeaderLine(t) && t != "["+header+"]" && t != "[["+header+"]]" && !strings.HasPrefix(t, "["+header+".") {
+			return &blockRange{start: start, end: offset + pos}
 		}
-		if candidate == header || strings.HasPrefix(candidate, header+".") {
-			continue
-		}
-		return &blockRange{start: start, end: offset + m[0]}
+		pos += len(line)
 	}
 	return &blockRange{start: start, end: len(src)}
 }
 
-var reScalarField = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$`)
+// isHeaderLine reports whether a trimmed line is a table or array-table header.
+func isHeaderLine(t string) bool {
+	t = stripTomlComment(t)
+	if strings.HasPrefix(t, "[[") {
+		return strings.HasSuffix(t, "]]")
+	}
+	return strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]")
+}
+
+// stripTomlComment cuts a trailing # comment, respecting quoted strings.
+func stripTomlComment(t string) string {
+	inStr, inLiteral, esc := false, false, false
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		if inStr {
+			if esc {
+				esc = false
+			} else if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if inLiteral {
+			if c == '\'' {
+				inLiteral = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '\'':
+			inLiteral = true
+		case '#':
+			return strings.TrimRight(t[:i], " \t")
+		}
+	}
+	return t
+}
+
+var reScalarField = regexp.MustCompile(`^\s*(?:([A-Za-z0-9_-]+)|'([^']*)'|"([^"]*)")\s*=\s*(.+?)\s*$`)
 
 func parseScalarFields(blockText string) *TomlBlock {
 	b := NewTomlBlock("")
@@ -136,7 +180,14 @@ func parseScalarFields(blockText string) *TomlBlock {
 		if m == nil {
 			continue
 		}
-		key, raw := m[1], m[2]
+		key := m[1]
+		if key == "" {
+			key = m[2]
+		}
+		if key == "" {
+			key = m[3]
+		}
+		raw := strings.TrimSpace(stripTomlComment(m[4]))
 		if strings.HasPrefix(raw, "[") || strings.HasPrefix(raw, "{") {
 			continue
 		}
@@ -147,6 +198,10 @@ func parseScalarFields(blockText string) *TomlBlock {
 			f, _ := strconv.ParseFloat(raw, 64)
 			b.Set(key, f)
 		case strings.HasPrefix(raw, `"`) && strings.HasSuffix(raw, `"`):
+			if v, err := strconv.Unquote(raw); err == nil {
+				b.Set(key, v)
+			}
+		case strings.HasPrefix(raw, `'`) && strings.HasSuffix(raw, `'`):
 			b.Set(key, raw[1:len(raw)-1])
 		}
 	}
@@ -198,8 +253,6 @@ func UpsertBlock(src string, block *TomlBlock, merge bool) string {
 	return before + rendered + after
 }
 
-
-
 func RemoveBlock(src, header string) string {
 	r := findBlockRange(src, header)
 	if r == nil {
@@ -208,8 +261,31 @@ func RemoveBlock(src, header string) string {
 	return src[:r.start] + src[r.end:]
 }
 
+// BlockText returns the raw text of a [header] table including its child
+// tables; ok is false when the table is absent.
+func BlockText(src, header string) (string, bool) {
+	r := findBlockRange(src, header)
+	if r == nil {
+		return "", false
+	}
+	return src[r.start:r.end], true
+}
+
 func HasBlock(src, header string) bool {
 	return findBlockRange(src, header) != nil
+}
+
+// TomlBlockField reads one scalar field from a [header] table ("" if absent).
+func TomlBlockField(src, header, key string) string {
+	r := findBlockRange(src, header)
+	if r == nil {
+		return ""
+	}
+	b := parseScalarFields(src[r.start:r.end])
+	if v, ok := b.Fields[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // SetTomlTopKey sets/replaces a root-level string key, placed before any [section].

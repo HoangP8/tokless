@@ -1,5 +1,7 @@
 package agents
 
+import "github.com/HoangP8/tokless/internal/util"
+
 // ProxyAgentSpec is static metadata plus wire-side function references for one
 // agent's headroom proxy integration.
 type ProxyAgentSpec struct {
@@ -19,7 +21,7 @@ var proxyAgentSpecs = map[string]ProxyAgentSpec{
 	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
 	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
 	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
-	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureGrokProxy, RemoveGrokProxy, GrokProxyWired},
+	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureGrokProxy, RemoveGrokProxy, GrokProxyWired},
 	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCopilotProxy, RemoveCopilotProxy, CopilotProxyWired},
 	"cline":       {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
 	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
@@ -29,6 +31,21 @@ var proxyAgentSpecs = map[string]ProxyAgentSpec{
 func proxySpecFor(id string) (ProxyAgentSpec, bool) {
 	spec, ok := proxyAgentSpecs[id]
 	return spec, ok
+}
+
+// ProxyAgentApplicable reports whether the agent's config file exists for
+// tokless to extend; false means wire attempts are skipped, never forced.
+func ProxyAgentApplicable(id string) bool {
+	if id == "grok" {
+		if !GrokProxyApplicable() {
+			return false
+		}
+		if raw, ok := util.ReadFileSafe(grokConfigFile()); ok && len(grokLocalBYOK(raw)) > 0 {
+			return true
+		}
+		return len(loadGrokStash()) > 0
+	}
+	return true
 }
 
 // ConfigureProxyAgent wires id to the headroom proxy. Returns true when the
