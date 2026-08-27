@@ -68,6 +68,19 @@ func TestProxyPortDefaults(t *testing.T) {
 	}
 }
 
+func TestAcquireProxyStartLockCreatesRuntimeDirectory(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	release, err := acquireProxyStartLock(time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if _, err := os.Stat(util.HeadroomPathsResolved().Root); err != nil {
+		t.Fatalf("runtime directory missing: %v", err)
+	}
+}
+
 func TestProxyLiveZRejectsNonHeadroomService(t *testing.T) {
 	for _, service := range []string{"other-service", "", "headroom"} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -675,6 +688,18 @@ func TestProxyArgsMatchRecorded(t *testing.T) {
 	}
 	if proxyArgsMatchRecorded(8787) {
 		t.Fatal("stale args must not match current proxyArgs")
+	}
+	if err := os.WriteFile(pidFile, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if proxyArgsMatchRecorded(8787) {
+		t.Fatal("malformed ownership record must not match current proxyArgs")
+	}
+	if err := os.WriteFile(pidFile, []byte(`{"pid":5357,"executable":"`+bin+`","args":[],"start_fingerprint":"start"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if proxyArgsMatchRecorded(8787) {
+		t.Fatal("empty ownership args must not match current proxyArgs")
 	}
 }
 

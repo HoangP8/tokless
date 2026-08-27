@@ -156,6 +156,9 @@ func proxyStartLock() string {
 // concurrent caller to finish, and stealing the lock when it looks stale
 // (crashed holder). It returns a release func for the caller.
 func acquireProxyStartLock(now func() time.Time) (func(), error) {
+	if err := util.EnsureDir(util.HeadroomPathsResolved().Root); err != nil {
+		return nil, err
+	}
 	path := proxyStartLock()
 	deadline := now().Add(proxyStartLockWait)
 	for {
@@ -180,7 +183,7 @@ func acquireProxyStartLock(now func() time.Time) (func(), error) {
 }
 
 // proxyArgsMatchRecorded reports whether the persisted ownership record (when
-// present) lists the argv tokless would launch today. 
+// present) lists the argv tokless would launch today.
 func proxyArgsMatchRecorded(port int) bool {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
@@ -189,7 +192,7 @@ func proxyArgsMatchRecorded(port int) bool {
 	}
 	var record proxyOwnership
 	if err := json.Unmarshal([]byte(raw), &record); err != nil || len(record.Args) == 0 {
-		return true
+		return false
 	}
 	want := proxyArgs(port)
 	if equalStrings(record.Args, want) {
@@ -205,7 +208,9 @@ func StartProxy() error {
 	// Fast path: already up with matching args. No lock needed — this is the
 	// common case (opencode MCP workers) and never touches the daemon.
 	if ProxyRunning() && proxyArgsMatchRecorded(port) {
-		_ = persistProxyRuntime(port)
+		if err := persistProxyRuntime(port); err != nil {
+			return fmt.Errorf("headroom proxy runtime record: %w", err)
+		}
 		util.L.Sub("headroom proxy already running on " + ProxyURL())
 		return nil
 	}
@@ -218,7 +223,9 @@ func StartProxy() error {
 	defer release()
 	if ProxyRunning() {
 		if proxyArgsMatchRecorded(port) {
-			_ = persistProxyRuntime(port)
+			if err := persistProxyRuntime(port); err != nil {
+				return fmt.Errorf("headroom proxy runtime record: %w", err)
+			}
 			util.L.Sub("headroom proxy already running on " + ProxyURL())
 			return nil
 		}
