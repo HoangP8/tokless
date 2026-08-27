@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -764,6 +765,70 @@ func TestOmpProxyScenarios(t *testing.T) {
 	}
 }
 
+func TestPiProxyPreservesNativeProvider(t *testing.T) {
+	piProxyTestHome(t)
+	raw := `{"providers":{"qwen":{"api":"openai-completions","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","headers":{"x-user":"keep"},"models":[{"id":"deepseek-v4-flash"}]}}}`
+	if err := util.WriteFile(piModelsFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigurePiProxy(); !changed || !PiProxyWired() {
+		t.Fatal("native Pi provider not wired")
+	}
+	got, _ := util.ReadFileSafe(piModelsFile())
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"id\": \"deepseek-v4-flash\"", "\"x-user\": \"keep\"", "\"baseUrl\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://dashscope.aliyuncs.com/compatible-mode\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Pi route missing %q:\n%s", want, got)
+		}
+	}
+	if changed, _ := ConfigurePiProxy(); changed {
+		t.Fatal("Pi native route not idempotent")
+	}
+	if !RemovePiProxy() || PiProxyWired() {
+		t.Fatal("Pi native route not removed")
+	}
+	got, _ = util.ReadFileSafe(piModelsFile())
+	if got != util.StringifyJSON(util.TryParseJsonc(raw)) {
+		t.Fatalf("Pi provider not restored:\n%s", got)
+	}
+}
+
+func TestOmpProxyPreservesNativeProviderAndRole(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  qwen:
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKey: user-key
+    api: openai-completions
+    headers:
+      x-user: keep
+modelRoles:
+  default: qwen/deepseek-v4-flash:high
+`
+	if err := util.WriteFile(ompModelsFile(), models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed || !OmpProxyWired() {
+		t.Fatal("native OMP provider not wired")
+	}
+	got, _ := util.ReadFileSafe(ompModelsFile())
+	for _, want := range []string{"baseUrl: http://127.0.0.1:8787/v1", "apiKey: user-key", "x-user: keep", "x-headroom-base-url: https://dashscope.aliyuncs.com/compatible-mode"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("OMP route missing %q:\n%s", want, got)
+		}
+	}
+	config, _ := util.ReadFileSafe(ompConfigFile())
+	if config != "" {
+		t.Fatalf("OMP changed default role:\n%s", config)
+	}
+	if !RemoveOmpProxy() || OmpProxyWired() {
+		t.Fatal("OMP native route not removed")
+	}
+	got, _ = util.ReadFileSafe(ompModelsFile())
+	if !strings.Contains(got, "baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1") || strings.Contains(got, "x-headroom-base-url") {
+		t.Fatalf("OMP provider not restored:\n%s", got)
+	}
+}
+
 func readProxyTestFile(t *testing.T, path string) string {
 	t.Helper()
 	raw, ok := util.ReadFileSafe(path)
@@ -1128,5 +1193,603 @@ func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	}
 	if got := DetectProxy("antigravity"); got.State != ProxyStateForeignBYOK {
 		t.Fatalf("foreign = %+v", got)
+	}
+}
+
+func TestOmpRoutePreservesOriginalLineBytes(t *testing.T) {
+	ompProxyTestHome(t)
+	original := `providers:
+  qwen:
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # primary
+    apiKey: user-key
+    api: openai-completions
+    headers:
+      x-user-header: keep-me
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, original); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected first wire to change config")
+	}
+	raw, _ := util.ReadFileSafe(file)
+	for _, want := range []string{`# primary`, `"`, `x-user-header: keep-me`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("rewritten config lost %q:\n%s", want, raw)
+		}
+	}
+	if !RemoveOmpProxy() {
+		t.Fatal("expected restore to change config")
+	}
+	raw, _ = util.ReadFileSafe(file)
+	if raw != original {
+		t.Fatalf("restore not byte-identical:\n got: %q\nwant: %q", raw, original)
+	}
+}
+
+func TestOmpSkipsFlowStyleHeaders(t *testing.T) {
+	ompProxyTestHome(t)
+	original := `providers:
+  qwen:
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKey: k
+    api: openai-completions
+    headers: {x-user: keep}
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, original); err != nil {
+		t.Fatal(err)
+	}
+	ConfigureOmpProxy()
+	raw, _ := util.ReadFileSafe(file)
+	block := `  qwen:
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKey: k
+    api: openai-completions
+    headers: {x-user: keep}
+`
+	if !strings.Contains(raw, block) {
+		t.Fatalf("flow-style provider block must stay byte-identical:\n%s", raw)
+	}
+}
+
+func TestWiredRequiresEveryStashEntry(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  alpha:
+    baseUrl: https://alpha.example/v1
+    apiKey: a
+    api: openai-completions
+  beta:
+    baseUrl: https://beta.example/v1
+    apiKey: b
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected wire")
+	}
+	if !OmpProxyWired() {
+		t.Fatal("both routed should be wired")
+	}
+	raw, _ := util.ReadFileSafe(file)
+	filtered := `providers:
+  alpha:
+    baseUrl: http://127.0.0.1:8787/v1
+    apiKey: a
+    api: openai-completions
+    headers:
+      x-headroom-base-url: https://alpha.example
+`
+	if err := util.WriteFile(file, filtered); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = util.ReadFileSafe(file)
+	_ = raw
+	if OmpProxyWired() {
+		t.Fatal("wired must be false when one stashed provider was deleted")
+	}
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("re-up must not rewrite when remaining providers already routed")
+	}
+	stash := loadProxyRouteStash("omp")
+	if _, exists := stash["beta"]; exists {
+		t.Fatal("deleted provider must be pruned from stash")
+	}
+	if !OmpProxyWired() {
+		t.Fatal("after pruning, remaining route should be wired")
+	}
+}
+
+func TestNoLegacyFallbackWhileStashExists(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  other:
+    baseUrl: https://x.example/v1
+    apiKey: k
+    api: unsupported-api
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, models); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{
+		"gone": {Provider: "gone", BaseURL: "https://gone.example/v1", Upstream: "https://gone.example"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = saveProxyRouteStash("omp", nil) })
+	changed, _ := ConfigureOmpProxy()
+	if changed {
+		t.Fatal("must not inject legacy headroom provider while stash unresolved")
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if strings.Contains(raw, "headroom") || !strings.Contains(raw, "unsupported-api") {
+		t.Fatalf("config must stay untouched:\n%s", raw)
+	}
+}
+
+func TestPiWiredRequiresEveryStashEntry(t *testing.T) {
+	piProxyTestHome(t)
+	cfg := util.NewOrderedMap()
+	providers := util.NewOrderedMap()
+	for _, id := range []string{"alpha", "beta"} {
+		p := piProxyProviderEntry("https://" + id + ".example/v1")
+		p.Set("baseUrl", "http://127.0.0.1:8787/v1")
+		headers := util.NewOrderedMap()
+		headers.Set(headroomBaseURLHeader, "https://"+id+".example")
+		p.Set("headers", headers)
+		providers.Set(id, p)
+	}
+	cfg.Set("providers", providers)
+	file := piModelsFile()
+	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	stash := map[string]proxyRouteStashEntry{}
+	for _, id := range []string{"alpha", "beta"} {
+		stash[id] = proxyRouteStashEntry{Provider: id, BaseURL: "https://" + id + ".example/v1", Upstream: "https://" + id + ".example"}
+	}
+	if err := saveProxyRouteStash("pi", stash); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = saveProxyRouteStash("pi", nil) })
+	if !PiProxyWired() {
+		t.Fatal("all entries matched should be wired")
+	}
+	providers.Delete("beta")
+	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	if PiProxyWired() {
+		t.Fatal("wired must be false after provider deletion")
+	}
+}
+
+func TestSaveProxyRouteStashAtomicNoTempLeftover(t *testing.T) {
+	ompProxyTestHome(t)
+	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{
+		"x": {Provider: "x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(proxyRouteStashPath("omp") + ".tmp"); !os.IsNotExist(err) {
+		t.Fatal("temp stash file must not survive successful write")
+	}
+}
+
+func TestOmpSpliceTargetsValueNotComment(t *testing.T) {
+	ompProxyTestHome(t)
+	original := `providers:
+  qwen:
+    baseUrl: https://a.example/v1  # see https://a.example/v1/docs
+    apiKey: k
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, original); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected wire")
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if !strings.Contains(raw, "    baseUrl: http://127.0.0.1:8787/v1  # see https://a.example/v1/docs") {
+		t.Fatalf("value splice hit wrong occurrence:\n%s", raw)
+	}
+	if !RemoveOmpProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ = util.ReadFileSafe(file)
+	if raw != original {
+		t.Fatalf("restore not byte-identical:\n got: %q\nwant: %q", raw, original)
+	}
+}
+
+func TestStashPrunesWhenAllProvidersDeleted(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  solo:
+    baseUrl: https://solo.example/v1
+    apiKey: k
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected wire")
+	}
+	if err := util.WriteFile(file, "providers: {}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("no-native run must not touch config")
+	}
+	stash := loadProxyRouteStash("omp")
+	if len(stash) != 0 {
+		t.Fatalf("all-deleted providers must be pruned, got %v", stash)
+	}
+}
+
+func TestStashFileIsPrivate(t *testing.T) {
+	ompProxyTestHome(t)
+	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{
+		"x": {Provider: "x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(proxyRouteStashPath("omp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("stash mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestOmpQuotedBaseUrlRoutesClean(t *testing.T) {
+	ompProxyTestHome(t)
+	original := `providers:
+  qwen:
+    baseUrl: "https://a.example/v1"
+    apiKey: k
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, original); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected wire")
+	}
+	if !OmpProxyWired() {
+		t.Fatal("quoted baseUrl must wire")
+	}
+	stash := loadProxyRouteStash("omp")
+	if stash["qwen"].Upstream != "https://a.example" {
+		t.Fatalf("upstream polluted by quotes: %q", stash["qwen"].Upstream)
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if !strings.Contains(raw, `x-headroom-base-url: https://a.example`) {
+		t.Fatalf("header contains quote characters:\n%s", raw)
+	}
+	if !RemoveOmpProxy() {
+		t.Fatal("expected restore")
+	}
+	if raw, _ = util.ReadFileSafe(file); raw != original {
+		t.Fatalf("restore not byte-identical:\n got: %q\nwant: %q", raw, original)
+	}
+}
+
+func TestOmpDuplicateProviderKeysRefused(t *testing.T) {
+	ompProxyTestHome(t)
+	dup := `providers:
+  qwen:
+    baseUrl: https://first.example/v1
+    apiKey: a
+    api: openai-completions
+  qwen:
+    baseUrl: https://second.example/v1
+    apiKey: b
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, dup); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("duplicate provider keys must refuse wiring")
+	}
+	if raw, _ := util.ReadFileSafe(file); raw != dup {
+		t.Fatalf("ambiguous file must stay untouched:\n%s", raw)
+	}
+}
+
+func TestWiredFalseWhenProviderAddedAfterUp(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  alpha:
+    baseUrl: https://alpha.example/v1
+    apiKey: a
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected wire")
+	}
+	if !OmpProxyWired() {
+		t.Fatal("should be wired")
+	}
+	grown := strings.Replace(models, "providers:\n", "providers:\n  beta:\n    baseUrl: https://beta.example/v1\n    apiKey: b\n    api: openai-completions\n", 1)
+	if err := util.WriteFile(file, grown); err != nil {
+		t.Fatal(err)
+	}
+	if OmpProxyWired() {
+		t.Fatal("new unrouted provider must break managed claim")
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("re-up should wire the new provider")
+	}
+	if !OmpProxyWired() {
+		t.Fatal("all providers routed now, should be wired")
+	}
+}
+
+func TestStashPrunedWhenApiBecomesUnsupported(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  solo:
+    baseUrl: https://solo.example/v1
+    apiKey: k
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("expected wire")
+	}
+	broken := strings.Replace(models, "api: openai-completions", "api: exotic-protocol", 1)
+	if err := util.WriteFile(file, broken); err != nil {
+		t.Fatal(err)
+	}
+	ConfigureOmpProxy()
+	stash := loadProxyRouteStash("omp")
+	if len(stash) != 0 {
+		t.Fatalf("unsupported transport must release stash, got %v", stash)
+	}
+	if OmpProxyWired() {
+		t.Fatal("must not claim managed after release")
+	}
+}
+
+func TestOmpRewireLastProviderStable(t *testing.T) {
+	ompProxyTestHome(t)
+	original := `providers:
+  solo:
+    baseUrl: https://solo.example/v1
+    apiKey: k
+    api: openai-completions
+`
+	file := ompModelsFile()
+	if err := util.WriteFile(file, original); err != nil {
+		t.Fatal(err)
+	}
+	ConfigureOmpProxy()
+	first, _ := util.ReadFileSafe(file)
+	if strings.Contains(first, "\n\n") {
+		t.Fatalf("fresh wire must not inject blank lines:\n%q", first)
+	}
+	if !RemoveOmpProxy() {
+		t.Fatal("expected restore")
+	}
+	if raw, _ := util.ReadFileSafe(file); raw != original {
+		t.Fatalf("restore not byte-identical:\n got: %q\nwant: %q", raw, original)
+	}
+	ConfigureOmpProxy()
+	second, _ := util.ReadFileSafe(file)
+	if second != first {
+		t.Fatalf("re-wire not stable:\n first: %q\nsecond: %q", first, second)
+	}
+}
+
+func TestPiDetectProxyNativeRoutesManaged(t *testing.T) {
+	piProxyTestHome(t)
+	providers := util.NewOrderedMap()
+	must := piProxyProviderEntry("https://htmustc.id.vn/v1")
+	must.Set("baseUrl", "http://127.0.0.1:8787/v1")
+	headers := util.NewOrderedMap()
+	headers.Set("x-headroom-base-url", "https://htmustc.id.vn")
+	must.Set("headers", headers)
+	providers.Set("mustc", must)
+	cfg := util.NewOrderedMap()
+	cfg.Set("providers", providers)
+	if err := util.WriteFile(piModelsFile(), util.StringifyJSON(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProxyRouteStash("pi", map[string]proxyRouteStashEntry{
+		"mustc": {Provider: "mustc", BaseURL: "https://htmustc.id.vn/v1", Upstream: "https://htmustc.id.vn", BaseKey: "baseUrl"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = saveProxyRouteStash("pi", nil) })
+	if !PiProxyWired() {
+		t.Fatal("native routes should be wired")
+	}
+	if d := DetectProxy("pi"); d.State != ProxyStateManaged {
+		t.Fatalf("detect state = %q (%s), want managed", d.State, d.Detail)
+	}
+}
+
+func TestOmpDetectProxyNativeRoutesManaged(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  qwen:
+    baseUrl: http://127.0.0.1:8787/v1
+    apiKey: user-key
+    api: openai-completions
+    headers:
+      x-headroom-base-url: https://dashscope.aliyuncs.com/compatible-mode
+`
+	if err := util.WriteFile(ompModelsFile(), models); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{
+		"qwen": {Provider: "qwen", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Upstream: "https://dashscope.aliyuncs.com/compatible-mode", BaseKey: "baseUrl"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = saveProxyRouteStash("omp", nil) })
+	if !OmpProxyWired() {
+		t.Fatal("native routes should be wired")
+	}
+	if d := DetectProxy("omp"); d.State != ProxyStateManaged {
+		t.Fatalf("detect state = %q (%s), want managed", d.State, d.Detail)
+	}
+}
+
+func TestOmpProxyBlankLineInHeadersDoesNotDuplicateKey(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  qwen:
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKey: user-key
+    api: openai-completions
+    headers:
+
+      x-user: keep
+`
+	if err := util.WriteFile(ompModelsFile(), models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); !changed {
+		t.Fatal("native OMP provider not wired")
+	}
+	got, _ := util.ReadFileSafe(ompModelsFile())
+	if n := strings.Count(got, "x-headroom-base-url"); n != 1 {
+		t.Fatalf("expected exactly one x-headroom-base-url, got %d:\n%s", n, got)
+	}
+	if !strings.Contains(got, "x-user: keep") {
+		t.Fatalf("user header lost:\n%s", got)
+	}
+	if !RemoveOmpProxy() || OmpProxyWired() {
+		t.Fatal("OMP native route not removed")
+	}
+	got, _ = util.ReadFileSafe(ompModelsFile())
+	if strings.Contains(got, "x-headroom-base-url") || !strings.Contains(got, "x-user: keep") {
+		t.Fatalf("OMP provider not restored:\n%s", got)
+	}
+}
+
+func TestOmpProxyAlreadyRoutedWithoutStashNotClaimed(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  qwen:
+    baseUrl: http://127.0.0.1:8787/v1
+    apiKey: user-key
+    api: openai-completions
+    headers:
+      x-headroom-base-url: https://dashscope.aliyuncs.com/compatible-mode
+`
+	if err := util.WriteFile(ompModelsFile(), models); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("pre-routed provider must not be rewritten")
+	}
+	if _, err := os.Stat(proxyRouteStashPath("omp")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stash fabricated for pre-routed provider: %v", err)
+	}
+	if RemoveOmpProxy() {
+		t.Fatal("remove must not touch routes without tokless stash")
+	}
+	got, _ := util.ReadFileSafe(ompModelsFile())
+	if !strings.Contains(got, "baseUrl: http://127.0.0.1:8787/v1") {
+		t.Fatalf("pre-routed provider modified:\n%s", got)
+	}
+}
+
+func TestPiProxyAlreadyRoutedWithoutStashNotClaimed(t *testing.T) {
+	piProxyTestHome(t)
+	raw := `{"providers":{"qwen":{"baseUrl":"http://127.0.0.1:8787/v1","api":"openai-completions","apiKey":"user-key","headers":{"x-headroom-base-url":"https://dashscope.aliyuncs.com/compatible-mode"}}}}`
+	if err := util.WriteFile(piModelsFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigurePiProxy(); changed {
+		t.Fatal("pre-routed provider must not be rewritten")
+	}
+	if _, err := os.Stat(proxyRouteStashPath("pi")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stash fabricated for pre-routed provider: %v", err)
+	}
+	if RemovePiProxy() {
+		t.Fatal("remove must not touch routes without tokless stash")
+	}
+	got, _ := util.ReadFileSafe(piModelsFile())
+	if !strings.Contains(got, "http://127.0.0.1:8787/v1") {
+		t.Fatalf("pre-routed provider modified:\n%s", got)
+	}
+}
+
+func TestPiProxyNonStringHeaderSkipped(t *testing.T) {
+	piProxyTestHome(t)
+	raw := `{"providers":{` +
+		`"nvidia":{"baseUrl":"https://integrate.api.nvidia.com/v1","api":"openai-completions","apiKey":"nv-key"},` +
+		`"weird":{"baseUrl":"https://weird.example/v1","api":"openai-completions","apiKey":"k","headers":{"x-headroom-base-url":false}}}}`
+	if err := util.WriteFile(piModelsFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigurePiProxy(); !changed {
+		t.Fatal("routable provider not wired")
+	}
+	got, _ := util.ReadFileSafe(piModelsFile())
+	if !strings.Contains(got, `"x-headroom-base-url": false`) {
+		t.Fatalf("non-string header destroyed:\n%s", got)
+	}
+	if !strings.Contains(got, "https://weird.example/v1") {
+		t.Fatalf("conflicting provider was rewritten:\n%s", got)
+	}
+	if !strings.Contains(got, "https://integrate.api.nvidia.com") {
+		t.Fatalf("routable provider missing upstream header:\n%s", got)
+	}
+}
+
+func TestOmpProxySavesStashBeforeConfigWrite(t *testing.T) {
+	ompProxyTestHome(t)
+	models := `providers:
+  qwen:
+    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    apiKey: user-key
+    api: openai-completions
+`
+	if err := util.WriteFile(ompModelsFile(), models); err != nil {
+		t.Fatal(err)
+	}
+	prev := ompWriteFile
+	ompWriteFile = func(string, string) error { return errors.New("boom") }
+	t.Cleanup(func() { ompWriteFile = prev })
+	if changed, _ := ConfigureOmpProxy(); changed {
+		t.Fatal("configure must fail when config write fails")
+	}
+	stash := loadProxyRouteStash("omp")
+	entry, ok := stash["qwen"]
+	if !ok || entry.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
+		t.Fatalf("stash not persisted before config write: %+v", stash)
+	}
+	info, err := os.Stat(proxyRouteStashPath("omp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("stash perms = %v, want 0600", info.Mode().Perm())
 	}
 }

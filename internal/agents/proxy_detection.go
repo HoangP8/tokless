@@ -122,6 +122,9 @@ func DetectProxy(id string) ProxyDetection {
 	case "kilo":
 		return detectProviderProxy(capability, util.KiloPathsResolved().Config, "provider", kiloProxyProvider, kiloProxyProviderEntry(ProxyEndpointFor(id)))
 	case "pi":
+		if PiProxyWired() {
+			return proxyDetection(id, "native BYOK providers routed through headroom", ProxyStateManaged)
+		}
 		return detectProviderProxy(capability, piModelsFile(), "providers", piProxyProvider, piProxyProviderEntry(ProxyEndpointFor(id)))
 	case "droid":
 		return detectDroidProxy(capability)
@@ -175,6 +178,9 @@ func detectClaudeProxy(cap ProxyCapability) ProxyDetection {
 }
 
 func detectOmpProxy(cap ProxyCapability) ProxyDetection {
+	if OmpProxyWired() {
+		return proxyDetection(cap.ID, "native BYOK providers routed through headroom", ProxyStateManaged)
+	}
 	path := ompModelsFile()
 	raw, err := readProxyConfig(path)
 	if err != nil {

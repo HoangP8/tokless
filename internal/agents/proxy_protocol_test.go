@@ -22,10 +22,13 @@ func TestProxyEndpointForRouting(t *testing.T) {
 			t.Errorf("ProxyEndpointFor(%q) = %q, want %q", id, got, openai)
 		}
 	}
-	for _, id := range []string{"claude", "omp", "antigravity"} {
+	for _, id := range []string{"claude", "antigravity"} {
 		if got := ProxyEndpointFor(id); got != bare {
 			t.Errorf("ProxyEndpointFor(%q) = %q, want bare %q", id, got, bare)
 		}
+	}
+	if got := ProxyEndpointFor("omp"); got != openai {
+		t.Errorf("ProxyEndpointFor(%q) = %q, want %q", "omp", got, openai)
 	}
 	for _, id := range []string{"cursor", "unknown"} {
 		if got := ProxyEndpointFor(id); got != "" {
