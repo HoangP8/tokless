@@ -195,6 +195,9 @@ func run() int {
 	if len(os.Args) >= 3 && os.Args[1] == "run-mcp" {
 		return commands.RunMcp(os.Args[2:])
 	}
+	if len(os.Args) >= 3 && os.Args[1] == "rtk-rewrite" {
+		return commands.RunRtkRewrite()
+	}
 	if len(os.Args) >= 3 && os.Args[1] == "rtk-hook" {
 		switch os.Args[2] {
 		case "agy":

@@ -2,7 +2,6 @@ package commands
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,8 +14,6 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-// findUnsupportedFlags mirrors upstream rtk's UNSUPPORTED_FIND_FLAGS list
-// in src/cmds/system/find_cmd.rs.
 var findUnsupportedFlags = map[string]bool{
 	"-not": true, "!": true, "-or": true, "-o": true, "-and": true, "-a": true,
 	"-exec": true, "-execdir": true, "-delete": true, "-print0": true,
@@ -25,8 +22,6 @@ var findUnsupportedFlags = map[string]bool{
 	"-link": true, "-regex": true, "-iregex": true,
 }
 
-// shellTokens splits a shell-like string into tokens, respecting single quotes,
-// double quotes, and backslash escapes.
 func shellTokens(s string) []string {
 	var out []string
 	var buf strings.Builder
@@ -58,46 +53,14 @@ func shellTokens(s string) []string {
 	return out
 }
 
-// firstSegment returns the leading command segment of a shell line, split at
-// the first &&, ||, ;, or | operator (outside quotes). Empty if none.
-func firstSegment(line string) string {
-	var seg strings.Builder
-	inSingle, inDouble := false, false
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		switch {
-		case c == '\\' && !inSingle:
-			seg.WriteByte(c)
-			if i+1 < len(line) {
-				seg.WriteByte(line[i+1])
-				i++
-			}
-		case c == '\'' && !inDouble:
-			inSingle = !inSingle
-			seg.WriteByte(c)
-		case c == '"' && !inSingle:
-			inDouble = !inDouble
-			seg.WriteByte(c)
-		case !inSingle && !inDouble && (c == '|' || c == '&' || c == ';'):
-			return strings.TrimSpace(seg.String())
-		default:
-			seg.WriteByte(c)
-		}
-	}
-	return strings.TrimSpace(seg.String())
-}
-
 func rtkUnsafeFind(cmdLine string) bool {
-	for _, part := range shellParts(cmdLine) {
-		if part.isOp {
-			continue
-		}
-		toks := shellTokens(part.text)
+	for _, part := range shellCommandSegments(cmdLine) {
+		toks := shellTokens(part)
 		if len(toks) < 2 || toks[0] != "find" {
 			continue
 		}
-		for _, t := range toks[1:] {
-			if findUnsupportedFlags[t] {
+		for _, token := range toks[1:] {
+			if findUnsupportedFlags[token] {
 				return true
 			}
 		}
@@ -105,12 +68,27 @@ func rtkUnsafeFind(cmdLine string) bool {
 	return false
 }
 
-// rtkRewrite runs `rtk rewrite` once.
 func rtkRewrite(cmdLine string) (string, bool) {
-	if cmdLine == "" {
-		return "", false
-	}
 	return rtkRewriteOnce(cmdLine)
+}
+
+// RunRtkRewrite is the canonical CLI entry: `tokless rtk-rewrite -- <cmd>`.
+// Prints the rewritten command and exits 0 when changed; exits 1 unchanged.
+func RunRtkRewrite() int {
+	args := os.Args[2:]
+	for i, a := range args {
+		if a == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	cmdLine := strings.TrimSpace(strings.Join(args, " "))
+	out, changed := rtkRewrite(cmdLine)
+	if !changed {
+		return 1
+	}
+	fmt.Println(out)
+	return 0
 }
 
 // RunRtkHookCursor handles Cursor's native preToolUse hook contract.
@@ -141,51 +119,15 @@ func RunRtkHookCursor() int {
 	return 0
 }
 
-// copilotRtkRewrite runs `rtk rewrite` with Copilot-specific guards:
-// unsafe-find passthrough → single rewrite → per-segment fallback → fixpoint.
-func copilotRtkRewrite(cmdLine string) (string, bool) {
-	if cmdLine == "" {
-		return "", false
-	}
-	if rtkUnsafeFind(cmdLine) {
-		return "", false
-	}
-	if out, ok := rtkRewriteOnce(cmdLine); ok {
-		return rtkRewriteFixpoint(out), true
-	}
-	if out, ok := rtkRewriteBySegment(cmdLine); ok {
-		return rtkRewriteFixpoint(out), true
-	}
-	return "", false
-}
-
-func rtkRewriteFixpoint(cmdLine string) string {
-	cur := cmdLine
-	for i := 0; i < 3; i++ {
-		next, ok := rtkRewriteOnce(cur)
-		if !ok {
-			return cur
-		}
-		cur = next
-	}
-	return cur
-}
-
 func rtkRewriteOnce(cmdLine string) (string, bool) {
-	if cmdLine == "" {
-		return "", false
-	}
-	if rtkUnsafeFind(cmdLine) {
+	if cmdLine == "" || rtkUnsafeFind(cmdLine) {
 		return "", false
 	}
 	rtkPath := util.ResolveRtkBin()
 	if rtkPath == "" {
 		return "", false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, rtkPath, "rewrite", cmdLine)
+	cmd := exec.Command(rtkPath, "rewrite", cmdLine)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard
@@ -195,143 +137,7 @@ func rtkRewriteOnce(cmdLine string) (string, bool) {
 	if newCmd == "" || newCmd == cmdLine {
 		return "", false
 	}
-	if strings.TrimSpace(newCmd) == strings.TrimSpace(cmdLine) {
-		return "", false
-	}
-	if !rtkSegmentPresent(newCmd) {
-		return "", false
-	}
-	if strings.HasPrefix(strings.TrimSpace(newCmd), "rtk rtk ") {
-		return "", false
-	}
-	newCmd = stripRtkAbsPath(newCmd)
 	return newCmd, true
-}
-
-func rtkSegmentPresent(cmdLine string) bool {
-	for _, seg := range shellCommandSegments(cmdLine) {
-		if segmentStartsWithRtk(seg) {
-			return true
-		}
-	}
-	return false
-}
-
-// rtkRewriteBySegment rewrites each shell command segment independently and
-// rejoins with original operators.
-func rtkRewriteBySegment(cmdLine string) (string, bool) {
-	parts := shellParts(cmdLine)
-	if len(parts) == 0 {
-		return "", false
-	}
-	changed := false
-	var b strings.Builder
-	for _, p := range parts {
-		if p.isOp {
-			b.WriteString(p.text)
-			continue
-		}
-		trimmed := strings.TrimSpace(p.text)
-		if trimmed == "" || segmentStartsWithRtk(trimmed) {
-			b.WriteString(p.text)
-			continue
-		}
-		out, ok := rtkRewriteOnce(trimmed)
-		if !ok {
-			b.WriteString(p.text)
-			continue
-		}
-		lead := p.text[:len(p.text)-len(strings.TrimLeft(p.text, " \t"))]
-		trail := p.text[len(strings.TrimRight(p.text, " \t")):]
-		b.WriteString(lead)
-		b.WriteString(out)
-		b.WriteString(trail)
-		changed = true
-	}
-	if !changed {
-		return "", false
-	}
-	return b.String(), true
-}
-
-type shellPart struct {
-	isOp bool
-	text string
-}
-
-// shellParts splits a line into alternating command segments and operators
-// (&&, ||, ;, |), preserving operator text for rejoin.
-func shellParts(line string) []shellPart {
-	var parts []shellPart
-	var seg strings.Builder
-	inSingle, inDouble := false, false
-	flushSeg := func() {
-		if seg.Len() == 0 {
-			return
-		}
-		parts = append(parts, shellPart{isOp: false, text: seg.String()})
-		seg.Reset()
-	}
-	for i := 0; i < len(line); i++ {
-		c := line[i]
-		switch {
-		case c == '\\' && !inSingle:
-			seg.WriteByte(c)
-			if i+1 < len(line) {
-				seg.WriteByte(line[i+1])
-				i++
-			}
-		case c == '\'' && !inDouble:
-			inSingle = !inSingle
-			seg.WriteByte(c)
-		case c == '"' && !inSingle:
-			inDouble = !inDouble
-			seg.WriteByte(c)
-		case !inSingle && !inDouble && c == '&' && i+1 < len(line) && line[i+1] == '&':
-			flushSeg()
-			parts = append(parts, shellPart{isOp: true, text: "&&"})
-			i++
-		case !inSingle && !inDouble && c == '|' && i+1 < len(line) && line[i+1] == '|':
-			flushSeg()
-			parts = append(parts, shellPart{isOp: true, text: "||"})
-			i++
-		case !inSingle && !inDouble && c == '|':
-			flushSeg()
-			parts = append(parts, shellPart{isOp: true, text: "|"})
-		case !inSingle && !inDouble && c == ';':
-			flushSeg()
-			parts = append(parts, shellPart{isOp: true, text: ";"})
-		default:
-			seg.WriteByte(c)
-		}
-	}
-	flushSeg()
-	return parts
-}
-
-// stripRtkAbsPath converts an absolute rtk path prefix (Unix /usr/local/bin/rtk,
-// Windows C:\Users\me\bin\rtk.exe, UNC \\server\share\rtk.exe) into the bare
-// basename "rtk".
-func stripRtkAbsPath(cmdLine string) string {
-	if cmdLine == "" {
-		return cmdLine
-	}
-	first := cmdLine[0]
-	isAbs := first == '/' || first == '\\' || (len(cmdLine) >= 2 && cmdLine[1] == ':' && (cmdLine[0] >= 'A' && cmdLine[0] <= 'z'))
-	if !isAbs {
-		return cmdLine
-	}
-	idx := strings.IndexByte(cmdLine, ' ')
-	if idx < 0 {
-		return cmdLine
-	}
-	bin := cmdLine[:idx]
-	tail := cmdLine[idx:]
-	if li := strings.LastIndexAny(bin, "/\\"); li >= 0 {
-		bin = bin[li+1:]
-	}
-	bin = strings.TrimSuffix(bin, ".exe")
-	return bin + tail
 }
 
 // RunRtkHook handles Antigravity PreToolUse for run_command.
@@ -360,8 +166,6 @@ func RunRtkHook() int {
 
 	finalCmd := cmdLine
 	if newCmd, changed := rtkRewrite(cmdLine); changed {
-		finalCmd = newCmd
-	} else if newCmd, segOK := rtkRewriteBySegment(cmdLine); segOK {
 		finalCmd = newCmd
 	}
 	if finalCmd == cmdLine && !commandUsesRtk(cmdLine) {
@@ -849,7 +653,7 @@ func cloneMap(in map[string]any) map[string]any {
 
 // copilotRtkDecide: only rewrite what `rtk rewrite` supports.
 func copilotRtkDecide(cmdLine string) (newCmd string, changed bool, approve bool) {
-	newCmd, changed = copilotRtkRewrite(cmdLine)
+	newCmd, changed = rtkRewrite(cmdLine)
 	if changed {
 		return newCmd, true, true
 	}

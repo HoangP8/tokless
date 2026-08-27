@@ -68,6 +68,11 @@ function rewrite(pi: ExtensionAPI) {}
 export default function (pi: ExtensionAPI) {
   if (!isToolCallEventType("bash", event)) return
       if (cmd.startsWith("rtk ")) return
+  const result = await pi.exec("rtk", ["rewrite", cmd], {
+    cwd,
+    timeout: REWRITE_TIMEOUT_MS,
+    signal,
+  })
 }
 `
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
@@ -81,13 +86,45 @@ export default function (pi: ExtensionAPI) {
 		t.Fatal(err)
 	}
 	got := string(raw)
-	for _, unwanted := range []string{"pi-coding-agent", "ExtensionAPI", "isToolCallEventType", `cmd.startsWith("rtk ")`} {
+	for _, unwanted := range []string{"pi-coding-agent", "ExtensionAPI", "isToolCallEventType", `cmd.startsWith("rtk ")`, `"rtk", ["rewrite"`} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("extension retains %q: %s", unwanted, got)
 		}
 	}
 	if !strings.Contains(got, `event.toolName !== "bash"`) {
 		t.Errorf("extension did not use stable bash check: %s", got)
+	}
+	if strings.Contains(got, "REWRITE_TIMEOUT_MS,") && strings.Index(got,"REWRITE_TIMEOUT_MS") != strings.LastIndex(got,"REWRITE_TIMEOUT_MS") {
+		t.Errorf("rewrite exec still carries upstream timeout: %s", got)
+	}
+	if !strings.Contains(got, `["rtk-rewrite", "--", cmd]`) || !strings.Contains(got, "TOKLESS_BIN") {
+		t.Errorf("extension did not delegate to tokless rtk-rewrite: %s", got)
+	}
+	before := got
+	if !normalizePiRtkExtension() {
+		t.Fatal("second normalize failed")
+	}
+	raw2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw2) != before {
+		t.Fatalf("second normalize changed file:\nbefore:\n%s\nafter:\n%s", before, string(raw2))
+	}
+}
+
+func TestNormalizePiRtkExtensionAnchorMissing(t *testing.T) {
+	piRtkTestHome(t)
+	path := filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := "export default function (pi) {}\n"
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if normalizePiRtkExtension() {
+		t.Fatal("want failure when upstream rewrite anchor is missing")
 	}
 }
 

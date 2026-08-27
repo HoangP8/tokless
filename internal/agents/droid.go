@@ -388,7 +388,6 @@ func InstallDroidRtkHook() {
 	hookCfg := util.NewOrderedMap()
 	hookCfg.Set("type", "command")
 	hookCfg.Set("command", command)
-	hookCfg.Set("timeout", 10)
 
 	droidAddHookGroup(cfg, "PreToolUse", "Execute", []string{"rtk-hook", "droid"}, hookCfg)
 	droidHooksSave(cfg, raw)

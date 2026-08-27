@@ -113,7 +113,6 @@ func InstallCopilotRtkHook() {
 		h := util.NewOrderedMap()
 		h.Set("type", "command")
 		h.Set("command", cmd)
-		h.Set("timeout", 10)
 		return h
 	}
 
@@ -139,7 +138,6 @@ func InstallCopilotIdeRtkHook() {
 	entry := util.NewOrderedMap()
 	entry.Set("type", "command")
 	entry.Set("command", cmd)
-	entry.Set("timeout", 10)
 
 	hooks := util.NewOrderedMap()
 	hooks.Set("PreToolUse", []any{entry})

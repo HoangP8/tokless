@@ -302,7 +302,6 @@ func InstallAntigravityRtkHook() {
 	hookCfg := util.NewOrderedMap()
 	hookCfg.Set("type", "command")
 	hookCfg.Set("command", command)
-	hookCfg.Set("timeout", 10)
 
 	preToolUseEntry := util.NewOrderedMap()
 	preToolUseEntry.Set("matcher", "run_command")

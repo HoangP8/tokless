@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -191,22 +192,13 @@ export default function (pi: ExtensionAPI) {
     const payload = { tool_name: "Bash", tool_input: { command: event.input.command } }
     const stdout = await new Promise<string>((resolve) => {
       let settled = false
-      let timeout: ReturnType<typeof setTimeout> | undefined
       const finish = (value = "") => {
         if (settled) return
         settled = true
-        if (timeout) clearTimeout(timeout)
         resolve(value)
       }
       try {
         const child = spawn(TOKLESS, ["rtk-hook", "omp"], { stdio: ["pipe", "pipe", "ignore"] })
-        timeout = setTimeout(() => {
-          try {
-            child.kill()
-          } finally {
-            finish()
-          }
-        }, 5000)
         let output = ""
         child.stdout.setEncoding("utf8")
         child.stdout.on("data", (chunk) => { output += chunk })
@@ -548,6 +540,22 @@ func normalizePiRtkExtension() bool {
 	next = strings.ReplaceAll(next, "pi: ExtensionAPI", "pi: any")
 	next = strings.ReplaceAll(next, `if (!isToolCallEventType("bash", event)) return`, `if (event.toolName !== "bash") return`)
 	next = strings.ReplaceAll(next, `      if (cmd.startsWith("rtk ")) return`+"\n", "")
+	tokless := strconv.Quote(util.ToklessAbs())
+	const anchor = `const result = await pi.exec("rtk", ["rewrite", cmd], {`
+	const delegate = `const result = await pi.exec(TOKLESS_BIN, ["rtk-rewrite", "--", cmd], {`
+	if strings.Contains(next, "TOKLESS_BIN") {
+		next = regexp.MustCompile(`const TOKLESS_BIN = .*`).ReplaceAllString(next, "const TOKLESS_BIN = "+tokless)
+	} else if strings.Contains(next, anchor) {
+		next = strings.Replace(next, anchor,
+			"const TOKLESS_BIN = "+tokless+"\n"+delegate, 1)
+		next = strings.Replace(next, "\n    timeout: REWRITE_TIMEOUT_MS,", "", 1)
+	} else {
+		util.L.Debug("pi rtk.ts rewrite anchor not found; leaving upstream shim untouched")
+		return false
+	}
+	if !strings.Contains(next, "rtk-rewrite") {
+		return false
+	}
 	if next == raw {
 		return true
 	}

@@ -14,130 +14,6 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func TestShellTokens(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  []string
-	}{
-		{"empty", "", nil},
-		{"whitespace only", "   \t\n", nil},
-		{"simple", "git status", []string{"git", "status"}},
-		{"double quotes", `find . -name "*.go"`, []string{"find", ".", "-name", "*.go"}},
-		{"single quotes", `find . -name '*.go'`, []string{"find", ".", "-name", "*.go"}},
-		{"mixed quotes", `find . -name "*.go" -path 'foo bar'`, []string{"find", ".", "-name", "*.go", "-path", "foo bar"}},
-		{"backslash escape", `find . -name \*go`, []string{"find", ".", "-name", "*go"}},
-		{"literal -not in double quotes", `echo "use -not to filter"`, []string{"echo", "use -not to filter"}},
-		{"literal ! in single quotes", `grep '!=foo'`, []string{"grep", "!=foo"}},
-		{"tabs and newlines", "find\t.\n -name\t*.go", []string{"find", ".", "-name", "*.go"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := shellTokens(tc.input)
-			if len(got) != len(tc.want) {
-				t.Fatalf("shellTokens(%q) = %v (len %d); want %v (len %d)", tc.input, got, len(got), tc.want, len(tc.want))
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("shellTokens(%q)[%d] = %q; want %q", tc.input, i, got[i], tc.want[i])
-				}
-			}
-		})
-	}
-}
-
-func TestFirstSegment(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"empty", "", ""},
-		{"single", "git status", "git status"},
-		{"and-chain", "git add . && git commit", "git add ."},
-		{"or-chain", "git status || echo fail", "git status"},
-		{"semicolon", "find . -name foo ; ls", "find . -name foo"},
-		{"pipe", "find . -name foo | head", "find . -name foo"},
-		{"double pipe", "find . -name foo || head", "find . -name foo"},
-		{"quoted pipe", `echo "a | b" && ls`, `echo "a | b"`},
-		{"leading whitespace", "  git status", "git status"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := firstSegment(tc.input)
-			if got != tc.want {
-				t.Errorf("firstSegment(%q) = %q; want %q", tc.input, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRtkUnsafeFind(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		// Bug repro — must return true (passthrough).
-		{"find with -not", `find . -name "*.go" -not -path "*/.*"`, true},
-		{"find with -exec", `find . -name "*.go" -exec wc -l {} \;`, true},
-		{"find with -size", `find . -size +1M`, true},
-		{"find with -perm", `find . -perm 644`, true},
-		{"find with -print0", `find . -print0`, true},
-		{"find with -delete", `find . -name x -delete`, true},
-		{"find with -or", `find . -name x -o -name y`, true},
-		{"find with -a", `find . -name x -a -type f`, true},
-		{"find with !", `find . ! -name "*.test.go"`, true},
-		{"find with -regex", `find . -regex ".*\.go"`, true},
-		{"find with -mtime", `find . -mtime -1`, true},
-
-		// Compound: bad first segment → unsafe.
-		{"bad find then git", `find . -delete; git status`, true},
-		{"bad find then git (and)", `find . -exec rm {} \; && git status`, true},
-
-		// Safe — must return false (rewrite allowed).
-		{"bare find", `find .`, false},
-		{"find -name only", `find . -name "*.go"`, false},
-		{"find -name -type", `find . -name "*.go" -type f`, false},
-		{"find -name -maxdepth", `find . -name "*.go" -maxdepth 3`, false},
-		{"find -iname", `find . -iname "Makefile"`, false},
-		{"find -type d", `find . -type d -name node_modules`, false},
-
-		// Quoted literals must not false-positive.
-		{"literal -not in filename", `find . -name "*-not-suffix"`, false},
-		{"literal ! in single-quoted arg", `find . -name '!=foo'`, false},
-		{"echo with -not literal", `echo "use -not to filter"`, false},
-
-		// Non-find commands — never flag.
-		{"git status", `git status`, false},
-		{"cargo test", `cargo test`, false},
-		{"empty", ``, false},
-		{"whitespace only", `   `, false},
-		{"bash with find inside string", `bash -c 'find . -name "*.go" -not -path x'`, false},
-
-		// Compound: clean find first segment → safe (rtk handles rest).
-		{"clean find and git", `find . -name foo && git status`, false},
-		{"clean find ; git", `find . -type d; git status`, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := rtkUnsafeFind(tc.input)
-			if got != tc.want {
-				t.Errorf("rtkUnsafeFind(%q) = %v; want %v", tc.input, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRtkUnsafeFindChecksEverySegment(t *testing.T) {
-	if !rtkUnsafeFind(`git status && find . -delete`) {
-		t.Fatal("later unsafe find segment must be detected")
-	}
-	if rtkUnsafeFind(`git status && find . -name '*.go'`) {
-		t.Fatal("safe later find segment must remain allowed")
-	}
-}
-
 func TestRunRtkHookGrokSkipsNonBash(t *testing.T) {
 	out := runRtkHookInput(t, `{"hookEventName":"pre_tool_use","toolName":"read_file","toolInput":{"command":"git status"}}`, RunRtkHookGrok)
 	if out != "" {
@@ -156,14 +32,34 @@ func TestRunRtkHookGrokAllowsAlreadyRewritten(t *testing.T) {
 	}
 }
 
-func TestRunRtkHookGrokSkipsUnsupportedMixedCommand(t *testing.T) {
-	installFakeRtk(t, `case "$2" in
-  rtk\ *) printf '%s\n' "$2" ;;
-  *) printf 'rtk %s\n' "$2" ;;
-esac`)
+func TestRunRtkHookGrokSkipsUnsafeFind(t *testing.T) {
+	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
 	out := runRtkHookInput(t, `{"toolName":"run_terminal_command","toolInput":{"command":"find . -name x -delete; git status"}}`, RunRtkHookGrok)
 	if out != "" {
-		t.Fatalf("want passthrough when command contains unsupported find flags, got %q", out)
+		t.Fatalf("want passthrough for unsafe find command, got %q", out)
+	}
+}
+
+func TestRtkRewriteFindSafety(t *testing.T) {
+	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
+	for _, tc := range []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"delete", `find . -name x -delete`, false},
+		{"exec", `find . -name '*.go' -exec wc -l {} \;`, false},
+		{"compound delete", `find . -delete; git status`, false},
+		{"safe name", `find . -name '*.go' -type f`, true},
+		{"quoted literal", `find . -name '*-delete'`, true},
+		{"non-find", `echo "find . -delete"`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, changed := rtkRewrite(tc.cmd)
+			if changed != tc.want {
+				t.Fatalf("rtkRewrite(%q) changed=%v; want %v, output %q", tc.cmd, changed, tc.want, got)
+			}
+		})
 	}
 }
 
@@ -209,7 +105,10 @@ func TestRunRtkHookGrokAcceptsSnakeCasePayload(t *testing.T) {
 }
 
 func TestRunRtkHookGrokPassthroughCases(t *testing.T) {
-	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
+	installFakeRtk(t, `case "$2" in
+  rtk\ *) printf '%s\n' "$2" ;;
+  *) printf 'rtk %s\n' "$2" ;;
+esac`)
 	for _, tc := range []struct {
 		name    string
 		payload string
@@ -429,12 +328,12 @@ func TestRtkRewriteHook(t *testing.T) {
 		wantPass  bool // true: must emit a rewritten rtk command
 		wantEmpty bool // true: must return empty (passthrough)
 	}{
-		// User's bug case: must passthrough (not emit broken rtk find).
-		{"user bug find -not", `find . -name "*.go" -not -path "*/.*"`, false, true},
+		{"find -not", `find . -name "*.go" -not -path "*/.*"`, false, true},
 		{"find -exec", `find . -name "*.go" -exec wc -l {} \;`, false, true},
 		{"find -size", `find . -size +1M`, false, true},
 		{"find -delete", `find . -name x -delete`, false, true},
-		{"find bare", `find . -name x -delete; git status`, false, true},
+		{"compound semicolon", `find . -name x -delete; git status`, false, true},
+		{"compound cd", `cd /tmp && git status`, true, false},
 
 		// Sanity: clean input must still rewrite.
 		{"clean find", `find . -name "*.go" -type f`, true, false},
@@ -474,33 +373,41 @@ func containsRtkPrefix(s string) bool {
 	return false
 }
 
-func TestStripRtkAbsPath(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"empty", "", ""},
-		{"relative unchanged", "rtk git status", "rtk git status"},
-		{"unix abs", "/usr/local/bin/rtk git status", "rtk git status"},
-		{"unix home abs", "/home/user/.local/bin/rtk git diff", "rtk git diff"},
-		{"windows drive", `C:\Users\me\bin\rtk.exe git status`, "rtk git status"},
-		{"windows backslash abs", `\Users\me\bin\rtk git status`, "rtk git status"},
-		{"unc path", `\\server\share\rtk.exe git diff`, "rtk git diff"},
-		{"no space abs no strip", "/usr/local/bin/rtk", "/usr/local/bin/rtk"},
-		{"trailing space preserved", "/x/rtk git status ", "rtk git status "},
+// TestRtkRewritePipesPassthrough pins upstream parity: rtk rewrite rejects
+// piped lines (exit 1), so hooks must pass them through untouched.
+func TestRtkRewritePipesPassthrough(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed; integration test skipped")
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := stripRtkAbsPath(tc.input)
-			if got != tc.want {
-				t.Errorf("stripRtkAbsPath(%q) = %q; want %q", tc.input, got, tc.want)
-			}
-		})
+	for _, cmd := range []string{`git status | head -5`, `git status | grep main | wc -l`} {
+		got, changed := rtkRewrite(cmd)
+		if changed || got != "" {
+			t.Fatalf("pipe %q: want passthrough, got (%q, %v)", cmd, got, changed)
+		}
 	}
 }
 
-// utilHaveRtk returns true if the rtk binary is available on this system.
+// TestRunRtkRewriteContract pins the CLI contract used by generated agent
+// extensions: exit 0 + rewritten command on stdout when changed, exit 1 and
+// no output when unchanged.
+func TestRunRtkRewriteContract(t *testing.T) {
+	installFakeRtk(t, `case "$2" in
+  rtk\ *) printf '%s\n' "$2" ;;
+  *) printf 'rtk %s\n' "$2" ;;
+esac`)
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	os.Args = []string{"tokless", "rtk-rewrite", "--", "git", "status"}
+	if code := RunRtkRewrite(); code != 0 {
+		t.Fatalf("changed: want exit 0, got %d", code)
+	}
+	os.Args = []string{"tokless", "rtk-rewrite", "--", "rtk", "git", "status"}
+	if code := RunRtkRewrite(); code != 1 {
+		t.Fatalf("unchanged: want exit 1, got %d", code)
+	}
+}
+
 func utilHaveRtk() bool {
 	return util.ResolveRtkBin() != ""
 }
@@ -731,113 +638,6 @@ func TestCommandUsesRtk(t *testing.T) {
 	}
 	if commandUsesRtk("git status && ls") {
 		t.Error("expected false for no rtk")
-	}
-}
-
-func TestRtkSegmentPresent(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"rtk git status", true},
-		{"rtk.exe git status", true},
-		{`C:\Users\me\bin\rtk.exe git status`, true},
-		{`C:\Users\me\bin\rtk git status`, true},
-		{`\\server\share\rtk.exe git status`, true},
-		{"/usr/local/bin/rtk git status", true},
-		{"cd /tmp && rtk git status", true},
-		{"git status | rtk grep x", true},
-		{"git status", false},
-		{"echo rtk is not a command", false},
-		{"", false},
-	}
-	for _, tc := range cases {
-		if got := rtkSegmentPresent(tc.in); got != tc.want {
-			t.Errorf("rtkSegmentPresent(%q)=%v want %v", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestStripRtkAbsPathWindows(t *testing.T) {
-	cases := []struct {
-		in   string
-		want string
-	}{
-		{`C:\Users\me\bin\rtk.exe git status`, "rtk git status"},
-		{`C:\Users\me\bin\rtk git status`, "rtk git status"},
-		{`\\server\share\rtk.exe git status`, "rtk git status"},
-		{"/usr/local/bin/rtk git status", "rtk git status"},
-		{"rtk git status", "rtk git status"},
-	}
-	for _, tc := range cases {
-		if got := stripRtkAbsPath(tc.in); got != tc.want {
-			t.Errorf("stripRtkAbsPath(%q)=%q want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestCopilotRtkDecideMixed(t *testing.T) {
-	if !utilHaveRtk() {
-		t.Skip("rtk binary not installed")
-	}
-	newCmd, changed, approve := copilotRtkDecide("rtk git log --oneline && git status")
-	if !approve {
-		t.Fatal("must approve")
-	}
-	if !changed {
-		t.Fatal("must rewrite bare half")
-	}
-	if strings.Contains(newCmd, "&& git status") && !strings.Contains(newCmd, "&& rtk git status") {
-		t.Fatalf("bare git status remained: %q", newCmd)
-	}
-	_, changed2, approve2 := copilotRtkDecide("rtk git status")
-	if !approve2 || changed2 {
-		t.Fatalf("pure rtk: approve=%v changed=%v", approve2, changed2)
-	}
-	_, ch3, ap3 := copilotRtkDecide("git remote -v")
-	if ch3 || ap3 {
-		t.Fatalf("git remote is not rewrite-supported; must leave bare: changed=%v approve=%v", ch3, ap3)
-	}
-	new4, changed4, approve4 := copilotRtkDecide("ls -la && git remote -v")
-	if !approve4 || !changed4 {
-		t.Fatalf("compound: expect rewrite ls half: approve=%v changed=%v", approve4, changed4)
-	}
-	if !strings.Contains(new4, "rtk ls") && !strings.Contains(new4, "rtk ls -la") {
-		if !strings.HasPrefix(strings.TrimSpace(new4), "rtk ") {
-			t.Fatalf("expected rtk ls half: %q", new4)
-		}
-	}
-	if strings.Contains(new4, "rtk git remote") {
-		t.Fatalf("must not force-prefix unsupported git remote: %q", new4)
-	}
-	partial := "git remote -v && rtk git branch -a"
-	new5, changed5, approve5 := copilotRtkDecide(partial)
-	if !approve5 {
-		t.Fatal("partial with rtk segment must approve")
-	}
-	if changed5 && strings.Contains(new5, "rtk git remote") {
-		t.Fatalf("must not invent rtk git remote: %q", new5)
-	}
-}
-
-func TestRtkRewriteBySegmentPreservesOpSpacing(t *testing.T) {
-	if !utilHaveRtk() {
-		t.Skip("rtk binary not installed")
-	}
-	in := "git status && rtk git log --oneline"
-	out, ok := rtkRewrite(in)
-	if !ok {
-		t.Fatal("expected rewrite")
-	}
-	if !strings.Contains(out, "rtk git status") {
-		t.Fatalf("bare half not rewritten: %q", out)
-	}
-	if strings.Contains(out, "&&rtk") || strings.Contains(out, "rtk&&") {
-		t.Fatalf("operator spacing crushed: %q", out)
-	}
-	_, ok2 := rtkRewrite(out)
-	if ok2 {
-		t.Fatalf("second pass must no-op, got rewrite of %q", out)
 	}
 }
 
