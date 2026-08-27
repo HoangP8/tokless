@@ -526,6 +526,113 @@ func piProxyProviderEntry(endpoint string) *util.OrderedMap {
 	return entry
 }
 
+func piProviderRoute(provider *util.OrderedMap) (api, baseKey, base string, headers *util.OrderedMap, ok bool) {
+	apiValue, exists := provider.Get("api")
+	if !exists {
+		return "", "", "", nil, false
+	}
+	api, ok = apiValue.(string)
+	if !ok || proxyEndpointForAPI(api) == "" {
+		return "", "", "", nil, false
+	}
+	for _, key := range []string{"baseUrl", "baseURL"} {
+		if value, exists := provider.Get(key); exists {
+			base, ok = value.(string)
+			if ok && strings.TrimSpace(base) != "" {
+				baseKey = key
+				break
+			}
+		}
+	}
+	if baseKey == "" {
+		return "", "", "", nil, false
+	}
+	if value, exists := provider.Get("headers"); exists {
+		headers, ok = value.(*util.OrderedMap)
+		if !ok {
+			return "", "", "", nil, false
+		}
+	} else {
+		headers = util.NewOrderedMap()
+	}
+	return api, baseKey, base, headers, true
+}
+
+func piNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool) {
+	providers, ok := mapChild(cfg, "providers")
+	if !ok {
+		return false, false
+	}
+	routed := map[string]bool{}
+	unsupported := map[string]bool{}
+	changed, found := false, false
+	for _, id := range providers.Keys() {
+		if id == piProxyProvider {
+			continue
+		}
+		value, exists := providers.Get(id)
+		if !exists {
+			continue
+		}
+		provider, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		if apiValue, hasAPI := provider.Get("api"); hasAPI {
+			if apiString, isString := apiValue.(string); isString && proxyEndpointForAPI(apiString) == "" {
+				// Readable but unsupported transport: release its stash.
+				unsupported[id] = true
+				continue
+			}
+		}
+		api, baseKey, base, headers, ok := piProviderRoute(provider)
+		if !ok {
+			continue
+		}
+		endpoint := proxyEndpointForAPI(api)
+		upstream := normalizedHeadroomUpstream(base, api)
+		if current, exists := headers.Get(headroomBaseURLHeader); exists {
+			if current != upstream && !sameProxyBase(base, endpoint) {
+				continue
+			}
+		}
+		found = true
+		if sameProxyBase(base, endpoint) {
+			current, exists := headers.Get(headroomBaseURLHeader)
+			currentString, currentOK := current.(string)
+			if !exists || !currentOK || currentString != upstream {
+				continue
+			}
+			continue
+		}
+		hadHeader, header := false, ""
+		if current, exists := headers.Get(headroomBaseURLHeader); exists {
+			currentString, currentOK := current.(string)
+			if !currentOK {
+				continue
+			}
+			hadHeader, header = true, currentString
+		}
+		stash[id] = proxyRouteStashEntry{File: piModelsFile(), Provider: id, BaseURL: base, Upstream: upstream, BaseKey: baseKey, HadHeader: hadHeader, Header: header}
+		routed[id] = true
+		provider.Set(baseKey, endpoint)
+		if _, exists := provider.Get("headers"); !exists {
+			provider.Set("headers", headers)
+		}
+		headers.Set(headroomBaseURLHeader, upstream)
+		changed = true
+	}
+	for id := range stash {
+		if _, isRouted := routed[id]; !isRouted {
+			_, stillPresent := providers.Get(id)
+			if !stillPresent || unsupported[id] {
+				delete(stash, id)
+			}
+		}
+	}
+	return changed, found
+}
+
 // ConfigurePiProxy injects providers.tokless-headroom into models.json,
 // pointing at the OpenAI-compatible headroom daemon endpoint.
 func ConfigurePiProxy() (changed bool, file string) {
@@ -550,6 +657,24 @@ func ConfigurePiProxy() (changed bool, file string) {
 		providers = util.NewOrderedMap()
 		cfg.Set("providers", providers)
 	}
+	stash := loadProxyRouteStash("pi")
+	prevStashLen := len(stash)
+	if nativeChanged, nativeFound := piNativeRoutes(cfg, stash); nativeFound {
+		if !nativeChanged {
+			_ = saveProxyRouteStash("pi", stash)
+			return false, f
+		}
+		if err := saveProxyRouteStash("pi", stash); err != nil {
+			return false, f
+		}
+		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+			return false, f
+		}
+		return true, f
+	} else if prevStashLen > 0 {
+		_ = saveProxyRouteStash("pi", stash)
+		return false, f
+	}
 	desired := piProxyProviderEntry(ProxyEndpointFor("pi"))
 	if existing, ok := providers.Get(piProxyProvider); ok {
 		if jsonEqual(existing, desired) {
@@ -568,6 +693,56 @@ func ConfigurePiProxy() (changed bool, file string) {
 // equals what tokless injected; a differing user entry is left untouched.
 func RemovePiProxy() bool {
 	f := piModelsFile()
+	stash := loadProxyRouteStash("pi")
+	if len(stash) > 0 {
+		raw, ok := util.ReadFileSafe(f)
+		if !ok || util.HasJSONCComments(raw) {
+			return false
+		}
+		cfg := util.TryParseJsonc(raw)
+		providers, ok := mapChild(cfg, "providers")
+		if !ok {
+			return false
+		}
+		changed := false
+		remaining := map[string]proxyRouteStashEntry{}
+		for id, entry := range stash {
+			value, exists := providers.Get(id)
+			provider, providerOK := value.(*util.OrderedMap)
+			if !exists || !providerOK {
+				remaining[id] = entry
+				continue
+			}
+			api, baseKey, base, headers, routeOK := piProviderRoute(provider)
+			if !routeOK || !sameProxyBase(base, proxyEndpointForAPI(api)) {
+				remaining[id] = entry
+				continue
+			}
+			value, exists = headers.Get(headroomBaseURLHeader)
+			if !exists || value != entry.Upstream {
+				remaining[id] = entry
+				continue
+			}
+			provider.Set(baseKey, entry.BaseURL)
+			if entry.HadHeader {
+				headers.Set(headroomBaseURLHeader, entry.Header)
+			} else {
+				headers.Delete(headroomBaseURLHeader)
+			}
+			if headers.Len() == 0 {
+				provider.Delete("headers")
+			}
+			changed = true
+		}
+		if !changed {
+			return false
+		}
+		if util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
+			return false
+		}
+		_ = saveProxyRouteStash("pi", remaining)
+		return true
+	}
 	raw, ok := util.ReadFileSafe(f)
 	if !ok {
 		return false
@@ -604,6 +779,54 @@ func PiProxyWired() bool {
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		return false
+	}
+	if stash := loadProxyRouteStash("pi"); len(stash) > 0 {
+		providers, ok := mapChild(cfg, "providers")
+		if !ok {
+			return false
+		}
+		matched := 0
+		for id, entry := range stash {
+			value, exists := providers.Get(id)
+			provider, providerOK := value.(*util.OrderedMap)
+			if !exists || !providerOK {
+				continue
+			}
+			api, _, base, headers, routeOK := piProviderRoute(provider)
+			if routeOK && sameProxyBase(base, proxyEndpointForAPI(api)) {
+				if value, exists := headers.Get(headroomBaseURLHeader); exists && value == entry.Upstream {
+					matched++
+				}
+			}
+		}
+		if matched != len(stash) {
+			return false
+		}
+		for _, id := range providers.Keys() {
+			if id == piProxyProvider {
+				continue
+			}
+			value, exists := providers.Get(id)
+			provider, providerOK := value.(*util.OrderedMap)
+			if !exists || !providerOK {
+				continue
+			}
+			if headersValue, present := provider.Get("headers"); present {
+				if _, isMap := headersValue.(*util.OrderedMap); !isMap {
+					return false
+				}
+			}
+			api, _, base, headers, routeOK := piProviderRoute(provider)
+			if !routeOK || proxyEndpointForAPI(api) == "" {
+				continue
+			}
+			entry, ok := stash[id]
+			headerValue, hasHeader := headers.Get(headroomBaseURLHeader)
+			if !ok || !hasHeader || !sameProxyBase(base, proxyEndpointForAPI(api)) || headerValue != entry.Upstream {
+				return false
+			}
+		}
+		return true
 	}
 	providers, ok := mapChild(cfg, "providers")
 	if !ok {

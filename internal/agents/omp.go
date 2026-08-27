@@ -330,6 +330,31 @@ func ConfigureOmpProxy() (changed bool, file string) {
 	if !ok {
 		return false, p
 	}
+	prevStashLen := len(loadProxyRouteStash("omp"))
+	if ompYamlHasDuplicateProviders(raw) {
+		return false, p
+	}
+	nativeRaw, nativeFound, nativeChanged, nativeStash, nativeOK := ompYamlWriteNativeRoutes(raw)
+	if !nativeFound && prevStashLen > 0 {
+		_ = saveProxyRouteStash("omp", nativeStash)
+		return false, p
+	}
+	if nativeFound {
+		if !nativeOK {
+			return false, p
+		}
+		if !nativeChanged {
+			_ = saveProxyRouteStash("omp", nativeStash)
+			return false, p
+		}
+		if err := saveProxyRouteStash("omp", nativeStash); err != nil {
+			return false, p
+		}
+		if err := ompWriteFile(p, nativeRaw); err != nil {
+			return false, p
+		}
+		return true, p
+	}
 	next, ok := ompYamlWriteHeadroom(raw)
 	if !ok {
 		return false, p
@@ -361,9 +386,128 @@ func ConfigureOmpProxy() (changed bool, file string) {
 	return changed, p
 }
 
+// ompYamlHasDuplicateProviders reports whether any provider key appears
+// more than once under providers:, which makes YAML last-wins ambiguous.
+func ompYamlHasDuplicateProviders(raw string) bool {
+	ref := ompYamlScanProvider(raw, "\x00probe")
+	if ref.prov < 0 {
+		return false
+	}
+	lines := strings.Split(raw, "\n")
+	directIndent := -1
+	for i := ref.prov + 1; i < ref.provEnd; i++ {
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind > 0 {
+			directIndent = ind
+			break
+		}
+	}
+	seen := map[string]int{}
+	for i := ref.prov + 1; i < ref.provEnd; i++ {
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); ind == directIndent && key != "" {
+			seen[key]++
+			if seen[key] > 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ompYamlReadableAPI returns the provider's api value when its block is
+// structurally readable, even when the transport is unsupported.
+func ompYamlReadableAPI(raw, id string) (string, bool) {
+	ref := ompYamlScanProvider(raw, id)
+	if ref.provider < 0 || ref.duplicate {
+		return "", false
+	}
+	i, exists := ref.fields["api"]
+	if !exists {
+		return "", false
+	}
+	lines := strings.Split(raw, "\n")
+	_, _, hasValue, v := ompYamlKeyLine(lines[i])
+	return v, hasValue
+}
+
+func ompYamlWriteNativeRoutes(raw string) (next string, found, changed bool, stash map[string]proxyRouteStashEntry, ok bool) {
+	stash = loadProxyRouteStash("omp")
+	next = raw
+	routed := map[string]bool{}
+	present := map[string]bool{}
+	unsupported := map[string]bool{}
+	for _, id := range ompYamlProviderNames(raw) {
+		if id == "headroom" {
+			continue
+		}
+		present[id] = true
+		api, _, base, header, _, routeOK := ompYamlProviderRoute(next, id)
+		if !routeOK {
+			if a, readable := ompYamlReadableAPI(next, id); readable && proxyEndpointForAPI(a) == "" {
+				unsupported[id] = true
+			}
+			continue
+		}
+		found = true
+		endpoint := proxyEndpointForAPI(api)
+		upstream := normalizedHeadroomUpstream(base, api)
+		if sameProxyBase(base, endpoint) && header != "" {
+			upstream = header
+		}
+		var entry proxyRouteStashEntry
+		var routeChanged bool
+		next, entry, routeChanged, _, ok = ompYamlWriteProviderRoute(next, id, endpoint, upstream)
+		if !ok {
+			return raw, found, false, stash, false
+		}
+		if entry.Provider != "" {
+			if previous, exists := stash[id]; exists {
+				entry = previous
+			} else if !routeChanged {
+				entry = proxyRouteStashEntry{}
+			}
+			if entry.Provider != "" {
+				stash[id] = entry
+			}
+		}
+		routed[id] = true
+		changed = changed || routeChanged
+	}
+	for id := range stash {
+		if !routed[id] && (!present[id] || unsupported[id]) {
+			delete(stash, id)
+		}
+	}
+	return next, found, changed, stash, true
+}
+
+func providerBaseFromOmp(raw, id string) string {
+	_, _, base, _, _, _ := ompYamlProviderRoute(raw, id)
+	return base
+}
+
 // RemoveOmpProxy removes only tokless-owned omp wiring and restores prior role.
 func RemoveOmpProxy() bool {
 	changed := false
+	if stash := loadProxyRouteStash("omp"); len(stash) > 0 {
+		if raw, ok := util.ReadFileSafe(ompModelsFile()); ok {
+			remaining := map[string]proxyRouteStashEntry{}
+			next := raw
+			for id, entry := range stash {
+				var restored bool
+				next, restored = ompYamlRestoreProviderRoute(next, entry)
+				if !restored {
+					remaining[id] = entry
+				} else {
+					changed = true
+				}
+			}
+			if changed && ompWriteFile(ompModelsFile(), next) != nil {
+				return false
+			}
+			_ = saveProxyRouteStash("omp", remaining)
+			// Continue below to clean legacy role state from older wiring.
+		}
+	}
 	if raw, ok := util.ReadFileSafe(ompModelsFile()); ok {
 		next, headroomRemoved := ompYamlRemoveHeadroom(raw)
 		next, legacyRemoved := ompYamlRemoveLegacyAnthropic(next)
@@ -392,6 +536,35 @@ func OmpProxyWired() bool {
 	if !ok {
 		return false
 	}
+	if ompYamlHasDuplicateProviders(models) {
+		return false
+	}
+	if stash := loadProxyRouteStash("omp"); len(stash) > 0 {
+		matched := 0
+		for id, entry := range stash {
+			api, _, base, header, _, routeOK := ompYamlProviderRoute(models, id)
+			if routeOK && sameProxyBase(base, proxyEndpointForAPI(api)) && header == entry.Upstream {
+				matched++
+			}
+		}
+		if matched != len(stash) {
+			return false
+		}
+		for _, id := range ompYamlProviderNames(models) {
+			if id == "headroom" {
+				continue
+			}
+			api, _, base, header, _, routeOK := ompYamlProviderRoute(models, id)
+			if !routeOK || proxyEndpointForAPI(api) == "" {
+				continue
+			}
+			entry, ok := stash[id]
+			if !ok || !sameProxyBase(base, proxyEndpointForAPI(api)) || header != entry.Upstream {
+				return false
+			}
+		}
+		return true
+	}
 	config, ok := util.ReadFileSafe(ompConfigFile())
 	if !ok {
 		return false
@@ -414,6 +587,9 @@ func ompYamlKeyLine(line string) (int, string, bool, string) {
 			rest = strings.TrimSpace(rest[:i])
 		}
 		if rest != "" {
+			if len(rest) >= 2 && (rest[0] == '"' || rest[0] == '\'') && rest[len(rest)-1] == rest[0] {
+				rest = rest[1 : len(rest)-1]
+			}
 			return len(m[1]), m[2], true, rest
 		}
 	}
@@ -424,9 +600,14 @@ func ompYamlKeyLine(line string) (int, string, bool, string) {
 type ompYamlRef struct {
 	prov, provEnd, provider, providerIndent, providerEnd int
 	fields                                               map[string]int
+	duplicate                                            bool
 }
 
 func ompYamlScan(raw string) ompYamlRef {
+	return ompYamlScanProvider(raw, "headroom")
+}
+
+func ompYamlScanProvider(raw, wanted string) ompYamlRef {
 	ref := ompYamlRef{prov: -1, provider: -1, providerEnd: -1, fields: map[string]int{}}
 	lines := strings.Split(raw, "\n")
 	for i, l := range lines {
@@ -455,11 +636,19 @@ func ompYamlScan(raw string) ompYamlRef {
 			break
 		}
 	}
+	seen := 0
 	for i := ref.prov + 1; i < ref.provEnd; i++ {
-		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == "headroom" && ind == directIndent {
-			ref.provider, ref.providerIndent = i, ind
-			break
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); key == wanted && ind == directIndent {
+			seen++
+			if seen == 1 {
+				ref.provider, ref.providerIndent = i, ind
+			}
 		}
+	}
+	if seen > 1 {
+		ref.duplicate = true
+		ref.provider = -1
+		return ref
 	}
 	if ref.provider == -1 {
 		return ref
@@ -480,6 +669,251 @@ func ompYamlScan(raw string) ompYamlRef {
 		}
 	}
 	return ref
+}
+
+func ompYamlProviderNames(raw string) []string {
+	lines := strings.Split(raw, "\n")
+	ref := ompYamlRef{prov: -1, provEnd: len(lines)}
+	for i, line := range lines {
+		if ind, key, _, _ := ompYamlKeyLine(line); ind == 0 && key == "providers" {
+			ref.prov = i
+			break
+		}
+	}
+	if ref.prov < 0 {
+		return nil
+	}
+	for i := ref.prov + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind == 0 {
+			ref.provEnd = i
+			break
+		}
+	}
+	directIndent := -1
+	for i := ref.prov + 1; i < ref.provEnd; i++ {
+		if ind, _, _, _ := ompYamlKeyLine(lines[i]); ind > 0 {
+			directIndent = ind
+			break
+		}
+	}
+	if directIndent < 0 {
+		return nil
+	}
+	var names []string
+	for i := ref.prov + 1; i < ref.provEnd; i++ {
+		if ind, key, _, _ := ompYamlKeyLine(lines[i]); ind == directIndent && key != "" {
+			names = append(names, key)
+		}
+	}
+	return names
+}
+
+func ompYamlProviderRoute(raw, id string) (api, baseKey, base string, headerValue string, hadHeader bool, ok bool) {
+	ref := ompYamlScanProvider(raw, id)
+	if ref.provider < 0 || ref.duplicate {
+		return "", "", "", "", false, false
+	}
+	lines := strings.Split(raw, "\n")
+	api, apiOK := "", false
+	if i, exists := ref.fields["api"]; exists {
+		_, _, _, api = ompYamlKeyLine(lines[i])
+		apiOK = true
+	}
+	if !apiOK || proxyEndpointForAPI(api) == "" {
+		return "", "", "", "", false, false
+	}
+	for _, key := range []string{"baseUrl", "baseURL"} {
+		if i, exists := ref.fields[key]; exists {
+			_, _, _, base = ompYamlKeyLine(lines[i])
+			baseKey = key
+			break
+		}
+	}
+	if baseKey == "" || strings.TrimSpace(base) == "" {
+		return "", "", "", "", false, false
+	}
+	headerIndent := ref.providerIndent + 4
+	for i := ref.provider + 1; i < ref.providerEnd; i++ {
+		if strings.HasPrefix(lines[i], "\t") {
+			return "", "", "", "", false, false
+		}
+		ind, key, hasValue, value := ompYamlKeyLine(lines[i])
+		if ind == ref.providerIndent+2 && key == "headers" && hasValue {
+			return "", "", "", "", false, false
+		}
+		if ind == headerIndent && key == headroomBaseURLHeader {
+			return api, baseKey, base, value, true, true
+		}
+	}
+	return api, baseKey, base, "", false, true
+}
+
+func ompYamlWriteProviderRoute(raw, id, endpoint, upstream string) (next string, original proxyRouteStashEntry, changed, found, ok bool) {
+	_, baseKey, base, headerValue, hadHeader, routeOK := ompYamlProviderRoute(raw, id)
+	if !routeOK {
+		return raw, proxyRouteStashEntry{}, false, false, true
+	}
+	found = true
+	if headerValue != "" && headerValue != upstream && !sameProxyBase(base, endpoint) {
+		return raw, proxyRouteStashEntry{}, false, found, false
+	}
+	if sameProxyBase(base, endpoint) {
+		if headerValue == upstream {
+			return raw, proxyRouteStashEntry{Provider: id, BaseURL: base, Upstream: upstream, BaseKey: baseKey, HadHeader: hadHeader, Header: headerValue}, false, found, true
+		}
+		return raw, proxyRouteStashEntry{}, false, found, false
+	}
+	lines := strings.Split(raw, "\n")
+	ref := ompYamlScanProvider(raw, id)
+	baseIdx := ref.fields[baseKey]
+	baseLine := lines[baseIdx]
+	spliced := false
+	if keyIdx := strings.Index(baseLine, baseKey+":"); keyIdx >= 0 {
+		from := keyIdx + len(baseKey) + 1
+		if i := strings.Index(baseLine[from:], base); i >= 0 {
+			at := from + i
+			lines[baseIdx] = baseLine[:at] + endpoint + baseLine[at+len(base):]
+			spliced = true
+		}
+	}
+	if !spliced {
+		lines[baseIdx] = strings.Repeat(" ", ref.providerIndent+2) + baseKey + ": " + endpoint
+		baseLine = ""
+	}
+	headerLineText := ""
+	headerLine := -1
+	for i := ref.provider + 1; i < ref.providerEnd; i++ {
+		ind, key, _, _ := ompYamlKeyLine(lines[i])
+		if ind == ref.providerIndent+2 && key == "headers" {
+			prefix := lines[i][:len(lines[i])-len(strings.TrimLeft(lines[i], " \t"))]
+			for j := i + 1; j < ref.providerEnd; j++ {
+				if strings.TrimSpace(lines[j]) == "" {
+					continue
+				}
+				childInd, childKey, _, _ := ompYamlKeyLine(lines[j])
+				if childInd <= ind {
+					break
+				}
+				if childInd == ind+2 && childKey == headroomBaseURLHeader {
+					headerLine = j
+					break
+				}
+			}
+			if headerLine < 0 {
+				lines = ompYamlInsertLine(lines, i+1, prefix+"  "+headroomBaseURLHeader+": "+upstream)
+			} else if hdr := lines[headerLine]; headerValue != "" {
+				hdrFrom := 0
+				if k := strings.Index(hdr, headroomBaseURLHeader+":"); k >= 0 {
+					hdrFrom = k + len(headroomBaseURLHeader) + 1
+				}
+				if j2 := strings.Index(hdr[hdrFrom:], headerValue); j2 >= 0 {
+					headerLineText = lines[headerLine]
+					at := hdrFrom + j2
+					lines[headerLine] = hdr[:at] + upstream + hdr[at+len(headerValue):]
+				} else {
+					lines[headerLine] = prefix + "  " + headroomBaseURLHeader + ": " + upstream
+				}
+			} else {
+				lines[headerLine] = prefix + "  " + headroomBaseURLHeader + ": " + upstream
+			}
+			return strings.Join(lines, "\n"), proxyRouteStashEntry{Provider: id, BaseURL: base, Upstream: upstream, BaseKey: baseKey, HadHeader: hadHeader, Header: headerValue, BaseLine: baseLine, HeaderLine: headerLineText}, true, found, true
+		}
+	}
+	insertAt := ref.providerEnd
+	for insertAt > ref.provider+1 && strings.TrimSpace(lines[insertAt-1]) == "" {
+		insertAt--
+	}
+	lines = ompYamlInsertLines(lines, insertAt, strings.Repeat(" ", ref.providerIndent+2)+"headers:", strings.Repeat(" ", ref.providerIndent+4)+headroomBaseURLHeader+": "+upstream)
+	return strings.Join(lines, "\n"), proxyRouteStashEntry{Provider: id, BaseURL: base, Upstream: upstream, BaseKey: baseKey, HadHeader: hadHeader, Header: headerValue, BaseLine: baseLine}, true, found, true
+}
+
+func ompYamlRestoreProviderRoute(raw string, entry proxyRouteStashEntry) (string, bool) {
+	api, baseKey, base, headerValue, _, ok := ompYamlProviderRoute(raw, entry.Provider)
+	if !ok || !sameProxyBase(base, proxyEndpointForAPI(api)) || headerValue != entry.Upstream {
+		return raw, false
+	}
+	lines := strings.Split(raw, "\n")
+	ref := ompYamlScanProvider(raw, entry.Provider)
+	if baseIdx, exists := ref.fields[baseKey]; exists && entry.BaseLine != "" {
+		lines[baseIdx] = entry.BaseLine
+	} else if baseIdx, exists := ref.fields[baseKey]; exists {
+		lines[baseIdx] = strings.Repeat(" ", ref.providerIndent+2) + baseKey + ": " + entry.BaseURL
+	}
+	for i := ref.provider + 1; i < ref.providerEnd; i++ {
+		ind, key, _, _ := ompYamlKeyLine(lines[i])
+		if ind != ref.providerIndent+2 || key != "headers" {
+			continue
+		}
+		for j := i + 1; j < ref.providerEnd; j++ {
+			if strings.TrimSpace(lines[j]) == "" {
+				continue
+			}
+			childInd, childKey, _, _ := ompYamlKeyLine(lines[j])
+			if childInd <= ind {
+				break
+			}
+			if childInd == ind+2 && childKey == headroomBaseURLHeader {
+				if entry.HadHeader {
+					if entry.HeaderLine != "" {
+						lines[j] = entry.HeaderLine
+					} else {
+						lines[j] = strings.Repeat(" ", childInd) + headroomBaseURLHeader + ": " + entry.Header
+					}
+				} else {
+					lines = append(lines[:j], lines[j+1:]...)
+				}
+				break
+			}
+		}
+		break
+	}
+	return ompYamlRemoveEmptyHeaders(strings.Join(lines, "\n"), entry.Provider), true
+}
+
+func ompYamlRemoveEmptyHeaders(raw, id string) string {
+	ref := ompYamlScanProvider(raw, id)
+	if ref.provider < 0 {
+		return raw
+	}
+	lines := strings.Split(raw, "\n")
+	for i := ref.provider + 1; i < ref.providerEnd; i++ {
+		ind, key, _, _ := ompYamlKeyLine(lines[i])
+		if ind != ref.providerIndent+2 || key != "headers" {
+			continue
+		}
+		end := i + 1
+		for end < ref.providerEnd {
+			if strings.TrimSpace(lines[end]) == "" {
+				nxt := end + 1
+				for nxt < ref.providerEnd && strings.TrimSpace(lines[nxt]) == "" {
+					nxt++
+				}
+				if nxt >= ref.providerEnd {
+					break
+				}
+				if childInd, _, _, _ := ompYamlKeyLine(lines[nxt]); childInd >= 0 && childInd <= ind {
+					break
+				}
+				end = nxt
+				continue
+			}
+			childInd, _, _, _ := ompYamlKeyLine(lines[end])
+			if childInd >= 0 && childInd <= ind {
+				break
+			}
+			end++
+		}
+		for j := i + 1; j < end; j++ {
+			if _, childKey, _, _ := ompYamlKeyLine(lines[j]); childKey != "" {
+				return raw
+			}
+		}
+		return strings.Join(append(lines[:i], lines[end:]...), "\n")
+	}
+	return raw
 }
 
 func ompYamlHeadroomManaged(raw string) bool {
@@ -590,7 +1024,7 @@ func ompYamlRemoveLegacyAnthropic(raw string) (string, bool) {
 			if childInd <= ind {
 				break
 			}
-			if childInd == ind+2 && childKey == "baseUrl" && value == ProxyEndpointFor("omp") {
+			if childInd == ind+2 && childKey == "baseUrl" && value == util.HeadroomProxyURL() {
 				return strings.Join(append(lines[:j], lines[j+1:]...), "\n"), true
 			}
 		}
