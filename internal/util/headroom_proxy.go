@@ -49,7 +49,7 @@ func SaveHeadroomProxyRuntime(st ProxyRuntime) error {
 	if err != nil {
 		return err
 	}
-	return WriteFile(headroomProxyRuntimeFile(), string(b))
+	return WriteFileAtomic(headroomProxyRuntimeFile(), string(b), 0o600)
 }
 
 // ClearHeadroomProxyRuntime removes the persisted runtime (daemon stopped).

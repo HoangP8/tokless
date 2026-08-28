@@ -126,7 +126,50 @@ func WriteFile(p, content string) error {
 	if err := EnsureDir(filepath.Dir(p)); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(content), 0o644)
+	if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return os.WriteFile(p, []byte(content), 0o644)
+	}
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(p); err == nil {
+		mode = info.Mode().Perm()
+	}
+	return writeFileAtomic(p, content, mode)
+}
+
+// WriteFileAtomic replaces a file without exposing a truncated intermediate.
+func WriteFileAtomic(p, content string, mode os.FileMode) error {
+	if writeFileOverride != nil {
+		return writeFileOverride(p, content)
+	}
+	if err := EnsureDir(filepath.Dir(p)); err != nil {
+		return err
+	}
+	return writeFileAtomic(p, content, mode)
+}
+
+func writeFileAtomic(p, content string, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".tokless-write-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, p)
 }
 
 // WriteFileMode writes content, using mode for new files.
@@ -137,7 +180,13 @@ func WriteFileMode(p, content string, mode os.FileMode) error {
 	if err := EnsureDir(filepath.Dir(p)); err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(content), mode)
+	if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return os.WriteFile(p, []byte(content), mode)
+	}
+	if info, err := os.Stat(p); err == nil {
+		mode = info.Mode().Perm()
+	}
+	return writeFileAtomic(p, content, mode)
 }
 
 func Exists(p string) bool {
