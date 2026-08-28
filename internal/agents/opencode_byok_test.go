@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -329,5 +330,31 @@ func TestUnwireOpenCodeBYOKDoesNotOverwriteUserEdit(t *testing.T) {
 	raw, _ := util.ReadFileSafe(path)
 	if !strings.Contains(raw, "https://user-edited.example/v1") {
 		t.Fatalf("user edit overwritten: %s", raw)
+	}
+}
+
+func TestWireOpenCodeBYOKRefusesMalformedStash(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	original := `{"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"key-a"}}}}`
+	if err := util.WriteFile(path, original); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.EnsureDir(filepath.Dir(byokStashPath())); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(byokStashPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if changed, routes := wireOpenCodeBYOK(); changed || len(routes) != 0 {
+		t.Fatalf("malformed stash was adopted: changed=%v routes=%d", changed, len(routes))
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if raw != original {
+		t.Fatalf("provider config mutated: %s", raw)
 	}
 }

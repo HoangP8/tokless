@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -325,41 +326,79 @@ func ompRoleTarget() string { return "headroom/" + ompRoleModel + ":high" }
 
 // ConfigureOmpProxy wires omp through its additive OpenAI-compatible provider.
 func ConfigureOmpProxy() (changed bool, file string) {
+	file = ompModelsFile()
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureOmpProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("omp proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureOmpProxyLocked() (changed bool, file string) {
 	p := ompModelsFile()
+	if !proxyRouteStashValid("omp") {
+		return false, p
+	}
 	raw, ok := util.ReadFileSafe(p)
 	if !ok {
 		return false, p
 	}
-	prevStashLen := len(loadProxyRouteStash("omp"))
-	if ompYamlHasDuplicateProviders(raw) {
+	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("omp"))
+	nativeChanged, nativeHandled, nativeErr := func() (nativeChanged, nativeHandled bool, err error) {
+		err = func() error {
+			prevStashLen := len(loadProxyRouteStashLocked("omp"))
+			if ompYamlHasDuplicateProviders(raw) {
+				nativeHandled = true
+				return nil
+			}
+			nativeRaw, nativeFound, nChanged, nativeStash, nativeOK := ompYamlWriteNativeRoutesLocked(raw)
+			if !nativeFound && prevStashLen > 0 {
+				if err := saveProxyRouteStash("omp", nativeStash); err != nil {
+					return err
+				}
+				nativeHandled = true
+				return nil
+			}
+			if nativeFound {
+				nativeChanged = nChanged
+				nativeHandled = true
+				if !nativeOK {
+					return nil
+				}
+				if !nChanged {
+					if err := saveProxyRouteStash("omp", nativeStash); err != nil {
+						return err
+					}
+					return nil
+				}
+				if err := saveProxyRouteStash("omp", nativeStash); err != nil {
+					return err
+				}
+				if err := ompWriteFile(p, nativeRaw); err != nil {
+					_ = restoreProxyRouteStash("omp", stashRaw, stashExists)
+					return err
+				}
+			}
+			return nil
+		}()
+		return
+	}()
+	if nativeErr != nil {
 		return false, p
 	}
-	nativeRaw, nativeFound, nativeChanged, nativeStash, nativeOK := ompYamlWriteNativeRoutes(raw)
-	if !nativeFound && prevStashLen > 0 {
-		_ = saveProxyRouteStash("omp", nativeStash)
-		return false, p
-	}
-	if nativeFound {
-		if !nativeOK {
-			return false, p
-		}
-		if !nativeChanged {
-			_ = saveProxyRouteStash("omp", nativeStash)
-			return false, p
-		}
-		if err := saveProxyRouteStash("omp", nativeStash); err != nil {
-			return false, p
-		}
-		if err := ompWriteFile(p, nativeRaw); err != nil {
-			return false, p
-		}
-		return true, p
+	if nativeHandled {
+		return nativeChanged, p
 	}
 	next, ok := ompYamlWriteHeadroom(raw)
 	if !ok {
 		return false, p
 	}
 	config := ompConfigFile()
+	modelsBefore := raw
+	roleStateBefore, roleStateExisted := util.ReadFileSafe(ompRoleStateFile())
+	_, configExisted := util.ReadFileSafe(config)
 	configRaw, ok := util.ReadFileSafe(config)
 	if !ok {
 		configRaw = ""
@@ -376,9 +415,22 @@ func ConfigureOmpProxy() (changed bool, file string) {
 	}
 	if roleChanged {
 		if err := util.WriteFile(ompRoleStateFile(), rolePrev); err != nil {
+			if next != modelsBefore {
+				_ = ompWriteFile(p, modelsBefore)
+			}
 			return false, p
 		}
 		if err := ompWriteFile(config, roleNext); err != nil {
+			_ = util.WriteFile(ompRoleStateFile(), roleStateBefore)
+			if !roleStateExisted {
+				_ = os.Remove(ompRoleStateFile())
+			}
+			if next != modelsBefore {
+				_ = ompWriteFile(p, modelsBefore)
+			}
+			if !configExisted {
+				_ = os.Remove(config)
+			}
 			return false, p
 		}
 		changed = true
@@ -430,7 +482,12 @@ func ompYamlReadableAPI(raw, id string) (string, bool) {
 }
 
 func ompYamlWriteNativeRoutes(raw string) (next string, found, changed bool, stash map[string]proxyRouteStashEntry, ok bool) {
-	stash = loadProxyRouteStash("omp")
+	return ompYamlWriteNativeRoutesLocked(raw)
+}
+
+// ompYamlWriteNativeRoutesLocked requires withProxyRouteStashLock held.
+func ompYamlWriteNativeRoutesLocked(raw string) (next string, found, changed bool, stash map[string]proxyRouteStashEntry, ok bool) {
+	stash = loadProxyRouteStashLocked("omp")
 	next = raw
 	routed := map[string]bool{}
 	present := map[string]bool{}
@@ -486,10 +543,34 @@ func providerBaseFromOmp(raw, id string) string {
 }
 
 // RemoveOmpProxy removes only tokless-owned omp wiring and restores prior role.
+var errOmpRemoveFailed = errors.New("omp models write failed")
+
 func RemoveOmpProxy() bool {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeOmpProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("omp proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeOmpProxyLocked() bool {
+	if !proxyRouteStashValid("omp") {
+		return false
+	}
 	changed := false
-	if stash := loadProxyRouteStash("omp"); len(stash) > 0 {
-		if raw, ok := util.ReadFileSafe(ompModelsFile()); ok {
+	if len(loadProxyRouteStashLocked("omp")) > 0 {
+		if err := func() error {
+			stash := loadProxyRouteStashLocked("omp")
+			if len(stash) == 0 {
+				return nil
+			}
+			raw, ok := util.ReadFileSafe(ompModelsFile())
+			if !ok {
+				return nil
+			}
 			remaining := map[string]proxyRouteStashEntry{}
 			next := raw
 			for id, entry := range stash {
@@ -502,10 +583,16 @@ func RemoveOmpProxy() bool {
 				}
 			}
 			if changed && ompWriteFile(ompModelsFile(), next) != nil {
-				return false
+				return errOmpRemoveFailed
 			}
-			_ = saveProxyRouteStash("omp", remaining)
+			if err := saveProxyRouteStash("omp", remaining); err != nil {
+				_ = ompWriteFile(ompModelsFile(), raw)
+				return err
+			}
 			// Continue below to clean legacy role state from older wiring.
+			return nil
+		}(); err != nil {
+			return false
 		}
 	}
 	if raw, ok := util.ReadFileSafe(ompModelsFile()); ok {

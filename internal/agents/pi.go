@@ -636,7 +636,21 @@ func piNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry)
 // ConfigurePiProxy injects providers.tokless-headroom into models.json,
 // pointing at the OpenAI-compatible headroom daemon endpoint.
 func ConfigurePiProxy() (changed bool, file string) {
+	file = piModelsFile()
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configurePiProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("pi proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configurePiProxyLocked() (changed bool, file string) {
 	f := piModelsFile()
+	if !proxyRouteStashValid("pi") {
+		return false, f
+	}
 	_ = util.EnsureDir(piAgentDir())
 	raw, ok := util.ReadFileSafe(f)
 	if util.HasJSONCComments(raw) {
@@ -657,29 +671,32 @@ func ConfigurePiProxy() (changed bool, file string) {
 		providers = util.NewOrderedMap()
 		cfg.Set("providers", providers)
 	}
-	stash := loadProxyRouteStash("pi")
+	stash := loadProxyRouteStashLocked("pi")
+	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("pi"))
 	prevStashLen := len(stash)
 	if nativeChanged, nativeFound := piNativeRoutes(cfg, stash); nativeFound {
 		if !nativeChanged {
-			_ = saveProxyRouteStash("pi", stash)
+			if saveProxyRouteStash("pi", stash) != nil {
+				return false, f
+			}
 			return false, f
 		}
-		if err := saveProxyRouteStash("pi", stash); err != nil {
+		if saveProxyRouteStash("pi", stash) != nil {
 			return false, f
 		}
 		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+			_ = restoreProxyRouteStash("pi", stashRaw, stashExists)
 			return false, f
 		}
 		return true, f
 	} else if prevStashLen > 0 {
-		_ = saveProxyRouteStash("pi", stash)
+		if saveProxyRouteStash("pi", stash) != nil {
+			return false, f
+		}
 		return false, f
 	}
 	desired := piProxyProviderEntry(ProxyEndpointFor("pi"))
-	if existing, ok := providers.Get(piProxyProvider); ok {
-		if jsonEqual(existing, desired) {
-			return false, f
-		}
+	if _, exists := providers.Get(piProxyProvider); exists {
 		return false, f
 	}
 	providers.Set(piProxyProvider, desired)
@@ -692,9 +709,28 @@ func ConfigurePiProxy() (changed bool, file string) {
 // RemovePiProxy deletes providers.tokless-headroom only while its value still
 // equals what tokless injected; a differing user entry is left untouched.
 func RemovePiProxy() bool {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		removed = removePiProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("pi proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removePiProxyLocked() bool {
+	if !proxyRouteStashValid("pi") {
+		return false
+	}
 	f := piModelsFile()
-	stash := loadProxyRouteStash("pi")
-	if len(stash) > 0 {
+	stashLen := len(loadProxyRouteStashLocked("pi"))
+	if stashLen > 0 {
+		result := false
+		stash := loadProxyRouteStashLocked("pi")
+		if len(stash) == 0 {
+			return false
+		}
 		raw, ok := util.ReadFileSafe(f)
 		if !ok || util.HasJSONCComments(raw) {
 			return false
@@ -734,14 +770,15 @@ func RemovePiProxy() bool {
 			}
 			changed = true
 		}
-		if !changed {
+		if !changed || util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
 			return false
 		}
-		if util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
+		if err := saveProxyRouteStash("pi", remaining); err != nil {
+			_ = util.WriteFile(f, raw)
 			return false
 		}
-		_ = saveProxyRouteStash("pi", remaining)
-		return true
+		result = true
+		return result
 	}
 	raw, ok := util.ReadFileSafe(f)
 	if !ok {

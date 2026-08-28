@@ -23,8 +23,8 @@ func GrokProxyApplicable() bool {
 // --- stash: original base_url per provider id (no secrets) ---
 
 type grokStashEntry struct {
-	BaseURL  string `json:"base_url"`
-	BaseLine string `json:"base_line,omitempty"`
+	BaseURL     string `json:"base_url"`
+	BaseLine    string `json:"base_line,omitempty"`
 	Header      string `json:"header,omitempty"`
 	HeaderRaw   string `json:"header_raw,omitempty"`
 	HeaderChild bool   `json:"header_child,omitempty"`
@@ -54,12 +54,46 @@ func loadGrokStash() map[string]grokStashEntry {
 	return f.Providers
 }
 
+func grokStashValid() bool {
+	raw, ok := util.ReadFileSafe(grokStashPath())
+	if !ok {
+		return true
+	}
+	var f grokStashFile
+	return json.Unmarshal([]byte(raw), &f) == nil && f.Providers != nil
+}
+
 func saveGrokStash(m map[string]grokStashEntry) error {
 	b, err := json.Marshal(grokStashFile{Providers: m})
 	if err != nil {
 		return err
 	}
-	return util.WriteFileMode(grokStashPath(), string(b), 0o600)
+	path := grokStashPath()
+	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func clearGrokStash() error {
@@ -622,11 +656,27 @@ func grokRemoveOriginalPath(raw, id string) string {
 // --- configure / remove / status ---
 
 func ConfigureGrokProxy() (bool, string) {
+	changed := false
+	file := grokConfigFile()
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureGrokProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("grok proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureGrokProxyLocked() (bool, string) {
+	if !grokStashValid() {
+		return false, grokConfigFile()
+	}
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if !ok {
 		return false, grokConfigFile()
 	}
 	stash := loadGrokStash()
+	stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
 	wired := false
 	ids := grokLocalBYOK(raw)
 	seen := make(map[string]bool, len(ids)+len(stash))
@@ -684,6 +734,7 @@ func ConfigureGrokProxy() (bool, string) {
 	}
 	if changed {
 		if err := util.WriteFile(grokConfigFile(), raw); err != nil {
+			_ = restoreProxyRouteStash("grok", stashRaw, stashExists)
 			return false, grokConfigFile()
 		}
 	}
@@ -691,11 +742,27 @@ func ConfigureGrokProxy() (bool, string) {
 }
 
 func RemoveGrokProxy() bool {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeGrokProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("grok proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeGrokProxyLocked() bool {
+	if !grokStashValid() {
+		return false
+	}
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if !ok {
 		return false
 	}
 	removed := false
+	original := raw
+	stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
 	stash := loadGrokStash()
 	for id, s := range stash {
 		table := "model_providers." + id
@@ -728,10 +795,14 @@ func RemoveGrokProxy() bool {
 	}
 	if len(stash) > 0 {
 		if err := saveGrokStash(stash); err != nil {
+			_ = util.WriteFile(grokConfigFile(), original)
+			_ = restoreProxyRouteStash("grok", stashRaw, stashExists)
 			return false
 		}
 	} else {
 		if err := clearGrokStash(); err != nil {
+			_ = util.WriteFile(grokConfigFile(), original)
+			_ = restoreProxyRouteStash("grok", stashRaw, stashExists)
 			return false
 		}
 	}

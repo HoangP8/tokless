@@ -77,15 +77,24 @@ func clineManagedValues(v any) bool {
 
 func ConfigureClineProxy() (bool, string) {
 	file := clineProvidersFile()
-	raw, _ := util.ReadFileSafe(file)
+	raw, exists := util.ReadFileSafe(file)
+	statePath := clineProviderStateFile()
+	stateRaw, stateExists := util.ReadFileSafe(statePath)
 	cfg, providers, err := clineProviderConfig(raw)
 	if err != nil {
 		return false, file
 	}
 	desired := clineDesiredProvider()
 	changed := false
+	stateContent := ""
 	if existing, ok := providers.Get(clineProviderName); ok {
 		if !clineManagedValues(existing) {
+			return false, file
+		}
+		if !stateExists {
+			return false, file
+		}
+		if _, _, _, err := clineStateReadRaw(); err != nil {
 			return false, file
 		}
 	} else {
@@ -100,7 +109,10 @@ func ConfigureClineProxy() (bool, string) {
 		} else {
 			state.Set("lastUsedProvider", nil)
 		}
-		_ = util.WriteFile(clineProviderStateFile(), util.StringifyJSON(state))
+		stateContent = util.StringifyJSON(state)
+		if err := clineWriteFileGuarded(statePath, stateContent, stateRaw, stateExists); err != nil {
+			return false, file
+		}
 		providers.Set(clineProviderName, desired)
 		changed = true
 	}
@@ -111,7 +123,12 @@ func ConfigureClineProxy() (bool, string) {
 	if !changed {
 		return false, file
 	}
-	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, exists); err != nil {
+		if !stateExists {
+			if current, ok := util.ReadFileSafe(statePath); ok && current == stateContent {
+				_ = os.Remove(statePath)
+			}
+		}
 		return false, file
 	}
 	return true, file
@@ -133,25 +150,23 @@ func RemoveClineProxy() bool {
 	}
 	if stateRaw, stateOK := util.ReadFileSafe(clineProviderStateFile()); stateOK {
 		state, err := util.ParseJsonc(stateRaw)
-		if err == nil {
-			if v, exists := state.Get("provider"); exists && v != nil {
-				providers.Set(clineProviderName, v)
-			} else {
-				providers.Delete(clineProviderName)
-			}
-			if v, exists := state.Get("lastUsedProvider"); exists && v != nil {
-				cfg.Set("lastUsedProvider", v)
-			} else {
-				cfg.Delete("lastUsedProvider")
-			}
+		if err != nil {
+			return false
 		}
-	} else {
-		providers.Delete(clineProviderName)
-		if v, ok := cfg.Get("lastUsedProvider"); ok && v == clineProviderName {
+		if v, exists := state.Get("provider"); exists && v != nil {
+			providers.Set(clineProviderName, v)
+		} else {
+			providers.Delete(clineProviderName)
+		}
+		if v, exists := state.Get("lastUsedProvider"); exists && v != nil {
+			cfg.Set("lastUsedProvider", v)
+		} else {
 			cfg.Delete("lastUsedProvider")
 		}
+	} else {
+		return false
 	}
-	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, true); err != nil {
 		return false
 	}
 	_ = os.Remove(clineProviderStateFile())

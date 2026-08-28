@@ -348,12 +348,24 @@ func RemoveClaudeMcp(toolID string) bool {
 // --- Claude headroom HTTP proxy ---
 
 const (
-	claudeProxyEnvKey   = "ANTHROPIC_BASE_URL"
-	claudeProxyModelKey = "ANTHROPIC_MODEL"
-	claudeProxyModel    = "qwen3.8-max"
+	claudeProxyEnvKey = "ANTHROPIC_BASE_URL"
 )
 
 func ConfigureClaudeProxy() (changed bool, file string) {
+	file = util.ClaudeCodePaths().Settings
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureClaudeProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("claude proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureClaudeProxyLocked() (changed bool, file string) {
+	if !proxyRouteStashValid(claudeByokStashAgent) {
+		return false, util.ClaudeCodePaths().Settings
+	}
 	url := ProxyEndpointFor("claude")
 	p := util.ClaudeCodePaths()
 	_ = util.EnsureDir(p.Dir)
@@ -380,25 +392,41 @@ func ConfigureClaudeProxy() (changed bool, file string) {
 	}
 	dirty := false
 	if v, ok := env.Get(claudeProxyEnvKey); ok {
-		if s, ok := v.(string); !ok || s != url {
+		s, isStr := v.(string)
+		if !isStr || s == "" {
 			return false, p.Settings
+		}
+		if s != url {
+			if !claudeTakeoverBYOK(cfg, env, s) {
+				return false, p.Settings
+			}
+			return true, p.Settings
 		}
 	} else {
 		env.Set(claudeProxyEnvKey, url)
 		dirty = true
 	}
-	if v, ok := env.Get(claudeProxyModelKey); ok {
-		if s, ok := v.(string); !ok || s != claudeProxyModel {
-			return false, p.Settings
-		}
-	} else {
-		env.Set(claudeProxyModelKey, claudeProxyModel)
-		dirty = true
-	}
 	if !dirty {
 		return false, p.Settings
 	}
-	if err := util.WriteFile(p.Settings, util.StringifyJSON(cfg)); err != nil {
+	managed := util.StringifyJSON(cfg)
+	stash := loadProxyRouteStashLocked(claudeByokStashAgent)
+	previousStash := cloneProxyRouteStash(stash)
+	entry := proxyRouteStashEntry{
+		File:          p.Settings,
+		Provider:      claudeByokStashProvider,
+		BaseURL:       url,
+		ManagedNative: true,
+		Managed:       []byte(managed),
+	}
+	if ok {
+		entry.Original = []byte(raw)
+	}
+	if err := saveClaudeBYOKStashLocked(entry, stash); err != nil {
+		return false, p.Settings
+	}
+	if err := util.WriteFileAtomic(p.Settings, managed, 0o644); err != nil {
+		_ = saveProxyRouteStash(claudeByokStashAgent, previousStash)
 		return false, p.Settings
 	}
 	return true, p.Settings
@@ -407,6 +435,20 @@ func ConfigureClaudeProxy() (changed bool, file string) {
 // RemoveClaudeProxy deletes env.ANTHROPIC_BASE_URL only when it still equals
 // the url tokless set.
 func RemoveClaudeProxy() bool {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeClaudeProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("claude proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeClaudeProxyLocked() bool {
+	if !proxyRouteStashValid(claudeByokStashAgent) {
+		return false
+	}
 	url := ProxyEndpointFor("claude")
 	p := util.ClaudeCodePaths()
 	raw, ok := util.ReadFileSafe(p.Settings)
@@ -432,17 +474,10 @@ func RemoveClaudeProxy() bool {
 	if !ok || s != url {
 		return false
 	}
-	env.Delete(claudeProxyEnvKey)
-	if v, present := env.Get(claudeProxyModelKey); present {
-		if s, ok := v.(string); !ok || s != claudeProxyModel {
-			return false
-		}
-		env.Delete(claudeProxyModelKey)
+	if _, stashed := loadClaudeBYOKStashLocked(); stashed {
+		return claudeRestoreBYOK(cfg, env)
 	}
-	if env.Len() == 0 {
-		cfg.Delete("env")
-	}
-	return util.WriteFile(p.Settings, util.StringifyJSON(cfg)) == nil
+	return false
 }
 
 // ClaudeProxyWired reports whether ANTHROPIC_BASE_URL is set to url.

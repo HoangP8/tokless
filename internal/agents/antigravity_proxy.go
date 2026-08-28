@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ const (
 	antigravityProxyFenceFoot = "# tokless:headroom end"
 	antigravityShellFenceHead = "# >>> tokless antigravity headroom >>>"
 	antigravityShellFenceFoot = "# <<< tokless antigravity headroom <<<"
+	antigravityWindowsMarker  = "TOKLESS_ANTIGRAVITY_HEADROOM_MANAGED"
 )
 
 func antigravityEnvFile() string {
@@ -70,6 +72,11 @@ func antigravityDotEnvBlock() string {
 		antigravityProxyEnvKey + "=" + u + "\n" +
 		antigravityCloudCodeKey + "=" + u + "\n" +
 		antigravityProxyFenceFoot + "\n"
+}
+
+func antigravityCanReplace(raw, key, want string) bool {
+	v := antigravityEnvValue(raw, key)
+	return v == "" || v == want
 }
 
 func antigravityShellBlock() string {
@@ -149,6 +156,10 @@ func antigravityWriteDotEnv() (changed bool, err error) {
 	file := antigravityEnvFile()
 	url := antigravityURL()
 	raw, _ := util.ReadFileSafe(file)
+	if !antigravityCanReplace(raw, antigravityProxyEnvKey, url) ||
+		!antigravityCanReplace(raw, antigravityCloudCodeKey, url) {
+		return false, nil
+	}
 	if antigravityEnvValue(raw, antigravityProxyEnvKey) == url &&
 		antigravityEnvValue(raw, antigravityCloudCodeKey) == url {
 		return false, nil
@@ -165,20 +176,44 @@ func antigravityWriteDotEnv() (changed bool, err error) {
 
 // antigravityWriteShellExports puts exports in ~/.zshenv so new Unix shells
 // route agy without relying on ~/.gemini/.env alone.
-func antigravityWriteShellExports() (changed bool) {
+func antigravityWriteShellExports() (changed bool, err error) {
 	if util.IsWin {
-		return false
+		return false, nil
 	}
 	file := antigravityShellEnvFile()
 	raw, _ := util.ReadFileSafe(file)
+	if !antigravityCanReplaceShell(raw, antigravityProxyEnvKey) ||
+		!antigravityCanReplaceShell(raw, antigravityCloudCodeKey) {
+		return false, nil
+	}
 	if antigravityShellWired(raw) {
-		return false
+		return false, nil
 	}
 	next := antigravityUpsertShellBlock(raw, antigravityShellBlock())
 	if next == raw {
-		return false
+		return false, nil
 	}
-	return util.WriteFile(file, next) == nil
+	if err := util.WriteFile(file, next); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func antigravityShellEnvValue(raw, key string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		trimmed = strings.TrimPrefix(trimmed, "export ")
+		name, value, ok := strings.Cut(trimmed, "=")
+		if ok && strings.TrimSpace(name) == key {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func antigravityCanReplaceShell(raw, key string) bool {
+	v := antigravityShellEnvValue(raw, key)
+	return v == "" || v == antigravityURL()
 }
 
 // antigravityLegacyShellCleanupPaths are older multi-rc inject sites; strip only.
@@ -237,8 +272,22 @@ func antigravityRemoveShellExports() (removed bool) {
 
 func antigravityApplyProcessEnv() {
 	u := antigravityURL()
-	_ = os.Setenv(antigravityProxyEnvKey, u)
-	_ = os.Setenv(antigravityCloudCodeKey, u)
+	if v := os.Getenv(antigravityProxyEnvKey); v == "" || v == u {
+		_ = os.Setenv(antigravityProxyEnvKey, u)
+	}
+	if v := os.Getenv(antigravityCloudCodeKey); v == "" || v == u {
+		_ = os.Setenv(antigravityCloudCodeKey, u)
+	}
+}
+
+func antigravityProcessEnvCompatible() bool {
+	u := antigravityURL()
+	for _, key := range []string{antigravityProxyEnvKey, antigravityCloudCodeKey} {
+		if v := os.Getenv(key); v != "" && v != u {
+			return false
+		}
+	}
+	return true
 }
 
 func antigravityClearProcessEnv() {
@@ -253,9 +302,25 @@ func antigravityClearProcessEnv() {
 
 // antigravityWriteWindowsUserEnv persists both keys to the current-user
 // Environment registry so Windows IDE/desktop launches see the proxy.
-func antigravityWriteWindowsUserEnv() bool {
+func antigravityWindowsUserEnvCompatible() bool {
 	if !util.IsWin {
-		return false
+		return true
+	}
+	u := antigravityURL()
+	ps := `$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $false)
+if ($null -eq $k) { exit 0 }
+foreach ($name in @('` + antigravityProxyEnvKey + `','` + antigravityCloudCodeKey + `')) {
+  $cur = $k.GetValue($name, $null)
+  if ($null -ne $cur -and $cur -ne '` + u + `') { $k.Close(); exit 2 }
+}
+$k.Close()
+`
+	return util.Run("powershell", []string{"-NoProfile", "-Command", ps}, util.RunOptions{Capture: true}).Code == 0
+}
+
+func antigravityWriteWindowsUserEnv() (bool, bool) {
+	if !util.IsWin {
+		return false, true
 	}
 	u := antigravityURL()
 	ps := `$ErrorActionPreference='Stop'
@@ -264,19 +329,43 @@ $want = @{
   '` + antigravityProxyEnvKey + `' = '` + u + `'
   '` + antigravityCloudCodeKey + `' = '` + u + `'
 }
-$changed = $false
-foreach ($name in $want.Keys) {
+$names = @($want.Keys)
+foreach ($name in $names) {
   $cur = $k.GetValue($name, $null)
-  if ($cur -ne $want[$name]) {
-    $k.SetValue($name, $want[$name], [Microsoft.Win32.RegistryValueKind]::String)
-    $changed = $true
+  if ($null -ne $cur -and $cur -ne $want[$name]) { $k.Close(); exit 2 }
+}
+$old = @{}
+foreach ($name in $want.Keys) { $old[$name] = $k.GetValue($name, $null) }
+$oldMarker = $k.GetValue('` + antigravityWindowsMarker + `', $null)
+$mask = 0
+if ($oldMarker -match '(^|,)proxy=(\d+)') { $mask = [int]$Matches[2] }
+$changed = $false
+try {
+  foreach ($name in $want.Keys) {
+    $cur = $old[$name]
+    if ($cur -ne $want[$name]) {
+      $k.SetValue($name, $want[$name], [Microsoft.Win32.RegistryValueKind]::String)
+      $changed = $true
+      if ($name -eq '` + antigravityProxyEnvKey + `') { $mask = $mask -bor 1 }
+      if ($name -eq '` + antigravityCloudCodeKey + `') { $mask = $mask -bor 2 }
+    }
   }
+  $k.SetValue('` + antigravityWindowsMarker + `', ('proxy=' + $mask), [Microsoft.Win32.RegistryValueKind]::String)
+} catch {
+  foreach ($name in $want.Keys) {
+    if ($null -eq $old[$name]) { $k.DeleteValue($name, $false) }
+    else { $k.SetValue($name, $old[$name], [Microsoft.Win32.RegistryValueKind]::String) }
+  }
+  if ($null -eq $oldMarker) { $k.DeleteValue('` + antigravityWindowsMarker + `', $false) }
+  else { $k.SetValue('` + antigravityWindowsMarker + `', $oldMarker, [Microsoft.Win32.RegistryValueKind]::String) }
+  $k.Close()
+  exit 3
 }
 $k.Close()
 if ($changed) { Write-Output 'changed' }
 `
 	r := util.Run("powershell", []string{"-NoProfile", "-Command", ps}, util.RunOptions{Capture: true})
-	return r.Code == 0 && strings.Contains(r.Stdout, "changed")
+	return r.Code == 0 && strings.Contains(r.Stdout, "changed"), r.Code == 0
 }
 
 func antigravityClearWindowsUserEnv() bool {
@@ -288,13 +377,18 @@ func antigravityClearWindowsUserEnv() bool {
 $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
 $names = @('` + antigravityProxyEnvKey + `','` + antigravityCloudCodeKey + `')
 $changed = $false
+$marker = $k.GetValue('` + antigravityWindowsMarker + `', $null)
+if ($marker -notmatch '^proxy=(\d+)$') { $k.Close(); exit 0 }
+$mask = [int]$Matches[1]
 foreach ($name in $names) {
   $cur = $k.GetValue($name, $null)
-  if ($cur -eq '` + u + `') {
+  $bit = if ($name -eq '` + antigravityProxyEnvKey + `') { 1 } else { 2 }
+  if (($mask -band $bit) -ne 0 -and $cur -eq '` + u + `') {
     $k.DeleteValue($name, $false)
     $changed = $true
   }
 }
+  $k.DeleteValue('` + antigravityWindowsMarker + `', $false)
 $k.Close()
 if ($changed) { Write-Output 'changed' }
 `
@@ -305,12 +399,51 @@ if ($changed) { Write-Output 'changed' }
 // ConfigureAntigravityProxy points agy at headroom on every OS:
 func ConfigureAntigravityProxy() (changed bool, file string) {
 	file = antigravityEnvFile()
+	raw, existed := util.ReadFileSafe(file)
+	shellRaw, _ := util.ReadFileSafe(antigravityShellEnvFile())
+	if !antigravityProcessEnvCompatible() || !antigravityWindowsUserEnvCompatible() ||
+		!antigravityCanReplace(raw, antigravityProxyEnvKey, antigravityURL()) ||
+		!antigravityCanReplace(raw, antigravityCloudCodeKey, antigravityURL()) ||
+		(!util.IsWin && (!antigravityCanReplaceShell(shellRaw, antigravityProxyEnvKey) ||
+			!antigravityCanReplaceShell(shellRaw, antigravityCloudCodeKey))) {
+		return false, file
+	}
 	dotChanged, err := antigravityWriteDotEnv()
 	if err != nil {
 		return false, file
 	}
-	shellChanged := antigravityWriteShellExports()
-	winChanged := antigravityWriteWindowsUserEnv()
+	shellRawBefore := shellRaw
+	shellChanged, err := antigravityWriteShellExports()
+	if err != nil {
+		if existed {
+			if rollbackErr := util.WriteFile(file, raw); rollbackErr != nil {
+				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
+			}
+		} else {
+			if rollbackErr := os.Remove(file); rollbackErr != nil && !os.IsNotExist(rollbackErr) {
+				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
+			}
+		}
+		return false, file
+	}
+	winChanged, winOK := antigravityWriteWindowsUserEnv()
+	if !winOK {
+		if existed {
+			if rollbackErr := util.WriteFile(file, raw); rollbackErr != nil {
+				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
+			}
+		} else {
+			if rollbackErr := os.Remove(file); rollbackErr != nil && !os.IsNotExist(rollbackErr) {
+				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
+			}
+		}
+		if !util.IsWin && shellChanged {
+			if rollbackErr := util.WriteFile(antigravityShellEnvFile(), shellRawBefore); rollbackErr != nil {
+				util.L.Err(fmt.Sprintf("antigravity shell rollback failed: %v", rollbackErr))
+			}
+		}
+		return false, file
+	}
 	antigravityApplyProcessEnv()
 	return dotChanged || shellChanged || winChanged, file
 }

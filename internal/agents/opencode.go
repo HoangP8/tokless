@@ -157,7 +157,9 @@ func ConfigureOpenCodeProxy() (changed bool, file string) {
 }
 
 func RemoveOpenCodeProxy() bool {
-	return removeOpenCodeTransportPlugin() || unwireOpenCodeBYOK()
+	pluginRemoved := removeOpenCodeTransportPlugin()
+	byokRemoved := unwireOpenCodeBYOK()
+	return pluginRemoved || byokRemoved
 }
 
 func OpenCodeProxyWired() bool {
@@ -206,6 +208,7 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 		return false, file
 	}
 	raw, _ := util.ReadFileSafe(file)
+	retrieveStateRaw, retrieveStateExists := util.ReadFileSafe(openCodeRetrieveStatePath())
 	if util.HasJSONCComments(raw) {
 		return false, file
 	}
@@ -229,12 +232,14 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 	if ok {
 		entries, ok := plugins.([]any)
 		if !ok {
+			_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
 			return false, file
 		}
 		for _, entry := range entries {
 			if isOpenCodeTransportPluginEntry(entry) {
 				if changed {
 					if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+						_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
 						return false, file
 					}
 				}
@@ -251,6 +256,7 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 		cfg.Set("$schema", "https://opencode.ai/config.json")
 	}
 	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+		_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
 		return false, file
 	}
 	return changed, file
@@ -299,14 +305,27 @@ func removeOpenCodeTransportPlugin() bool {
 			tools := getOrCreateMap(cfg, "tools")
 			tools.Set("headroom_retrieve", value)
 		}
-		_ = clearOpenCodeRetrieveState()
 	}
 	if len(next) == 0 {
 		cfg.Delete("plugin")
 	} else {
 		cfg.Set("plugin", next)
 	}
-	return util.WriteFile(file, util.StringifyJSON(cfg)) == nil
+	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
+		return false
+	}
+	_ = clearOpenCodeRetrieveState()
+	return true
+}
+
+func restoreOpenCodeRetrieveState(raw string, exists bool) error {
+	if exists {
+		return util.WriteFileMode(openCodeRetrieveStatePath(), raw, 0o600)
+	}
+	if err := os.Remove(openCodeRetrieveStatePath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func openCodeRetrieveStatePath() string {

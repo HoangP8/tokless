@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -178,43 +179,115 @@ func SyncOpenCodeBYOKRoutes() int {
 // wireOpenCodeBYOK points every discovered BYOK provider at Headroom while
 // retaining its original upstream in Headroom's supported per-request header.
 func wireOpenCodeBYOK() (changed bool, _ []openCodeBYOK) {
+	var byoks []openCodeBYOK
+	err := withProxyRouteStashLock(func() error {
+		var ok bool
+		changed, byoks, ok = wireOpenCodeBYOKLocked()
+		if !ok {
+			return fmt.Errorf("invalid OpenCode BYOK stash")
+		}
+		return nil
+	})
+	if err != nil {
+		return false, nil
+	}
+	return changed, byoks
+}
+
+func wireOpenCodeBYOKLocked() (changed bool, byoks []openCodeBYOK, ok bool) {
 	proxyBase := ProxyEndpointFor("opencode")
 	if proxyBase == "" {
-		return false, nil
+		return false, nil, true
 	}
-	byoks := DiscoverOpenCodeBYOK()
+	if !byokStashValid() {
+		return false, nil, false
+	}
+	byoks = DiscoverOpenCodeBYOK()
 	if len(byoks) == 0 {
 		_ = clearBYOKStash()
-		return false, nil
+		return false, nil, true
 	}
 	newStash := map[string]byokStashEntry{}
+	originals := map[string]string{}
 	for _, b := range byoks {
+		if _, exists := originals[b.File]; !exists {
+			if raw, ok := util.ReadFileSafe(b.File); ok {
+				originals[b.File] = raw
+			}
+		}
 		newStash[b.ID] = byokStashEntry{File: b.File, BaseURL: b.BaseURL}
 		if setOpenCodeProviderRoute(b.File, b.ID, proxyBase, b.BaseURL) {
 			changed = true
 		}
 	}
-	_ = saveBYOKStash(newStash)
-	return changed, byoks
+	if err := saveBYOKStash(newStash); err != nil {
+		for path, raw := range originals {
+			_ = util.WriteFile(path, raw)
+		}
+		return false, nil, true
+	}
+	return changed, byoks, true
 }
 
 // unwireOpenCodeBYOK restores original baseURLs from stash.
 func unwireOpenCodeBYOK() bool {
-	stashed := loadBYOKStash()
-	if len(stashed) == 0 {
+	var removed bool
+	if err := withProxyRouteStashLock(func() error {
+		var ok bool
+		removed, ok = unwireOpenCodeBYOKLocked()
+		if !ok {
+			return fmt.Errorf("invalid OpenCode BYOK stash")
+		}
+		return nil
+	}); err != nil {
 		return false
 	}
-	removed := false
+	return removed
+}
+
+func unwireOpenCodeBYOKLocked() (removed bool, ok bool) {
+	stashed := loadBYOKStash()
+	if !byokStashValid() {
+		return false, false
+	}
+	if len(stashed) == 0 {
+		return false, true
+	}
+	removed = false
+	remaining := map[string]byokStashEntry{}
+	originals := map[string]string{}
 	for id, s := range stashed {
 		if s.BaseURL == "" || s.File == "" {
+			remaining[id] = s
 			continue
+		}
+		if _, exists := originals[s.File]; !exists {
+			if raw, ok := util.ReadFileSafe(s.File); ok {
+				originals[s.File] = raw
+			}
 		}
 		if setOpenCodeProviderRoute(s.File, id, s.BaseURL, "") {
 			removed = true
+		} else {
+			remaining[id] = s
 		}
 	}
-	_ = clearBYOKStash()
-	return removed
+	if len(remaining) == 0 {
+		if err := clearBYOKStash(); err != nil {
+			for path, raw := range originals {
+				_ = util.WriteFile(path, raw)
+			}
+			return false, true
+		}
+	} else {
+		if err := saveBYOKStash(remaining); err != nil {
+			for path, raw := range originals {
+				_ = util.WriteFile(path, raw)
+			}
+			return false, true
+		}
+	}
+	return removed, true
 }
 
 const headroomBaseURLHeader = "x-headroom-base-url"
@@ -565,6 +638,23 @@ func saveBYOKStash(m map[string]byokStashEntry) error {
 		return err
 	}
 	return util.WriteFileMode(byokStashPath(), string(b), 0o600)
+}
+
+func byokStashValid() bool {
+	raw, ok := util.ReadFileSafe(byokStashPath())
+	if !ok {
+		return true
+	}
+	var f byokStashFile
+	if json.Unmarshal([]byte(raw), &f) != nil || f.Providers == nil {
+		return false
+	}
+	for id, entry := range f.Providers {
+		if id == "" || entry.File == "" || entry.BaseURL == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func clearBYOKStash() error {

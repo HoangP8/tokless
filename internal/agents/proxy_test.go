@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -75,7 +76,7 @@ func TestClaudeProxyConfigurePreservesOtherEnvKeys(t *testing.T) {
 	}
 }
 
-func TestClaudeProxyDoesNotClobberUserValue(t *testing.T) {
+func TestClaudeProxyPreservesUserValueThroughTakeover(t *testing.T) {
 	claudeProxyTestHome(t)
 	settings := util.ClaudeCodePaths().Settings
 	seed := `{
@@ -88,37 +89,64 @@ func TestClaudeProxyDoesNotClobberUserValue(t *testing.T) {
 	if err := util.WriteFile(settings, seed); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureClaudeProxy(); changed {
-		t.Fatal("configure clobbered a user-set ANTHROPIC_BASE_URL")
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("foreign endpoint should be taken over, originals kept in stash")
 	}
-	if ClaudeProxyWired() {
-		t.Fatal("differing user value must not report wired")
-	}
-	if RemoveClaudeProxy() {
-		t.Fatal("remove must not delete a differing user value")
+	stash, ok := loadClaudeBYOKStash()
+	if !ok || stash.BaseURL != "http://user.example:9999" {
+		t.Fatalf("user upstream not stashed: %+v ok=%v", stash, ok)
 	}
 	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"sk-test"`) {
+		t.Fatalf("user env keys were clobbered:\n%s", raw)
+	}
+	if ClaudeProxyWired() != true {
+		t.Fatal("takeover should report wired")
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("restore failed")
+	}
+	raw, _ = util.ReadFileSafe(settings)
 	if !strings.Contains(raw, "http://user.example:9999") || !strings.Contains(raw, "sk-test") {
-		t.Fatalf("user env was clobbered:\n%s", raw)
+		t.Fatalf("user env was not restored:\n%s", raw)
 	}
 }
 
-func TestClaudeProxyConfigureEnsuresModelPinOnRewire(t *testing.T) {
+func TestClaudeProxyConfigureDoesNotPinModelOnRewire(t *testing.T) {
 	claudeProxyTestHome(t)
 	settings := util.ClaudeCodePaths().Settings
 	seed := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787"}}`
 	if err := util.WriteFile(settings, seed); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureClaudeProxy(); !changed {
-		t.Fatal("re-wire with base URL set but no model pin must write pin")
+	if changed, _ := ConfigureClaudeProxy(); changed {
+		t.Fatal("already-wired Claude config should be a no-op")
 	}
 	raw, _ := util.ReadFileSafe(settings)
-	if !strings.Contains(raw, `"ANTHROPIC_MODEL": "qwen3.8-max"`) {
-		t.Fatalf("model pin not written on re-wire:\n%s", raw)
+	if strings.Contains(raw, "ANTHROPIC_MODEL") {
+		t.Fatalf("OAuth config must not receive model pin:\n%s", raw)
+	}
+	if !strings.Contains(raw, "ANTHROPIC_BASE_URL") || !strings.Contains(raw, "http://127.0.0.1:8787") {
+		t.Fatalf("proxy endpoint missing:\n%s", raw)
+	}
+}
+
+func TestClaudeProxyDoesNotRemovePreexistingProxyEndpoint(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
 	}
 	if changed, _ := ConfigureClaudeProxy(); changed {
-		t.Fatal("second configure after pin is set should be a no-op")
+		t.Fatal("preexisting proxy endpoint should not be claimed")
+	}
+	if RemoveClaudeProxy() {
+		t.Fatal("preexisting proxy endpoint should not be removed")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if raw != seed {
+		t.Fatalf("preexisting endpoint changed:\n%s", raw)
 	}
 }
 
@@ -1163,6 +1191,25 @@ func TestAntigravityProxyPreservesForeignEnv(t *testing.T) {
 	}
 }
 
+func TestAntigravityProxyDoesNotOverwriteForeignRoutes(t *testing.T) {
+	setTestHome(t)
+	t.Setenv(antigravityProxyEnvKey, "https://user.example/gemini")
+	t.Setenv(antigravityCloudCodeKey, "https://user.example/cloud")
+	envFile := antigravityEnvFile()
+	seed := antigravityProxyEnvKey + "=https://user.example/gemini\n" + antigravityCloudCodeKey + "=https://user.example/cloud\n"
+	if err := util.WriteFile(envFile, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureAntigravityProxy(); changed {
+		t.Fatal("foreign routes must not be overwritten")
+	}
+	raw, _ := util.ReadFileSafe(envFile)
+	if raw != seed || os.Getenv(antigravityProxyEnvKey) != "https://user.example/gemini" ||
+		os.Getenv(antigravityCloudCodeKey) != "https://user.example/cloud" {
+		t.Fatalf("foreign routes changed: file=%q env=%q/%q", raw, os.Getenv(antigravityProxyEnvKey), os.Getenv(antigravityCloudCodeKey))
+	}
+}
+
 func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	setTestHome(t)
 	t.Setenv(antigravityCloudCodeKey, "")
@@ -1763,7 +1810,7 @@ func TestPiProxyNonStringHeaderSkipped(t *testing.T) {
 	}
 }
 
-func TestOmpProxySavesStashBeforeConfigWrite(t *testing.T) {
+func TestOmpProxyDoesNotPersistStashOnConfigWriteFailure(t *testing.T) {
 	ompProxyTestHome(t)
 	models := `providers:
   qwen:
@@ -1780,16 +1827,311 @@ func TestOmpProxySavesStashBeforeConfigWrite(t *testing.T) {
 	if changed, _ := ConfigureOmpProxy(); changed {
 		t.Fatal("configure must fail when config write fails")
 	}
-	stash := loadProxyRouteStash("omp")
-	entry, ok := stash["qwen"]
-	if !ok || entry.BaseURL != "https://dashscope.aliyuncs.com/compatible-mode/v1" {
-		t.Fatalf("stash not persisted before config write: %+v", stash)
+	if stash := loadProxyRouteStash("omp"); len(stash) != 0 {
+		t.Fatalf("stash persisted after config write failure: %+v", stash)
 	}
-	info, err := os.Stat(proxyRouteStashPath("omp"))
-	if err != nil {
+	if _, err := os.Stat(proxyRouteStashPath("omp")); !os.IsNotExist(err) {
+		t.Fatalf("stash file exists after config write failure: %v", err)
+	}
+}
+
+func TestClaudeProxyTakesOverForeignBYOK(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-byok",
+    "ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api",
+    "ANTHROPIC_CUSTOM_HEADERS": "X-Keep: yes"
+  }
+}`
+	if err := util.WriteFile(settings, seed); err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("stash perms = %v, want 0600", info.Mode().Perm())
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover to write")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`) ||
+		!strings.Contains(raw, "x-headroom-base-url: https://api.qwencoder.test/api") ||
+		!strings.Contains(raw, "X-Keep: yes") {
+		t.Fatalf("takeover state wrong:\n%s", raw)
+	}
+	if !strings.Contains(raw, `"ANTHROPIC_AUTH_TOKEN": "sk-byok"`) || strings.Contains(raw, `"ANTHROPIC_API_KEY"`) {
+		t.Fatalf("api key must move to Bearer token while wired:\n%s", raw)
+	}
+	if !ClaudeProxyWired() {
+		t.Fatal("expected wired after takeover")
+	}
+	stash, ok := loadClaudeBYOKStash()
+	if !ok || stash.BaseURL != "https://api.qwencoder.test/api" || !stash.HadHeader || stash.Header != "X-Keep: yes" {
+		t.Fatalf("stash wrong: %+v ok=%v", stash, ok)
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ = util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api"`) ||
+		!strings.Contains(raw, `"X-Keep: yes"`) || strings.Contains(raw, "x-headroom-base-url") ||
+		!strings.Contains(raw, `"ANTHROPIC_API_KEY": "sk-byok"`) || strings.Contains(raw, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("restore state wrong:\n%s", raw)
+	}
+	if ClaudeProxyWired() {
+		t.Fatal("expected unwired after restore")
+	}
+	if _, ok := loadClaudeBYOKStash(); ok {
+		t.Fatal("stash should be cleared")
+	}
+}
+
+func TestClaudeProxyRestoresBothCredentialKeys(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_API_KEY":"api-key","ANTHROPIC_AUTH_TOKEN":"auth-token","ANTHROPIC_BASE_URL":"https://gw.test/v1"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_API_KEY":"api-key"`) || !strings.Contains(raw, `"ANTHROPIC_AUTH_TOKEN":"auth-token"`) {
+		t.Fatalf("both credentials not restored:\n%s", raw)
+	}
+}
+
+func TestClaudeTakeoverAddsHeadersWhenAbsent(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	if err := util.WriteFile(settings, `{"env":{"ANTHROPIC_BASE_URL":"https://gw.test/v1"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `ANTHROPIC_CUSTOM_HEADERS`) || strings.Contains(raw, "x-headroom-base-url: https://gw.test/v1") || !strings.Contains(raw, "x-headroom-base-url: https://gw.test") {
+		t.Fatalf("hop header missing or /v1 not stripped:\n%s", raw)
+	}
+	if strings.Contains(raw, "qwen3.8-max") {
+		t.Fatalf("takeover must not pin managed model:\n%s", raw)
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ = util.ReadFileSafe(settings)
+	if strings.Contains(raw, "ANTHROPIC_CUSTOM_HEADERS") || !strings.Contains(raw, "https://gw.test/v1") {
+		t.Fatalf("restore wrong:\n%s", raw)
+	}
+}
+
+func TestClaudeTakeoverPreservesUserModelPin(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://gw.test/v1","ANTHROPIC_MODEL":"user-model-x"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_MODEL": "user-model-x"`) {
+		t.Fatalf("takeover clobbered user model pin:\n%s", raw)
+	}
+	if strings.Contains(raw, "qwen3.8-max") {
+		t.Fatalf("takeover must not inject managed model:\n%s", raw)
+	}
+}
+
+func TestClaudeTakeoverPreservesUserBYOKRouteAndModel(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://api.provider.test/api","ANTHROPIC_MODEL":"glm-5.3-flash","ANTHROPIC_CUSTOM_HEADERS":"X-User: keep"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	for _, want := range []string{
+		`"ANTHROPIC_MODEL": "glm-5.3-flash"`,
+		`"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`,
+		`x-headroom-base-url: https://api.provider.test/api`,
+		`X-User: keep`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("BYOK setting lost %q:\n%s", want, raw)
+		}
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ = util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL":"https://api.provider.test/api"`) ||
+		!strings.Contains(raw, `"ANTHROPIC_MODEL":"glm-5.3-flash"`) ||
+		strings.Contains(raw, "x-headroom-base-url") {
+		t.Fatalf("BYOK route/model not restored:\n%s", raw)
+	}
+}
+
+func TestClaudeRestoreKeepsUserHeaderEdits(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	if err := util.WriteFile(settings, `{"env":{"ANTHROPIC_BASE_URL":"https://gw.test/v1","ANTHROPIC_CUSTOM_HEADERS":"X-A: 1"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	if err := util.WriteFile(settings, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787","ANTHROPIC_CUSTOM_HEADERS":"x-headroom-base-url: https://gw.test/v1\nX-B: 2"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if strings.Contains(raw, "X-A") || !strings.Contains(raw, "X-B: 2") || !strings.Contains(raw, `"https://gw.test/v1"`) {
+		t.Fatalf("restore did not respect current user state:\n%s", raw)
+	}
+}
+
+func TestClaudeRestoreKeepsUserCredentialEdits(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	if err := util.WriteFile(settings, `{"env":{"ANTHROPIC_BASE_URL":"https://gw.test/v1","ANTHROPIC_API_KEY":"original-key"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover")
+	}
+	if err := util.WriteFile(settings, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787","ANTHROPIC_AUTH_TOKEN":"user-edited-token"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_AUTH_TOKEN": "user-edited-token"`) || strings.Contains(raw, `"ANTHROPIC_AUTH_TOKEN": "original-key"`) {
+		t.Fatalf("restore overwrote user credential edit:\n%s", raw)
+	}
+}
+
+func TestClaudeTakeoverJournalsCompleteStateBeforeSettingsWrite(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	if err := util.WriteFile(settings, `{"env":{"ANTHROPIC_BASE_URL":"https://gw.test/v1","ANTHROPIC_API_KEY":"original-key"}}`); err != nil {
+		t.Fatal(err)
+	}
+	checked := false
+	util.SetWriteFileOverride(func(path, _ string) error {
+		if path == settings {
+			entry, ok := loadClaudeBYOKStash()
+			checked = ok && len(entry.Managed) > 0 && entry.BaseKey == "original-key"
+			return os.ErrPermission
+		}
+		return nil
+	})
+	defer util.SetWriteFileOverride(nil)
+	if changed, _ := ConfigureClaudeProxy(); changed {
+		t.Fatal("configure reported success when settings write failed")
+	}
+	if !checked {
+		t.Fatal("settings write attempted before complete recovery journal existed")
+	}
+	if _, ok := loadClaudeBYOKStash(); ok {
+		t.Fatal("failed takeover left recovery journal")
+	}
+}
+
+func TestClaudeCustomHeadersDropVariants(t *testing.T) {
+	lines := []string{"X-Keep: yes", "x-headroom-base-url:nospace", "X-Headroom-Base-Url:  spaced\t", "x-headroom-base-url", "Another: v"}
+	kept, dropped := claudeCustomHeadersDrop(lines)
+	if !dropped || len(kept) != 2 || kept[0] != "X-Keep: yes" || kept[1] != "Another: v" {
+		t.Fatalf("drop variants wrong: dropped=%v kept=%v", dropped, kept)
+	}
+}
+
+func TestClaudeTakeoverStripsV1SuffixFromHop(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://api.qwencoder.test/api/v1","ANTHROPIC_API_KEY":"sk-x"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if strings.Contains(raw, "/v1/v1") || !strings.Contains(raw, "x-headroom-base-url: https://api.qwencoder.test/api") {
+		t.Fatalf("hop header must drop /v1 suffix:\n%s", raw)
+	}
+	stash, ok := loadClaudeBYOKStash()
+	if !ok || stash.BaseURL != "https://api.qwencoder.test/api/v1" {
+		t.Fatalf("stash must keep the verbatim user URL: %+v ok=%v", stash, ok)
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ = util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"https://api.qwencoder.test/api/v1"`) {
+		t.Fatalf("restore lost verbatim URL:\n%s", raw)
+	}
+}
+
+func TestClaudeTakeoverLeavesBearerTokenAlone(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://gw.test/v1","ANTHROPIC_AUTH_TOKEN":"user-bearer"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover write")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"user-bearer"`) {
+		t.Fatalf("user bearer must survive takeover:\n%s", raw)
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("expected restore")
+	}
+	raw, _ = util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"user-bearer"`) {
+		t.Fatalf("restore lost user bearer:\n%s", raw)
+	}
+}
+
+// TestMalformedPIDLock ensures that a lock file with non-numeric content,
+// negative PID, or zero PID is stolen after the 10-second stale threshold.
+func TestMalformedPIDLock(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	lockPath := filepath.Join(util.HeadroomPathsResolved().Root, "byok.stash.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-15 * time.Second)
+	if err := os.WriteFile(lockPath, []byte("123junk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(lockPath, past, past); err != nil {
+		t.Fatal(err)
+	}
+	ok := false
+	err := withProxyRouteStashLock(func() error {
+		ok = true
+		return nil
+	})
+	if !ok || err != nil {
+		t.Fatalf("expected lock steal + fn success; got ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected old lock to be removed; remaining: %v", err)
 	}
 }

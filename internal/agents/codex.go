@@ -557,8 +557,21 @@ func saveCodexStash(s codexStash) bool {
 	return util.WriteFileMode(codexStashPath(), string(b), 0o600) == nil
 }
 
-func clearCodexStash() {
-	_ = os.Remove(codexStashPath())
+func clearCodexStash() error {
+	if err := os.Remove(codexStashPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func restoreCodexConfig(path, raw string, existed bool) error {
+	if existed {
+		return util.WriteFile(path, raw)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // ConfigureCodexProxy injects headroom's persistent-provider scope into
@@ -572,7 +585,10 @@ func ConfigureCodexProxy() (changed bool, file string) {
 	}
 	endpoint := ProxyEndpointFor("codex")
 	byok := codexPickBYOK(raw)
+	dotEnvPath := codexDotEnvPath()
+	dotEnvRaw, dotEnvExisted := util.ReadFileSafe(dotEnvPath)
 	tookOver := false
+	stashRaw, stashExists := util.ReadFileSafe(codexStashPath())
 	if !codexProxyWritable(raw, endpoint) {
 		takeover := codexTakeoverTarget(raw)
 		if takeover == nil {
@@ -611,10 +627,20 @@ func ConfigureCodexProxy() (changed bool, file string) {
 	if next == original {
 		return false, p.Config
 	}
-	if byok != nil && !writeCodexByokDotEnv(byok) {
+	if util.WriteFile(p.Config, next) != nil {
+		if tookOver {
+			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
+		}
 		return false, p.Config
 	}
-	if util.WriteFile(p.Config, next) != nil {
+	if byok != nil && !writeCodexByokDotEnv(byok) {
+		if err := restoreCodexConfig(p.Config, original, ok); err != nil {
+			return false, p.Config
+		}
+		_ = restoreCodexConfig(dotEnvPath, dotEnvRaw, dotEnvExisted)
+		if tookOver {
+			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
+		}
 		return false, p.Config
 	}
 	_ = os.Chmod(p.Config, 0o600)
@@ -670,13 +696,23 @@ func RemoveCodexProxy() bool {
 	if next == raw {
 		return false
 	}
+	dotEnvPath := filepath.Join(p.Dir, ".env")
+	dotEnvRaw, dotEnvExisted := util.ReadFileSafe(dotEnvPath)
 	if util.WriteFile(p.Config, next) != nil {
 		return false
 	}
-	if stash.ProviderID != "" {
-		clearCodexStash()
+	if !upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true) {
+		_ = restoreCodexConfig(p.Config, raw, true)
+		return false
 	}
-	return upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true)
+	if stash.ProviderID != "" {
+		if err := clearCodexStash(); err != nil {
+			_ = restoreCodexConfig(p.Config, raw, true)
+			_ = restoreCodexConfig(dotEnvPath, dotEnvRaw, dotEnvExisted)
+			return false
+		}
+	}
+	return true
 }
 
 func codexProxySection(endpoint string, byok *openCodeBYOK) string {

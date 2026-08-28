@@ -104,19 +104,27 @@ func TestHeadroomManualAgentsAreNoOps(t *testing.T) {
 func TestHeadroomRefusesDirectUserServer(t *testing.T) {
 	setupHeadroomHome(t)
 	p := util.ClaudeCodePaths()
-	if err := util.WriteFile(p.Settings, `{"env":{"ANTHROPIC_BASE_URL":"http://user.example:9999"}}`); err != nil {
+	original := `{"env":{"ANTHROPIC_BASE_URL":"http://user.example:9999"}}`
+	if err := util.WriteFile(p.Settings, original); err != nil {
 		t.Fatal(err)
 	}
 	ok, err := headroom.WireFor["claude"](core.RunOpts{})
-	if err == nil || ok || !strings.Contains(err.Error(), "differing existing config value") {
-		t.Fatalf("wire direct user value = %v, %v", ok, err)
+	if err != nil || !ok {
+		t.Fatalf("wire foreign BYOK endpoint = %v, %v (want takeover)", ok, err)
 	}
-	if agents.ClaudeProxyWired() {
-		t.Fatalf("user ANTHROPIC_BASE_URL must not be claimed as wired")
+	if !agents.ClaudeProxyWired() {
+		t.Fatal("takeover should report wired")
 	}
 	raw, _ := util.ReadFileSafe(p.Settings)
-	if !strings.Contains(raw, "http://user.example:9999") {
-		t.Fatalf("user value clobbered: %s", raw)
+	if !strings.Contains(raw, "x-headroom-base-url: http://user.example:9999") {
+		t.Fatalf("user upstream not preserved via hop header: %s", raw)
+	}
+	if ok, err := headroom.UnwireFor["claude"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("unwire after takeover = %v, %v", ok, err)
+	}
+	raw, _ = util.ReadFileSafe(p.Settings)
+	if raw != original {
+		t.Fatalf("user file not restored byte-exactly: %s", raw)
 	}
 }
 
