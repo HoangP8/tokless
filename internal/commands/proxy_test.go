@@ -116,3 +116,48 @@ func TestRunProxyDownRetainsDaemonWhenUnwireFails(t *testing.T) {
 		t.Fatalf("stop proxy call count = %d, want 0", stops)
 	}
 }
+
+func TestRunProxyUpRollsBackRoutesOnConfigurationFailure(t *testing.T) {
+	proxyCmdTestHome(t)
+	oldStart, oldStop := startProxy, stopProxy
+	oldEnable, oldAuto := enableProxyAutostart, proxyAutostartEnabled
+	oldRunning := proxyRunning
+	oldConfigure, oldRemove, oldWired := configureProxyAgent, removeProxyAgent, proxyAgentWired
+	t.Cleanup(func() {
+		startProxy, stopProxy, proxyRunning = oldStart, oldStop, oldRunning
+		enableProxyAutostart, proxyAutostartEnabled = oldEnable, oldAuto
+		configureProxyAgent, removeProxyAgent, proxyAgentWired = oldConfigure, oldRemove, oldWired
+	})
+	started, stopped := 0, 0
+	startProxy = func() error { started++; return nil }
+	stopProxy = func() error { stopped++; return nil }
+	enableProxyAutostart = func() error { return nil }
+	proxyAutostartEnabled = func() bool { return true }
+	proxyRunning = func() bool { return false }
+	wired := map[string]bool{}
+	configureProxyAgent = func(id string) bool {
+		if id == "codex" {
+			return false
+		}
+		wired[id] = true
+		return true
+	}
+	removeProxyAgent = func(id string) bool {
+		if !wired[id] {
+			return false
+		}
+		delete(wired, id)
+		return true
+	}
+	proxyAgentWired = func(id string) bool { return wired[id] }
+
+	if got := RunProxyUp(InitOptions{Agents: []string{"claude", "codex"}}); got == 0 {
+		t.Fatal("proxy up unexpectedly succeeded")
+	}
+	if started != 1 || stopped != 1 {
+		t.Fatalf("proxy lifecycle start=%d stop=%d, want 1/1", started, stopped)
+	}
+	if len(wired) != 0 {
+		t.Fatalf("routes survived rollback: %v", wired)
+	}
+}

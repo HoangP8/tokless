@@ -35,7 +35,9 @@ func proxyInstructions(id string) []string {
 	return nil
 }
 
-func configureProxyAgent(id string) bool {
+var configureProxyAgent = configureProxyAgentImpl
+
+func configureProxyAgentImpl(id string) bool {
 	return agents.ConfigureProxyAgent(id)
 }
 
@@ -56,6 +58,9 @@ func proxyAgentWiredImpl(id string) bool {
 }
 
 var stopProxy = headroompkg.StopProxy
+var startProxy = headroompkg.StartProxy
+var enableProxyAutostart = headroompkg.EnableProxyAutostart
+var proxyAutostartEnabled = headroompkg.ProxyAutostartEnabled
 var proxyRunning = headroompkg.ProxyRunning
 
 // RunProxyUp starts the headroom proxy daemon and points agents at it.
@@ -65,11 +70,14 @@ func RunProxyUp(opts InitOptions) int {
 		util.L.Err("headroom binary not found — run `tokless` first to install headroom")
 		return 1
 	}
-	if err := headroompkg.StartProxy(); err != nil {
+	wasRunning := proxyRunning()
+	if err := startProxy(); err != nil {
 		util.L.Err(err.Error())
 		return 1
 	}
 	wired, failed := 0, 0
+	configured := make([]string, 0)
+	agentsBefore := make(map[string]bool)
 	for _, id := range resolveProxyAgents(opts) {
 		if proxyInstructions(id) != nil {
 			continue
@@ -77,23 +85,53 @@ func RunProxyUp(opts InitOptions) int {
 		if !agents.ProxyAgentApplicable(id) {
 			continue
 		}
+		agentsBefore[id] = proxyAgentWired(id)
 		switch {
 		case configureProxyAgent(id):
 			util.L.Ok(id + ": wired to " + agents.ProxyEndpointFor(id))
 			wired++
+			if !agentsBefore[id] {
+				configured = append(configured, id)
+			}
 		default:
+			if agentsBefore[id] {
+				continue
+			}
 			util.L.Err(id + ": not wired (differing existing config value, or write failed)")
 			failed++
 		}
 	}
-	if err := headroompkg.StartProxy(); err != nil {
-		util.L.Err(err.Error())
+	rollback := func() {
+		for i := len(configured) - 1; i >= 0; i-- {
+			id := configured[i]
+			if removeProxyAgent(id) {
+				continue
+			}
+			util.L.Sub("agent rollback failed: " + id)
+		}
+		if !wasRunning {
+			if err := stopProxy(); err != nil {
+				util.L.Sub("proxy rollback failed: " + err.Error())
+			}
+		}
+	}
+	if failed > 0 {
+		rollback()
 		return 1
 	}
-	if err := headroompkg.EnableProxyAutostart(); err != nil {
+	if err := enableProxyAutostart(); err != nil {
 		util.L.Sub("autostart: " + err.Error())
-	} else if headroompkg.ProxyAutostartEnabled() {
+		if startErr := startProxy(); startErr != nil {
+			util.L.Err(startErr.Error())
+			rollback()
+			return 1
+		}
+	} else if proxyAutostartEnabled() {
 		util.L.Sub("autostart: user service enabled (survives reboot)")
+	} else if !proxyRunning() {
+		util.L.Err("proxy did not remain running")
+		rollback()
+		return 1
 	}
 	util.L.Raw("")
 	if failed > 0 {
@@ -134,6 +172,7 @@ func RunProxyDown(opts InitOptions) int {
 	if selected {
 		util.L.Raw("")
 		if failed > 0 {
+			restoreProxyAgents(wiredBefore)
 			return 1
 		}
 		return 0
@@ -145,17 +184,32 @@ func RunProxyDown(opts InitOptions) int {
 	}
 	if failed > 0 {
 		util.L.Raw("")
-		return 1
-	}
-	if err := stopProxy(); err != nil {
-		util.L.Err(err.Error())
+		restoreProxyAgents(wiredBefore)
 		return 1
 	}
 	if err := headroompkg.DisableProxyAutostart(); err != nil {
 		util.L.Sub("autostart: " + err.Error())
+		restoreProxyAgents(wiredBefore)
+		return 1
+	}
+	if err := stopProxy(); err != nil {
+		util.L.Err(err.Error())
+		if restoreErr := headroompkg.EnableProxyAutostart(); restoreErr != nil {
+			util.L.Sub("autostart restore: " + restoreErr.Error())
+		}
+		restoreProxyAgents(wiredBefore)
+		return 1
 	}
 	util.L.Raw("")
 	return 0
+}
+
+func restoreProxyAgents(wiredBefore map[string]bool) {
+	for id, wired := range wiredBefore {
+		if wired && !proxyAgentWired(id) && !configureProxyAgent(id) {
+			util.L.Sub("agent restore failed: " + id)
+		}
+	}
 }
 
 // RunProxyStatus prints daemon + per-agent capability and wiring state.
