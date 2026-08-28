@@ -182,6 +182,20 @@ func run() int {
 		}
 		return 0
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "__proxy-run" {
+		if err := headroompkg.RunProxyForeground(); err != nil {
+			util.L.Err(err.Error())
+			return 1
+		}
+		return 0
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "__proxy-watch" {
+		if err := headroompkg.RunProxyWatchdog(); err != nil {
+			util.L.Err(err.Error())
+			return 1
+		}
+		return 0
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "__proxy-stop" {
 		if err := headroompkg.StopProxy(); err != nil {
 			util.L.Err(err.Error())

@@ -9,12 +9,13 @@ import (
 
 func TestProxyAutostartUnitBody(t *testing.T) {
 	body := proxyAutostartUnitBody("/home/u/.local/bin/tokless")
+	bin := `/home/u/.local/bin/tokless`
 	for _, want := range []string{
-		"__proxy-ensure",
-		`"/home/u/.local/bin/tokless"`,
+		"__proxy-run",
+		bin,
 		"WantedBy=default.target",
-		"Type=oneshot",
-		"RemainAfterExit=yes",
+		"Type=simple",
+		"Restart=on-failure",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("unit missing %q:\n%s", want, body)

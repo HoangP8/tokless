@@ -237,6 +237,9 @@ func TestStopProxyRefusesMismatchedIdentity(t *testing.T) {
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	pidFile, _ := proxyFiles()
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}, nil
+	}
 	record := proxyOwnership{PID: 4242, Executable: bin, Args: []string{"proxy"}, Start: "old-start"}
 	if err := writeProxyOwnership(pidFile, record); err != nil {
 		t.Fatal(err)
@@ -605,8 +608,14 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 func TestStartProxyReusesHeadroomProbe(t *testing.T) {
 	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
-	proxyTestBin(t)
+	bin := proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787)}, nil
+	}
+	if err := writeProxySupervisedState(os.Getpid(), bin, proxyArgs(8787), nil); err != nil {
+		t.Fatal(err)
+	}
 	spawned, wrote := false, false
 	proxySpawn = func(*exec.Cmd) error { spawned = true; return nil }
 	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
@@ -664,9 +673,17 @@ func TestProxyArgsMatchRecorded(t *testing.T) {
 	util.SetHomeOverride(t.TempDir())
 	bin := proxyTestBin(t)
 	pidFile, _ := proxyFiles()
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		raw, _ := util.ReadFileSafe(pidFile)
+		var record proxyOwnership
+		if err := json.Unmarshal([]byte(raw), &record); err != nil {
+			return processIdentityInfo{}, err
+		}
+		return processIdentityInfo{Executable: record.Executable, Args: record.Args, Start: record.Start}, nil
+	}
 
-	if !proxyArgsMatchRecorded(8787) {
-		t.Fatal("absent record must be treated as a match (hand-started headroom)")
+	if proxyArgsMatchRecorded(8787) {
+		t.Fatal("absent record must not claim ownership of hand-started headroom")
 	}
 	want := proxyArgs(8787)
 	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5357, Executable: bin, Args: want, Start: "start"}); err != nil {
@@ -703,6 +720,63 @@ func TestProxyArgsMatchRecorded(t *testing.T) {
 	}
 }
 
+func TestProxySupervisedStateRequiresMatchingProcess(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	if err := writeProxySupervisedState(5357, bin, proxyArgs(8787), nil); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{}, errors.New("process gone")
+	}
+	if proxySupervisedArgsMatch(8787) {
+		t.Fatal("stale supervised state must not claim ownership")
+	}
+}
+
+func TestStopSupervisedDaemonRefusesMismatchedProcess(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	if err := writeProxySupervisedState(5358, bin, proxyArgs(8787), nil); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: []string{"other"}}, nil
+	}
+	proxyGone = func(*os.Process) bool { return false }
+	killed := false
+	proxyKill = func(*os.Process) error { killed = true; return nil }
+	if err := stopSupervisedDaemon(); err == nil {
+		t.Fatal("stopSupervisedDaemon accepted mismatched process")
+	}
+	if killed {
+		t.Fatal("mismatched supervised process was killed")
+	}
+}
+
+func TestStopSupervisedDaemonClearsStateAfterStop(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	if err := writeProxySupervisedState(5359, bin, proxyArgs(8787), nil); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787)}, nil
+	}
+	proxyKill = func(*os.Process) error { return nil }
+	proxyGone = func(*os.Process) bool { return true }
+	proxyLiveZProbe = func(time.Duration) bool { return false }
+	if err := stopSupervisedDaemon(); err != nil {
+		t.Fatalf("stopSupervisedDaemon = %v", err)
+	}
+	if _, ok := util.ReadFileSafe(proxySupervisedFile()); ok {
+		t.Fatal("supervised state survived successful stop")
+	}
+}
+
 func TestStartProxyDoesNotReuseNonHeadroomProbe(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
@@ -717,6 +791,20 @@ func TestStartProxyDoesNotReuseNonHeadroomProbe(t *testing.T) {
 	}
 	if !spawned {
 		t.Fatal("StartProxy did not attempt spawn after non-headroom probe")
+	}
+}
+
+func TestStartProxyRefusesLiveUnownedProxy(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	proxyTestBin(t)
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxySpawn = func(*exec.Cmd) error {
+		t.Fatal("live unowned proxy must not be replaced")
+		return nil
+	}
+	if err := StartProxy(); err == nil || !strings.Contains(err.Error(), "without tokless ownership") {
+		t.Fatalf("StartProxy error = %v, want unowned-proxy refusal", err)
 	}
 }
 

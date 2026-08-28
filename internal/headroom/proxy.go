@@ -2,6 +2,7 @@ package headroom
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,13 +16,13 @@ import (
 )
 
 const (
-	proxyReadyTimeout = 15 * time.Second
-	proxyStopTimeout  = 5 * time.Second
-	proxyProbeTimeout = 2 * time.Second
-	proxyPollInterval = 300 * time.Millisecond
+	proxyReadyTimeout    = 15 * time.Second
+	proxyStopTimeout     = 5 * time.Second
+	proxyProbeTimeout    = 2 * time.Second
+	proxyPollInterval    = 300 * time.Millisecond
 	proxyIdentityTimeout = 2 * time.Second
-	proxyStartLockWait = 30 * time.Second
-	proxyStartLockStale = 10 * time.Second
+	proxyStartLockWait   = 30 * time.Second
+	proxyStartLockStale  = 60 * time.Second
 )
 
 type proxyOwnership struct {
@@ -29,6 +30,13 @@ type proxyOwnership struct {
 	Executable string   `json:"executable"`
 	Args       []string `json:"args"`
 	Start      string   `json:"start_fingerprint"`
+}
+
+type proxySupervisedState struct {
+	PID         int      `json:"pid"`
+	Executable  string   `json:"executable"`
+	Args        []string `json:"args"`
+	ManagerArgs []string `json:"manager_args,omitempty"`
 }
 
 var (
@@ -123,6 +131,21 @@ func EnsureProxyUp() {
 	util.WithQuiet(func() { _ = StartProxy() })
 }
 
+// RunProxyForeground lets an OS service manager own the real Headroom process.
+// Runtime state supplies URLs when no interactive shell environment exists.
+func RunProxyForeground() error {
+	bin := ResolveHeadroomBin()
+	if bin == "" {
+		return fmt.Errorf("headroom binary not found — install headroom first (run `tokless`)")
+	}
+	port := ProxyPort()
+	args := proxyArgs(port)
+	if err := persistProxyRuntime(port); err != nil {
+		return fmt.Errorf("headroom proxy runtime record: %w", err)
+	}
+	return runHeadroomForeground(bin, args)
+}
+
 func proxyLiveZ(timeout time.Duration) bool {
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(ProxyURL() + "/livez")
@@ -144,6 +167,59 @@ func proxyFiles() (pidFile, logFile string) {
 	return filepath.Join(root, "proxy.pid"), filepath.Join(root, "proxy.log")
 }
 
+func proxySupervisedFile() string {
+	return filepath.Join(util.HeadroomPathsResolved().Root, "proxy.supervised.json")
+}
+
+func writeProxySupervisedState(pid int, bin string, args, managerArgs []string) error {
+	data, err := json.Marshal(proxySupervisedState{PID: pid, Executable: bin, Args: args, ManagerArgs: managerArgs})
+	if err != nil {
+		return err
+	}
+	return writeProxyFileAtomic(proxySupervisedFile(), data, 0o600)
+}
+
+func clearProxySupervisedState() error {
+	err := os.Remove(proxySupervisedFile())
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func clearProxyState(pidFile string) error {
+	var errs []error
+	if pidFile != "" {
+		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	if err := clearProxySupervisedState(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := clearProxyRuntime(); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func proxySupervisedArgsMatch(port int) bool {
+	raw, ok := util.ReadFileSafe(proxySupervisedFile())
+	if !ok {
+		return false
+	}
+	var state proxySupervisedState
+	if json.Unmarshal([]byte(raw), &state) != nil || state.PID <= 0 || state.Executable == "" {
+		return false
+	}
+	identity, err := proxyIdentity(state.PID)
+	checkArgs := state.Args
+	if len(state.ManagerArgs) > 0 {
+		checkArgs = state.ManagerArgs
+	}
+	return err == nil && identity.matches(state.Executable, checkArgs) && equalStrings(state.Args, proxyArgs(port))
+}
+
 // proxyStartLock returns the cross-process start-lock path. Multiple opencode
 // MCP workers may call StartProxy concurrently (separate OS processes); this
 // lock makes exactly one of them own the spawn+readiness critical section.
@@ -161,19 +237,34 @@ func acquireProxyStartLock(now func() time.Time) (func(), error) {
 	}
 	path := proxyStartLock()
 	deadline := now().Add(proxyStartLockWait)
+	token := fmt.Sprintf("%d-%d", os.Getpid(), now().UnixNano())
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			_, _ = f.Write([]byte(strconv.FormatInt(now().Unix(), 10)))
-			_ = f.Close()
-			return func() { _ = os.Remove(path) }, nil
+			if _, writeErr := f.Write([]byte(token)); writeErr != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return nil, writeErr
+			}
+			if closeErr := f.Close(); closeErr != nil {
+				_ = os.Remove(path)
+				return nil, closeErr
+			}
+			return func() {
+				if content, readErr := os.ReadFile(path); readErr == nil && string(content) == token {
+					_ = os.Remove(path)
+				}
+			}, nil
 		}
 		if !os.IsExist(err) {
 			return nil, err
 		}
 		if st, serr := os.Stat(path); serr == nil && now().Sub(st.ModTime()) > proxyStartLockStale {
-			_ = os.Remove(path)
-			continue
+			stale := fmt.Sprintf("%s.stale.%d", path, now().UnixNano())
+			if os.Rename(path, stale) == nil {
+				_ = os.Remove(stale)
+				continue
+			}
 		}
 		if !now().Before(deadline) {
 			return nil, fmt.Errorf("timed out waiting for another proxy start to finish")
@@ -188,10 +279,14 @@ func proxyArgsMatchRecorded(port int) bool {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
 	if !ok {
-		return true
+		return false
 	}
 	var record proxyOwnership
-	if err := json.Unmarshal([]byte(raw), &record); err != nil || len(record.Args) == 0 {
+	if err := json.Unmarshal([]byte(raw), &record); err != nil || record.PID <= 0 || record.Executable == "" || record.Start == "" || len(record.Args) == 0 {
+		return false
+	}
+	identity, err := proxyIdentity(record.PID)
+	if err != nil || !identity.matchesRecord(record) {
 		return false
 	}
 	want := proxyArgs(port)
@@ -202,32 +297,32 @@ func proxyArgsMatchRecorded(port int) bool {
 }
 
 func StartProxy() error {
-	cleanupLegacyRouteState()
-	port := ProxyPort()
-	args := proxyArgs(port)
-	// Fast path: already up with matching args. No lock needed — this is the
-	// common case (opencode MCP workers) and never touches the daemon.
-	if ProxyRunning() && proxyArgsMatchRecorded(port) {
-		if err := persistProxyRuntime(port); err != nil {
-			return fmt.Errorf("headroom proxy runtime record: %w", err)
-		}
-		util.L.Sub("headroom proxy already running on " + ProxyURL())
-		return nil
-	}
-	// Slow path: one caller owns spawn+readiness; concurrent workers either
-	// re-check after the lock or wait on a stale lock left by a crash.
 	release, err := acquireProxyStartLock(proxyNow)
 	if err != nil {
 		return fmt.Errorf("headroom proxy start: %w", err)
 	}
 	defer release()
+	cleanupLegacyRouteState()
+	port := ProxyPort()
+	args := proxyArgs(port)
+	pidFile, _ := proxyFiles()
+	stopRequested, err := proxyStopRequested()
+	if err != nil {
+		return fmt.Errorf("headroom proxy stop state: %w", err)
+	}
+	if stopRequested {
+		return fmt.Errorf("headroom proxy stop is in progress")
+	}
 	if ProxyRunning() {
-		if proxyArgsMatchRecorded(port) {
+		if proxyArgsMatchRecorded(port) || proxySupervisedArgsMatch(port) {
 			if err := persistProxyRuntime(port); err != nil {
 				return fmt.Errorf("headroom proxy runtime record: %w", err)
 			}
 			util.L.Sub("headroom proxy already running on " + ProxyURL())
 			return nil
+		}
+		if _, ok := util.ReadFileSafe(pidFile); !ok {
+			return fmt.Errorf("headroom proxy is running without tokless ownership — refusing to replace")
 		}
 		util.L.Sub("headroom proxy running with stale args — restarting (" + ProxyURL() + ")")
 		if err := stopHeadroomDaemon(); err != nil {
@@ -242,7 +337,7 @@ func StartProxy() error {
 	if !processIdentitySupported() {
 		return fmt.Errorf("headroom proxy lifecycle is unsupported on this platform: trustworthy process identity is unavailable")
 	}
-	pidFile, logFile := proxyFiles()
+	_, logFile := proxyFiles()
 	if err := util.EnsureDir(filepath.Dir(logFile)); err != nil {
 		return err
 	}
@@ -337,7 +432,7 @@ func stopHeadroomDaemon() error {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
 	if !ok {
-		return nil
+		return stopSupervisedDaemon()
 	}
 	var record proxyOwnership
 	if err := json.Unmarshal([]byte(raw), &record); err != nil || record.PID <= 0 || record.Executable == "" || len(record.Args) == 0 || record.Start == "" {
@@ -347,10 +442,9 @@ func stopHeadroomDaemon() error {
 	if err != nil {
 		if proxyGone(&os.Process{Pid: record.PID}) {
 			util.L.Sub("headroom proxy already stopped — removing stale ownership record")
-			if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("headroom proxy already stopped but stale record could not be removed: %w", err)
+			if err := clearProxyState(pidFile); err != nil {
+				return fmt.Errorf("headroom proxy already stopped but state could not be cleared: %w", err)
 			}
-			_ = clearProxyRuntime()
 			return nil
 		}
 		return fmt.Errorf("proxy pid %d identity could not be verified — refusing to stop", record.PID)
@@ -368,10 +462,9 @@ func stopHeadroomDaemon() error {
 	deadline := proxyNow().Add(proxyStopTimeout)
 	for proxyNow().Before(deadline) {
 		if proxyGone(proc) && !proxyLiveZProbe(proxyProbeTimeout) {
-			if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("headroom proxy stopped but ownership record could not be removed: %w", err)
+			if err := clearProxyState(pidFile); err != nil {
+				return fmt.Errorf("headroom proxy stopped but state could not be cleared: %w", err)
 			}
-			_ = clearProxyRuntime()
 			util.L.Ok("headroom proxy stopped")
 			return nil
 		}
@@ -380,9 +473,62 @@ func stopHeadroomDaemon() error {
 	return fmt.Errorf("headroom proxy did not stop (pid %d)", record.PID)
 }
 
+func stopSupervisedDaemon() error {
+	raw, ok := util.ReadFileSafe(proxySupervisedFile())
+	if !ok {
+		return nil
+	}
+	var state proxySupervisedState
+	if err := json.Unmarshal([]byte(raw), &state); err != nil || state.PID <= 0 || state.Executable == "" || len(state.Args) == 0 {
+		return fmt.Errorf("invalid supervised proxy record — refusing to stop")
+	}
+	identity, err := proxyIdentity(state.PID)
+	if err != nil || !identity.matches(state.Executable, state.Args) {
+		if proxyGone(&os.Process{Pid: state.PID}) {
+			if err := clearProxyState(""); err != nil {
+				return fmt.Errorf("supervised proxy stopped but state could not be cleared: %w", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("supervised proxy pid %d identity could not be verified — refusing to stop", state.PID)
+	}
+	proc, err := os.FindProcess(state.PID)
+	if err != nil {
+		return err
+	}
+	if err := proxyKill(proc); err != nil {
+		return fmt.Errorf("failed to stop supervised proxy pid %d: %w", state.PID, err)
+	}
+	deadline := proxyNow().Add(proxyStopTimeout)
+	for proxyNow().Before(deadline) {
+		if proxyGone(proc) && !proxyLiveZProbe(proxyProbeTimeout) {
+			if err := clearProxyState(""); err != nil {
+				return fmt.Errorf("supervised proxy stopped but state could not be cleared: %w", err)
+			}
+			return nil
+		}
+		proxySleep(proxyPollInterval)
+	}
+	return fmt.Errorf("supervised proxy did not stop (pid %d)", state.PID)
+}
+
 // StopProxy stops the Headroom daemon.
 func StopProxy() error {
-	err := stopHeadroomDaemon()
+	release, err := acquireProxyStartLock(proxyNow)
+	if err != nil {
+		return fmt.Errorf("headroom proxy stop: %w", err)
+	}
+	defer release()
+	if err := DisableProxyAutostart(); err != nil {
+		return fmt.Errorf("headroom proxy autostart stop: %w", err)
+	}
+	if err := requestProxyStop(); err != nil {
+		return fmt.Errorf("headroom proxy stop request: %w", err)
+	}
+	err = stopHeadroomDaemon()
+	if err == nil {
+		err = clearProxyStopRequest()
+	}
 	cleanupLegacyRouteState()
 	return err
 }
@@ -469,5 +615,5 @@ func rollbackProxy(proc *os.Process, pidFile string, cause error) error {
 	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("%w; rollback record removal: %v", cause, err)
 	}
-	return cause
+	return errors.Join(cause, clearProxySupervisedState())
 }
