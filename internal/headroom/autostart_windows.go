@@ -3,10 +3,13 @@
 package headroom
 
 import (
+	"encoding/csv"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +20,66 @@ import (
 // logon with the user's own environment.
 const proxyAutostartTask = "tokless-headroom-proxy"
 
+type scheduledTask struct {
+	Triggers struct {
+		Logon *struct{} `xml:"LogonTrigger"`
+	} `xml:"Triggers"`
+	Principals struct {
+		Principal struct {
+			RunLevel string `xml:"RunLevel"`
+		} `xml:"Principal"`
+	} `xml:"Principals"`
+	Actions struct {
+		Exec struct {
+			Command   string `xml:"Command"`
+			Arguments string `xml:"Arguments"`
+		} `xml:"Exec"`
+	} `xml:"Actions"`
+}
+
+func parseScheduledTask(raw []byte) (scheduledTask, bool) {
+	var task scheduledTask
+	if err := xml.Unmarshal(raw, &task); err != nil || task.Triggers.Logon == nil {
+		return scheduledTask{}, false
+	}
+	return task, true
+}
+
+func scheduledTaskManaged(raw []byte) bool {
+	task, ok := parseScheduledTask(raw)
+	command := filepath.Base(strings.Trim(strings.TrimSpace(task.Actions.Exec.Command), `"`))
+	return ok && (strings.EqualFold(command, "tokless") || strings.EqualFold(command, "tokless.exe")) &&
+		strings.TrimSpace(task.Actions.Exec.Arguments) == "__proxy-watch" &&
+		task.Principals.Principal.RunLevel == "LeastPrivilege"
+}
+
+func scheduledTaskMatches(raw []byte, bin string) bool {
+	task, ok := parseScheduledTask(raw)
+	if !ok || !scheduledTaskManaged(raw) {
+		return false
+	}
+	command := filepath.Clean(strings.TrimSpace(task.Actions.Exec.Command))
+	want := filepath.Clean(strings.TrimSpace(bin))
+	return command == want && strings.TrimSpace(task.Actions.Exec.Arguments) == "__proxy-watch" &&
+		task.Principals.Principal.RunLevel == "LeastPrivilege"
+}
+
+func scheduledTaskRunning() bool {
+	out, err := exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/fo", "CSV", "/nh").Output()
+	if err != nil {
+		return false
+	}
+	records, err := csv.NewReader(strings.NewReader(string(out))).ReadAll()
+	if err != nil || len(records) == 0 || len(records[0]) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(records[0][len(records[0])-1]), "Running")
+}
+
+func readScheduledTask() ([]byte, error) {
+	return exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").Output()
+}
+
 func EnableProxyAutostart() (err error) {
 	bin := util.ToklessAbsStrict()
 	if bin == "" {
@@ -25,16 +88,19 @@ func EnableProxyAutostart() (err error) {
 	if _, err := exec.LookPath("schtasks"); err != nil {
 		return fmt.Errorf("schtasks not found; keeping proxy running for this session")
 	}
+	if task, queryErr := readScheduledTask(); queryErr == nil && scheduledTaskMatches(task, bin) {
+		if scheduledTaskRunning() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+			return nil
+		}
+	}
 	var oldTask []byte
 	oldTaskRunning := false
-	if out, queryErr := exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").Output(); queryErr == nil {
-		if !strings.Contains(string(out), "__proxy-watch") {
+	if out, queryErr := readScheduledTask(); queryErr == nil {
+		if !scheduledTaskManaged(out) {
 			return fmt.Errorf("refusing to replace non-tokless scheduled task %s", proxyAutostartTask)
 		}
 		oldTask = out
-		if state, stateErr := exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/fo", "LIST", "/v").Output(); stateErr == nil {
-			oldTaskRunning = strings.Contains(string(state), "Running")
-		}
+		oldTaskRunning = scheduledTaskRunning()
 	}
 	if err := requestProxyStop(); err != nil {
 		return fmt.Errorf("proxy stop request: %w", err)
@@ -80,7 +146,7 @@ func EnableProxyAutostart() (err error) {
 	}
 	deadline := time.Now().Add(proxyReadyTimeout)
 	for time.Now().Before(deadline) {
-		if ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		if scheduledTaskRunning() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
 			started = true
 			return nil
 		}
@@ -119,8 +185,8 @@ func DisableProxyAutostart() error {
 	if _, err := exec.LookPath("schtasks"); err != nil {
 		return nil
 	}
-	out, err := exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").Output()
-	if err != nil || !strings.Contains(string(out), "__proxy-watch") {
+	out, err := readScheduledTask()
+	if err != nil || !scheduledTaskManaged(out) {
 		return nil
 	}
 	if err := exec.Command("schtasks", "/end", "/tn", proxyAutostartTask).Run(); err != nil {
@@ -133,9 +199,6 @@ func DisableProxyAutostart() error {
 }
 
 func ProxyAutostartEnabled() bool {
-	out, err := exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), "__proxy-watch")
+	out, err := readScheduledTask()
+	return err == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && scheduledTaskRunning() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort())
 }

@@ -75,6 +75,11 @@ func EnableProxyAutostart() (err error) {
 		return fmt.Errorf("systemd user bus unavailable; keeping proxy running for this session")
 	}
 	path := proxyAutostartUnitPath()
+	if cur, ok := util.ReadFileSafe(path); ok && cur == proxyAutostartUnitBody(bin) &&
+		systemdUserState("is-enabled") && systemdUserState("is-active") &&
+		ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		return nil
+	}
 	oldUnit, oldUnitExists := util.ReadFileSafe(path)
 	if raw, ok := util.ReadFileSafe(path); ok && !strings.Contains(raw, "tokless-managed") {
 		return fmt.Errorf("refusing to replace non-tokless systemd unit %s", path)
@@ -150,6 +155,13 @@ func EnableProxyAutostart() (err error) {
 	}
 	if err := exec.Command("systemctl", "--user", "enable", "--now", proxyAutostartUnit).Run(); err != nil {
 		return fmt.Errorf("enable %s: %w", proxyAutostartUnit, err)
+	}
+	deadline := proxyNow().Add(proxyReadyTimeout)
+	for proxyNow().Before(deadline) {
+		if ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+			break
+		}
+		proxySleep(proxyPollInterval)
 	}
 	if !ProxyRunning() || !proxySupervisedArgsMatch(ProxyPort()) {
 		return fmt.Errorf("%s enabled but proxy is not ready", proxyAutostartUnit)

@@ -36,6 +36,7 @@ type proxySupervisedState struct {
 	PID         int      `json:"pid"`
 	Executable  string   `json:"executable"`
 	Args        []string `json:"args"`
+	Start       string   `json:"start_fingerprint"`
 	ManagerArgs []string `json:"manager_args,omitempty"`
 }
 
@@ -180,8 +181,8 @@ func proxySupervisedFile() string {
 	return filepath.Join(util.HeadroomPathsResolved().Root, "proxy.supervised.json")
 }
 
-func writeProxySupervisedState(pid int, bin string, args, managerArgs []string) error {
-	data, err := json.Marshal(proxySupervisedState{PID: pid, Executable: bin, Args: args, ManagerArgs: managerArgs})
+func writeProxySupervisedState(pid int, bin string, args, managerArgs []string, start string) error {
+	data, err := json.Marshal(proxySupervisedState{PID: pid, Executable: bin, Args: args, Start: start, ManagerArgs: managerArgs})
 	if err != nil {
 		return err
 	}
@@ -218,7 +219,7 @@ func proxySupervisedArgsMatch(port int) bool {
 		return false
 	}
 	var state proxySupervisedState
-	if json.Unmarshal([]byte(raw), &state) != nil || state.PID <= 0 || state.Executable == "" {
+	if json.Unmarshal([]byte(raw), &state) != nil || state.PID <= 0 || state.Executable == "" || state.Start == "" {
 		return false
 	}
 	identity, err := proxyIdentity(state.PID)
@@ -226,7 +227,7 @@ func proxySupervisedArgsMatch(port int) bool {
 	if len(state.ManagerArgs) > 0 {
 		checkArgs = state.ManagerArgs
 	}
-	return err == nil && identity.matches(state.Executable, checkArgs) && equalStrings(state.Args, proxyArgs(port))
+	return err == nil && identity.Start == state.Start && identity.matches(state.Executable, checkArgs) && equalStrings(state.Args, proxyArgs(port))
 }
 
 // proxyStartLock returns the cross-process start-lock path. Multiple opencode
@@ -237,14 +238,27 @@ func proxyStartLock() string {
 	return filepath.Join(root, "proxy.start.lock")
 }
 
+func proxyLifecycleLock() string {
+	root := util.HeadroomPathsResolved().Root
+	return filepath.Join(root, "proxy.lifecycle.lock")
+}
+
 // acquireProxyStartLock takes the start lock, waiting (bounded) for a
 // concurrent caller to finish, and stealing the lock when it looks stale
 // (crashed holder). It returns a release func for the caller.
 func acquireProxyStartLock(now func() time.Time) (func(), error) {
+	return acquireProxyLock(proxyStartLock(), now)
+}
+
+// AcquireProxyLifecycleLock serializes proxy lifecycle commands.
+func AcquireProxyLifecycleLock() (func(), error) {
+	return acquireProxyLock(proxyLifecycleLock(), proxyNow)
+}
+
+func acquireProxyLock(path string, now func() time.Time) (func(), error) {
 	if err := util.EnsureDir(util.HeadroomPathsResolved().Root); err != nil {
 		return nil, err
 	}
-	path := proxyStartLock()
 	deadline := now().Add(proxyStartLockWait)
 	token := fmt.Sprintf("%d-%d", os.Getpid(), now().UnixNano())
 	for {
@@ -375,7 +389,8 @@ func StartProxy() error {
 	util.L.Sub("headroom proxy on " + ProxyURL() + " (semantic cache off; log: " + logFile + ")")
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
-		if proxyLiveZProbe(proxyProbeTimeout) {
+		current, identityErr := proxyIdentity(pid)
+		if proxyLiveZProbe(proxyProbeTimeout) && identityErr == nil && current.equal(identity) && current.matches(bin, args) {
 			if err := persistProxyRuntime(port); err != nil {
 				return rollbackProxy(cmd.Process, pidFile, fmt.Errorf("headroom proxy runtime record: %w", err))
 			}
@@ -449,6 +464,13 @@ func stopHeadroomDaemon() error {
 	}
 	identity, err := proxyIdentity(record.PID)
 	if err != nil {
+		if proxySupervisedArgsMatch(ProxyPort()) {
+			if err := stopSupervisedDaemon(); err != nil {
+				return err
+			}
+			_ = os.Remove(pidFile)
+			return nil
+		}
 		if proxyGone(&os.Process{Pid: record.PID}) {
 			util.L.Sub("headroom proxy already stopped — removing stale ownership record")
 			if err := clearProxyState(pidFile); err != nil {
@@ -459,6 +481,13 @@ func stopHeadroomDaemon() error {
 		return fmt.Errorf("proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
 	if !identity.matchesRecord(record) {
+		if proxySupervisedArgsMatch(ProxyPort()) {
+			if err := stopSupervisedDaemon(); err != nil {
+				return err
+			}
+			_ = os.Remove(pidFile)
+			return nil
+		}
 		return fmt.Errorf("proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
 	proc, err := os.FindProcess(record.PID)
@@ -467,6 +496,9 @@ func stopHeadroomDaemon() error {
 	}
 	if err := proxyKill(proc); err != nil {
 		return fmt.Errorf("failed to stop headroom proxy pid %d: %w", record.PID, err)
+	}
+	if waitErr := proxyWait(proc); waitErr != nil && !errors.Is(waitErr, os.ErrProcessDone) {
+		util.L.Sub("headroom proxy wait: " + waitErr.Error())
 	}
 	deadline := proxyNow().Add(proxyStopTimeout)
 	for proxyNow().Before(deadline) {
@@ -507,6 +539,9 @@ func stopSupervisedDaemon() error {
 	}
 	if err := proxyKill(proc); err != nil {
 		return fmt.Errorf("failed to stop supervised proxy pid %d: %w", state.PID, err)
+	}
+	if waitErr := proxyWait(proc); waitErr != nil && !errors.Is(waitErr, os.ErrProcessDone) {
+		util.L.Sub("supervised headroom proxy wait: " + waitErr.Error())
 	}
 	deadline := proxyNow().Add(proxyStopTimeout)
 	for proxyNow().Before(deadline) {

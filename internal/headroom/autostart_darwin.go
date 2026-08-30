@@ -79,10 +79,14 @@ func EnableProxyAutostart() (err error) {
 	}
 	path := proxyAutostartPlistPath()
 	body := proxyAutostartPlistBody(bin)
-	oldPlist, oldPlistExists := util.ReadFileSafe(path)
 	if cur, ok := util.ReadFileSafe(path); ok && !strings.Contains(cur, "tokless-managed") {
 		return fmt.Errorf("refusing to replace non-tokless launch agent %s", path)
 	}
+	if cur, ok := util.ReadFileSafe(path); ok && cur == body &&
+		ProxyAutostartEnabled() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		return nil
+	}
+	oldPlist, oldPlistExists := util.ReadFileSafe(path)
 	if err := util.EnsureDir(filepath.Dir(proxyAutostartLogPath())); err != nil {
 		return err
 	}
@@ -143,6 +147,13 @@ func EnableProxyAutostart() (err error) {
 	}
 	if err := exec.Command("launchctl", "enable", domain()+"/"+proxyAutostartLabel).Run(); err != nil {
 		return fmt.Errorf("launchctl enable %s: %w", proxyAutostartLabel, err)
+	}
+	deadline := proxyNow().Add(proxyReadyTimeout)
+	for proxyNow().Before(deadline) {
+		if ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+			break
+		}
+		proxySleep(proxyPollInterval)
 	}
 	if !ProxyRunning() || !proxySupervisedArgsMatch(ProxyPort()) {
 		return fmt.Errorf("%s loaded but proxy is not ready", proxyAutostartLabel)

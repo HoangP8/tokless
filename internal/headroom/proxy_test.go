@@ -600,8 +600,8 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 	if _, ok := util.ReadFileSafe(pidFile); ok {
 		t.Fatal("ownership record remains after rollback")
 	}
-	if identityCalls != 1 {
-		t.Fatalf("proxyIdentity calls = %d, want 1", identityCalls)
+	if identityCalls != 2 {
+		t.Fatalf("proxyIdentity calls = %d, want 2 (launch and readiness identity checks)", identityCalls)
 	}
 }
 
@@ -611,9 +611,9 @@ func TestStartProxyReusesHeadroomProbe(t *testing.T) {
 	bin := proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return true }
 	proxyIdentity = func(pid int) (processIdentityInfo, error) {
-		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787)}, nil
+		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}, nil
 	}
-	if err := writeProxySupervisedState(os.Getpid(), bin, proxyArgs(8787), nil); err != nil {
+	if err := writeProxySupervisedState(os.Getpid(), bin, proxyArgs(8787), nil, "start"); err != nil {
 		t.Fatal(err)
 	}
 	spawned, wrote := false, false
@@ -724,7 +724,7 @@ func TestProxySupervisedStateRequiresMatchingProcess(t *testing.T) {
 	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
 	bin := proxyTestBin(t)
-	if err := writeProxySupervisedState(5357, bin, proxyArgs(8787), nil); err != nil {
+	if err := writeProxySupervisedState(5357, bin, proxyArgs(8787), nil, "start"); err != nil {
 		t.Fatal(err)
 	}
 	proxyIdentity = func(int) (processIdentityInfo, error) {
@@ -739,7 +739,7 @@ func TestStopSupervisedDaemonRefusesMismatchedProcess(t *testing.T) {
 	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
 	bin := proxyTestBin(t)
-	if err := writeProxySupervisedState(5358, bin, proxyArgs(8787), nil); err != nil {
+	if err := writeProxySupervisedState(5358, bin, proxyArgs(8787), nil, "start"); err != nil {
 		t.Fatal(err)
 	}
 	proxyIdentity = func(int) (processIdentityInfo, error) {
@@ -760,11 +760,11 @@ func TestStopSupervisedDaemonClearsStateAfterStop(t *testing.T) {
 	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
 	bin := proxyTestBin(t)
-	if err := writeProxySupervisedState(5359, bin, proxyArgs(8787), nil); err != nil {
+	if err := writeProxySupervisedState(5359, bin, proxyArgs(8787), nil, "start"); err != nil {
 		t.Fatal(err)
 	}
 	proxyIdentity = func(int) (processIdentityInfo, error) {
-		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787)}, nil
+		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}, nil
 	}
 	proxyKill = func(*os.Process) error { return nil }
 	proxyGone = func(*os.Process) bool { return true }

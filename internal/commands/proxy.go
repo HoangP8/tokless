@@ -68,6 +68,23 @@ var proxyRunning = headroompkg.ProxyRunning
 // RunProxyUp starts the headroom proxy daemon and points agents at it.
 func RunProxyUp(opts InitOptions) int {
 	cmdHeader("proxy up", "start the headroom HTTP proxy and point agents at it")
+	if opts.DryRun {
+		for _, id := range resolveProxyAgents(opts) {
+			if proxyInstructions(id) != nil {
+				continue
+			}
+			if agents.ProxyAgentApplicable(id) {
+				util.L.Raw("  " + util.C.Gray(id+": would wire to "+agents.ProxyEndpointFor(id)))
+			}
+		}
+		return 0
+	}
+	lifecycleRelease, err := headroompkg.AcquireProxyLifecycleLock()
+	if err != nil {
+		util.L.Err("proxy lifecycle lock: " + err.Error())
+		return 1
+	}
+	defer lifecycleRelease()
 	if headroompkg.ResolveHeadroomBin() == "" {
 		util.L.Err("headroom binary not found — run `tokless` first to install headroom")
 		return 1
@@ -77,10 +94,12 @@ func RunProxyUp(opts InitOptions) int {
 		util.L.Err(err.Error())
 		return 1
 	}
+	grokStarted := false
 	if hasGrokAgent(resolveProxyAgents(opts)) && agents.ProxyAgentApplicable("grok") {
 		if err := headroompkg.StartGrokOAuthProxy(); err != nil {
 			util.L.Sub("grok oauth proxy: " + err.Error())
 		} else {
+			grokStarted = true
 			util.L.Ok("grok oauth proxy on http://127.0.0.1:" + strconv.Itoa(util.GrokOAuthProxyPort()) + " (upstream cli-chat-proxy.grok.com)")
 		}
 	}
@@ -122,14 +141,12 @@ func RunProxyUp(opts InitOptions) int {
 			if err := stopProxy(); err != nil {
 				util.L.Sub("proxy rollback failed: " + err.Error())
 			}
+		}
+		if grokStarted {
 			if err := headroompkg.StopGrokOAuthProxy(); err != nil {
 				util.L.Sub("grok oauth proxy rollback: " + err.Error())
 			}
 		}
-	}
-	if failed > 0 {
-		rollback()
-		return 1
 	}
 	if err := enableProxyAutostart(); err != nil {
 		util.L.Sub("autostart: " + err.Error())
@@ -155,7 +172,7 @@ func RunProxyUp(opts InitOptions) int {
 	if hasGrokAgent(resolveProxyAgents(opts)) {
 		util.L.Raw("")
 		util.L.Raw("  " + util.C.Dim("Grok CLI OAuth: automatic — the grok launcher routes xAI traffic through the local proxy."))
-		util.L.Raw("  " + util.C.Dim("Grok session upstream: https://cli-chat-proxy.grok.com (dedicated grok proxy on port " + strconv.Itoa(util.GrokOAuthProxyPort()) + ")."))
+		util.L.Raw("  " + util.C.Dim("Grok session upstream: https://cli-chat-proxy.grok.com (dedicated grok proxy on port "+strconv.Itoa(util.GrokOAuthProxyPort())+")."))
 	}
 	return 0
 }
@@ -173,6 +190,16 @@ func hasGrokAgent(ids []string) bool {
 // complete agent set and every currently-wired config agent was unwired.
 func RunProxyDown(opts InitOptions) int {
 	cmdHeader("proxy down", "unwire agents and stop the headroom HTTP proxy")
+	if opts.DryRun {
+		util.L.Raw("  " + util.C.Gray("dry-run: no changes made"))
+		return 0
+	}
+	lifecycleRelease, err := headroompkg.AcquireProxyLifecycleLock()
+	if err != nil {
+		util.L.Err("proxy lifecycle lock: " + err.Error())
+		return 1
+	}
+	defer lifecycleRelease()
 	failed := 0
 	selected := opts.Agents != nil
 	wiredBefore := map[string]bool{}
@@ -260,9 +287,9 @@ func RunProxyStatus(opts InitOptions) int {
 	}
 	if headroompkg.GrokOAuthProxyRunning() {
 		if headroompkg.GrokOAuthProxyOwned() {
-			util.L.Raw("  " + statusOK("grok oauth proxy: running on http://127.0.0.1:" + strconv.Itoa(util.GrokOAuthProxyPort()) + " (upstream cli-chat-proxy.grok.com)"))
+			util.L.Raw("  " + statusOK("grok oauth proxy: running on http://127.0.0.1:"+strconv.Itoa(util.GrokOAuthProxyPort())+" (upstream cli-chat-proxy.grok.com)"))
 		} else {
-			util.L.Raw("  " + statusWarn("grok oauth proxy: unverified listener on http://127.0.0.1:" + strconv.Itoa(util.GrokOAuthProxyPort()) + " (not owned by tokless)"))
+			util.L.Raw("  " + statusWarn("grok oauth proxy: unverified listener on http://127.0.0.1:"+strconv.Itoa(util.GrokOAuthProxyPort())+" (not owned by tokless)"))
 		}
 	} else if agents.GrokProxyApplicable() {
 		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" grok oauth proxy: not running (grok CLI falls back to direct)"))

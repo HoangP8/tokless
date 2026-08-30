@@ -131,11 +131,12 @@ func proxyHelpText() string {
 		"  " + cy("tokless proxy down") + "     Unwire agents and stop the proxy daemon\n" +
 		"  " + cy("tokless proxy status") + "   Show daemon + per-agent wiring state\n\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agent <list>     Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity (default: all)\n" +
+		"  --agents <list>    Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity (default: all; --agent alias)\n" +
+		"  --dry-run          Show what would be wired without changing anything\n" +
 		"  --help             Show this help\n"
 }
 
-// runProxyCli dispatches `tokless proxy up|down|status [--agent ...]`.
+// runProxyCli dispatches proxy commands.
 func runProxyCli(argv []string) int {
 	p := parseArgs(argv)
 	if p.bools["verbose"] {
@@ -145,13 +146,20 @@ func runProxyCli(argv []string) int {
 		fmt.Println(proxyHelpText())
 		return 0
 	}
-	agentRaw, agentOK := p.flags["agent"]
+	agentRaw, agentOK := p.flags["agents"]
+	if !agentOK {
+		agentRaw, agentOK = p.flags["agent"]
+	}
 	agentList, err := parseList(agentRaw, agentOK, commands.ProxyAgentIDs())
 	if err != nil {
 		util.L.Err(err.Error())
 		return 2
 	}
-	opts := commands.InitOptions{Agents: agentList}
+	opts := commands.InitOptions{
+		Agents:  agentList,
+		DryRun:  p.bools["dry-run"] || p.bools["dryrun"],
+		Verbose: p.bools["verbose"],
+	}
 	switch p.cmd {
 	case "up":
 		return commands.RunProxyUp(opts)
