@@ -664,6 +664,11 @@ func ConfigureGrokProxy() (bool, string) {
 	}); err != nil {
 		util.L.Err("grok proxy lock failed: " + err.Error())
 	}
+	if shimChanged, err := InstallGrokShim(); err != nil {
+		util.L.Err(err.Error())
+	} else if shimChanged {
+		changed = true
+	}
 	return changed, file
 }
 
@@ -674,6 +679,15 @@ func configureGrokProxyLocked() (bool, string) {
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if !ok {
 		return false, grokConfigFile()
+	}
+	if next := stripGrokBuildBlocks(raw); next != raw {
+		if err := util.WriteFile(grokConfigFile(), next); err != nil {
+			return false, grokConfigFile()
+		}
+		raw = next
+	}
+	if len(grokLocalBYOK(raw)) == 0 && len(loadGrokStash()) == 0 {
+		return true, grokConfigFile()
 	}
 	stash := loadGrokStash()
 	stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
@@ -749,6 +763,9 @@ func RemoveGrokProxy() bool {
 	}); err != nil {
 		util.L.Err("grok proxy lock failed: " + err.Error())
 	}
+	if RemoveGrokShim() {
+		removed = true
+	}
 	return removed
 }
 
@@ -759,6 +776,9 @@ func removeGrokProxyLocked() bool {
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if !ok {
 		return false
+	}
+	if len(loadGrokStash()) == 0 {
+		return removeGrokBuildProxyLocked()
 	}
 	removed := false
 	original := raw
@@ -810,6 +830,9 @@ func removeGrokProxyLocked() bool {
 }
 
 func GrokProxyWired() bool {
+	if GrokShimWired() {
+		return true
+	}
 	stash := loadGrokStash()
 	if len(stash) == 0 {
 		return false
@@ -856,5 +879,11 @@ func detectGrokProxy(cap ProxyCapability) ProxyDetection {
 	if len(unwired) > 0 {
 		return proxyDetection(cap.ID, "BYOK providers found but not routed — rerun init", ProxyStateUnconfigured)
 	}
-	return proxyDetection(cap.ID, "no BYOK model providers configured", ProxyStateUnconfigured)
+	if GrokShimWired() {
+		return proxyDetection(cap.ID, "OAuth grok launcher installed", ProxyStateManaged)
+	}
+	if strings.Contains(raw, grokBuildMarkerStart) || util.HasBlock(raw, "model.grok-build") {
+		return proxyDetection(cap.ID, "[model.grok-build] legacy marker present — rerun init to convert to launcher", ProxyStateUnconfigured)
+	}
+	return proxyDetection(cap.ID, "no BYOK model providers configured — run `tokless init --agents grok`", ProxyStateUnconfigured)
 }

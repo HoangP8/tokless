@@ -128,6 +128,15 @@ func ProxyRunning() bool { return proxyLiveZProbe(proxyProbeTimeout) }
 // Reloads the BYOK route table so a warm daemon still matches current keys.
 // Quiet so hook/MCP stdout (JSON protocols) stays clean.
 func EnsureProxyUp() {
+	saved := os.Stdout
+	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err == nil {
+		os.Stdout = devnull
+		defer func() {
+			os.Stdout = saved
+			_ = devnull.Close()
+		}()
+	}
 	util.WithQuiet(func() { _ = StartProxy() })
 }
 

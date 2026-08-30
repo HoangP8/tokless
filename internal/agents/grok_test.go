@@ -384,8 +384,8 @@ func TestIndentedChildHeaderKeysHandled(t *testing.T) {
 
 func TestDetectStatesOAuthOnlyAndStale(t *testing.T) {
 	grokSeedConfig(t, "[models]\ndefault = \"grok-4.6\"\n")
-	if ProxyAgentApplicable("grok") {
-		t.Fatal("oauth-only config must not be applicable")
+	if !ProxyAgentApplicable("grok") {
+		t.Fatal("oauth-only config must stay applicable for marker wiring")
 	}
 	d := detectGrokProxy(ProxyCapabilities()["grok"])
 	if d.State != ProxyStateUnconfigured {

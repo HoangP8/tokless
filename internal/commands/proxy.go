@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"strconv"
+
 	"github.com/HoangP8/tokless/internal/agents"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
@@ -75,6 +77,13 @@ func RunProxyUp(opts InitOptions) int {
 		util.L.Err(err.Error())
 		return 1
 	}
+	if hasGrokAgent(resolveProxyAgents(opts)) && agents.ProxyAgentApplicable("grok") {
+		if err := headroompkg.StartGrokOAuthProxy(); err != nil {
+			util.L.Sub("grok oauth proxy: " + err.Error())
+		} else {
+			util.L.Ok("grok oauth proxy on http://127.0.0.1:" + strconv.Itoa(util.GrokOAuthProxyPort()) + " (upstream cli-chat-proxy.grok.com)")
+		}
+	}
 	wired, failed := 0, 0
 	configured := make([]string, 0)
 	agentsBefore := make(map[string]bool)
@@ -113,6 +122,9 @@ func RunProxyUp(opts InitOptions) int {
 			if err := stopProxy(); err != nil {
 				util.L.Sub("proxy rollback failed: " + err.Error())
 			}
+			if err := headroompkg.StopGrokOAuthProxy(); err != nil {
+				util.L.Sub("grok oauth proxy rollback: " + err.Error())
+			}
 		}
 	}
 	if failed > 0 {
@@ -140,7 +152,21 @@ func RunProxyUp(opts InitOptions) int {
 	if wired == 0 {
 		util.L.Raw("  " + util.C.Gray("No agents wired."))
 	}
+	if hasGrokAgent(resolveProxyAgents(opts)) {
+		util.L.Raw("")
+		util.L.Raw("  " + util.C.Dim("Grok CLI OAuth: automatic — the grok launcher routes xAI traffic through the local proxy."))
+		util.L.Raw("  " + util.C.Dim("Grok session upstream: https://cli-chat-proxy.grok.com (dedicated grok proxy on port " + strconv.Itoa(util.GrokOAuthProxyPort()) + ")."))
+	}
 	return 0
+}
+
+func hasGrokAgent(ids []string) bool {
+	for _, id := range ids {
+		if id == "grok" {
+			return true
+		}
+	}
+	return false
 }
 
 // RunProxyDown unwires agents, then stops the daemon when operating on the
@@ -198,7 +224,13 @@ func RunProxyDown(opts InitOptions) int {
 			util.L.Sub("autostart restore: " + restoreErr.Error())
 		}
 		restoreProxyAgents(wiredBefore)
+		if err := headroompkg.StopGrokOAuthProxy(); err != nil {
+			util.L.Sub("grok oauth proxy: " + err.Error())
+		}
 		return 1
+	}
+	if err := headroompkg.StopGrokOAuthProxy(); err != nil {
+		util.L.Sub("grok oauth proxy: " + err.Error())
 	}
 	util.L.Raw("")
 	return 0
@@ -225,6 +257,15 @@ func RunProxyStatus(opts InitOptions) int {
 		util.L.Raw("  " + statusOK("autostart: user service enabled"))
 	} else {
 		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" autostart: off (run proxy up once)"))
+	}
+	if headroompkg.GrokOAuthProxyRunning() {
+		if headroompkg.GrokOAuthProxyOwned() {
+			util.L.Raw("  " + statusOK("grok oauth proxy: running on http://127.0.0.1:" + strconv.Itoa(util.GrokOAuthProxyPort()) + " (upstream cli-chat-proxy.grok.com)"))
+		} else {
+			util.L.Raw("  " + statusWarn("grok oauth proxy: unverified listener on http://127.0.0.1:" + strconv.Itoa(util.GrokOAuthProxyPort()) + " (not owned by tokless)"))
+		}
+	} else if agents.GrokProxyApplicable() {
+		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" grok oauth proxy: not running (grok CLI falls back to direct)"))
 	}
 	for _, id := range resolveProxyAgents(opts) {
 		detection := agents.DetectProxy(id)

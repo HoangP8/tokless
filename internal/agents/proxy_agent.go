@@ -1,6 +1,8 @@
 package agents
 
-import "github.com/HoangP8/tokless/internal/util"
+import (
+	"os"
+)
 
 // ProxyAgentSpec is static metadata plus wire-side function references for one
 // agent's headroom proxy integration.
@@ -37,13 +39,13 @@ func proxySpecFor(id string) (ProxyAgentSpec, bool) {
 // tokless to extend; false means wire attempts are skipped, never forced.
 func ProxyAgentApplicable(id string) bool {
 	if id == "grok" {
-		if !GrokProxyApplicable() {
-			return false
-		}
-		if raw, ok := util.ReadFileSafe(grokConfigFile()); ok && len(grokLocalBYOK(raw)) > 0 {
+		if _, err := os.Stat(grokConfigFile()); err == nil {
 			return true
 		}
-		return len(loadGrokStash()) > 0
+		if _, err := os.Stat(grokBinFile()); err == nil {
+			return true
+		}
+		return false
 	}
 	return true
 }
