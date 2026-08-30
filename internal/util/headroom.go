@@ -1,8 +1,11 @@
 package util
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // HeadroomPaths contains only directories owned by Tokless.
@@ -54,4 +57,47 @@ func McpSpawnFor(toolID string) McpSpawn {
 func HeadroomInstalled() bool {
 	info, err := os.Stat(HeadroomBin())
 	return err == nil && !info.IsDir()
+}
+
+// HeadroomInstalledVersion returns the installed Headroom version.
+func HeadroomInstalledVersion() *string {
+	if v := headroomDistInfoVersion(); v != nil {
+		return v
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res := Run(HeadroomBin(), []string{"--version"}, RunOptions{Capture: true, Ctx: ctx})
+	if res.Code != 0 {
+		return nil
+	}
+	_, version, ok := strings.Cut(strings.TrimSpace(res.Stdout), "version ")
+	if !ok || version == "" {
+		return nil
+	}
+	return &version
+}
+
+// headroomDistInfoVersion returns the highest installed dist-info version.
+func headroomDistInfoVersion() *string {
+	p := HeadroomPathsResolved()
+	roots := []string{
+		filepath.Join(p.Tools, "headroom-ai", "lib", "python*", "site-packages"),
+		filepath.Join(p.Tools, "headroom-ai", "Lib", "site-packages"),
+	}
+	var best *string
+	for _, root := range roots {
+		matches, _ := filepath.Glob(filepath.Join(root, "headroom_ai-*.dist-info"))
+		for _, m := range matches {
+			base := filepath.Base(m)
+			name := strings.TrimSuffix(strings.TrimPrefix(base, "headroom_ai-"), ".dist-info")
+			if name == "" {
+				continue
+			}
+			if best == nil || SemverCompare(&name, best) > 0 {
+				v := name
+				best = &v
+			}
+		}
+	}
+	return best
 }

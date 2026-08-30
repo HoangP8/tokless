@@ -21,6 +21,7 @@ const (
 	ChannelNpm    Channel = "npm"
 	ChannelGitHub Channel = "github"
 	ChannelCargo  Channel = "cargo"
+	ChannelUV     Channel = "uv"
 	ChannelBinary Channel = "binary"
 )
 

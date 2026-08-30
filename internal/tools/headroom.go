@@ -76,7 +76,7 @@ func headroomVerify(agent string) bool {
 var headroom = &core.ToolManifest{
 	ID: "headroom", Label: "Headroom", Description: "On-demand token compression proxy for large, self-contained text.",
 	Homepage: "https://github.com/headroomlabs-ai/headroom", InstallHint: "Tokless-managed uv tool: headroom-ai[proxy] (Python 3.13).",
-	Channel: core.ChannelBinary, NotTrackable: true, Install: headroompkg.EnsureInstalled,
+	Channel: core.ChannelUV, Install: headroompkg.EnsureInstalled,
 	WireFor: map[string]core.AgentFn{}, UnwireFor: map[string]core.AgentFn{}, VerifyFor: map[string]core.VerifyFn{},
 }
 

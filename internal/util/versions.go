@@ -90,6 +90,18 @@ func fetchJSON(u string, out any) bool {
 
 func strp(s string) *string { return &s }
 
+func pypiLatest(pkg string) *string {
+	var data struct {
+		Info struct {
+			Version string `json:"version"`
+		} `json:"info"`
+	}
+	if !fetchJSON("https://pypi.org/pypi/"+url.QueryEscape(pkg)+"/json", &data) {
+		return nil
+	}
+	return strp(data.Info.Version)
+}
+
 func npmLatest(pkg string) *string {
 	// Primary: ask npm itself, so the user's registry/mirror/proxy/auth from
 	// .npmrc are honored (a hardcoded npmjs.org GET ignores all of that and
@@ -244,7 +256,7 @@ func gatherVersions(force bool) map[string]VersionInfo {
 			"rtk":          {Installed: strp("0.43.0"), Latest: strp("0.43.0"), Channel: "github", Present: false},
 			"codegraph":    {Installed: nil, Latest: strp("1.1.6"), Channel: "npm", Present: false},
 			"context-mode": {Installed: nil, Latest: strp("1.0.169"), Channel: "npm", Present: false},
-			"headroom":     {Channel: "uv", Present: HeadroomInstalled()},
+			"headroom":     {Installed: strp("0.35.0"), Channel: "uv", Present: HeadroomInstalled()},
 			"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm", Present: false},
 		}
 	}
@@ -254,7 +266,7 @@ func gatherVersions(force bool) map[string]VersionInfo {
 	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github", Present: rtkInstalledVersion() != nil}
 	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm", Present: npmInstalledVersion("@colbymchenry/codegraph") != nil}
 	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm", Present: npmInstalledVersion("context-mode") != nil}
-	out["headroom"] = VersionInfo{Channel: "uv", Present: HeadroomInstalled()}
+	out["headroom"] = VersionInfo{Installed: HeadroomInstalledVersion(), Latest: latest["headroom"], Channel: "uv", Present: HeadroomInstalled()}
 	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm", Present: npmInstalledVersion("tokless") != nil}
 	return out
 }
@@ -273,6 +285,8 @@ func InstalledVersionFor(id string) *string {
 		return npmInstalledVersion("@colbymchenry/codegraph")
 	case "context-mode":
 		return npmInstalledVersion("context-mode")
+	case "headroom":
+		return HeadroomInstalledVersion()
 	case "tokless":
 		return npmInstalledVersion("tokless")
 	}
@@ -316,7 +330,7 @@ func npmPkgDir(pkg string) string {
 	return ""
 }
 
-var toolIDs = []string{"rtk", "codegraph", "context-mode", "tokless"}
+var toolIDs = []string{"rtk", "codegraph", "context-mode", "tokless", "headroom"}
 
 var latestFetcher = fetchLatestFor
 
@@ -331,6 +345,8 @@ func fetchLatestFor(id string) *string {
 		return npmLatest("context-mode")
 	case "tokless":
 		return npmLatest("tokless")
+	case "headroom":
+		return pypiLatest("headroom-ai")
 	}
 	return nil
 }
