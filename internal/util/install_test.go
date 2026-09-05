@@ -14,6 +14,18 @@ func sandboxHome(t *testing.T) string {
 	if IsWin {
 		t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	}
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "tokless"
+	if IsWin {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte("test executable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Cleanup(func() { SetHomeOverride("") })
 	_ = os.Remove(InstallMarkerPath())
 	return home

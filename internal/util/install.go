@@ -58,13 +58,23 @@ func WriteInstallMarker(method, path, version string) error {
 // RefreshInstallMarker updates version/path after self-update; keeps prior method if any.
 func RefreshInstallMarker(version string) {
 	method := "self-update"
+	path := ""
 	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
 		var m InstallRecord
 		if json.Unmarshal([]byte(raw), &m) == nil && m.Method != "" {
 			method = m.Method
 		}
+		if json.Unmarshal([]byte(raw), &m) == nil && stableExecutable(m.Path) {
+			path = m.Path
+		}
 	}
-	_ = WriteInstallMarker(method, ToklessAbs(), version)
+	if current := ToklessAbsStrict(); stableExecutable(current) {
+		path = current
+	}
+	if path == "" {
+		return
+	}
+	_ = WriteInstallMarker(method, path, version)
 }
 
 // InstallInfo returns install provenance. exact means marker path matches this binary.

@@ -1,10 +1,12 @@
 package util
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode"
 )
 
 var IsWin = runtime.GOOS == "windows"
@@ -60,6 +62,59 @@ func ToklessAbs() string {
 		return whichToklessOrBare()
 	}
 	return exe
+}
+
+// ToklessPersistedAbs resolves a stable executable for commands stored in
+// agent configuration.
+func ToklessPersistedAbs() string {
+	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
+		var marker InstallRecord
+		if json.Unmarshal([]byte(raw), &marker) == nil && stableExecutable(marker.Path) {
+			return marker.Path
+		}
+	}
+	known := []string{filepath.Join(Home(), ".local", "bin", "tokless"), "/usr/local/bin/tokless"}
+	if IsWin {
+		known = nil
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			known = append(known, filepath.Join(local, "Programs", "tokless", "tokless.exe"))
+		}
+	}
+	for _, path := range known {
+		if stableExecutable(path) {
+			return path
+		}
+	}
+	if exe := ToklessAbsStrict(); exe != "" && stableExecutable(exe) {
+		return exe
+	}
+	return "tokless"
+}
+
+func stableExecutable(path string) bool {
+	if path == "" || !filepath.IsAbs(path) || strings.IndexFunc(path, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) >= 0 {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if IsWin {
+		ext := strings.ToLower(filepath.Ext(path))
+		pathext := os.Getenv("PATHEXT")
+		if pathext == "" {
+			pathext = ".EXE;.CMD;.BAT;.COM"
+		}
+		for _, candidate := range strings.Split(pathext, ";") {
+			if strings.EqualFold(strings.TrimSpace(candidate), ext) {
+				return true
+			}
+		}
+		return false
+	}
+	return info.Mode()&0o111 != 0
 }
 
 // IsGoTestExecutable reports go test binaries and go-build cache paths.
@@ -169,7 +224,7 @@ func writeFileAtomic(p, content string, mode os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, p)
+	return replaceFile(tmpPath, p)
 }
 
 // WriteFileMode writes content, using mode for new files.
