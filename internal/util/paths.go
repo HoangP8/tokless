@@ -283,6 +283,10 @@ func OpenCodePathsResolved() OpenCodePaths {
 		filepath.Join(dir, "config.json"),
 	}
 	config := filepath.Join(dir, "opencode.jsonc")
+	if custom := os.Getenv("OPENCODE_CONFIG"); custom != "" {
+		config = custom
+		candidates = nil
+	}
 	for _, c := range candidates {
 		if Exists(c) {
 			config = c

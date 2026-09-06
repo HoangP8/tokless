@@ -42,6 +42,18 @@ func TestOpenCodeConfigDirPrecedence(t *testing.T) {
 	}
 }
 
+func TestOpenCodeConfigFileOverride(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(dir, "custom.jsonc")
+	t.Setenv("OPENCODE_CONFIG", config)
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(t.TempDir(), "ignored"))
+
+	paths := OpenCodePathsResolved()
+	if paths.Config != config {
+		t.Fatalf("OpenCode paths = %+v, want config %q", paths, config)
+	}
+}
+
 func TestClaudeConfigDirOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", tmp)
