@@ -10,6 +10,9 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+var setProxyRoutingEnabled = util.SetProxyRoutingEnabled
+var acquireProxyLifecycleLock = headroompkg.AcquireProxyLifecycleLock
+
 // headroomWired reports agents with an applicable config that tokless can wire.
 func headroomWired(id string) bool {
 	return agents.ProxyEndpointFor(id) != "" && agents.ProxyAgentApplicable(id)
