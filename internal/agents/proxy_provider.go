@@ -218,28 +218,7 @@ func saveProxyRouteStash(agent string, providers map[string]proxyRouteStashEntry
 		return err
 	}
 	path := proxyRouteStashPath(agent)
-	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err = f.Write(b); err != nil {
-		f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err = f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Chmod(path, 0o600)
+	return util.WriteFileAtomic(path, string(b), 0o600)
 }
 
 // loadProxyRouteStash is deprecated: it bypasses the lock.

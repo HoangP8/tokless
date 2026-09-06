@@ -2,6 +2,7 @@ package util
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -67,5 +68,72 @@ func TestHeadroomProxyRuntimeEnvOverridesPersisted(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
 	if port := HeadroomProxyPort(); port != 9123 {
 		t.Fatalf("env should override persisted state, got %d", port)
+	}
+}
+
+func TestHeadroomProxyRoutingPreferenceDefaultsOnAndPersists(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	if !ProxyRoutingEnabled() || ProxyRoutingPreferenceSet() {
+		t.Fatal("routing preference must default to enabled and unset")
+	}
+	if err := SetProxyRoutingEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if ProxyRoutingEnabled() || !ProxyRoutingPreferenceSet() {
+		t.Fatal("disabled routing preference was not persisted")
+	}
+	if err := SetProxyRoutingEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if !ProxyRoutingEnabled() {
+		t.Fatal("enabled routing preference was not persisted")
+	}
+}
+
+func TestHeadroomProxyRoutingPreferenceRejectsMalformedState(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	path := filepath.Join(HeadroomPathsResolved().Root, "proxy.preference")
+	if err := EnsureDir(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"", "true", "enabled\nextra", "disabled\nextra"} {
+		if err := WriteFile(path, state); err != nil {
+			t.Fatal(err)
+		}
+		if ProxyRoutingEnabled() {
+			t.Fatalf("malformed preference %q enabled routing", state)
+		}
+	}
+}
+
+func TestReadProxyRuntimeRejectsInvalidPorts(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	path := filepath.Join(HeadroomPathsResolved().Root, "proxy.runtime.json")
+	if err := EnsureDir(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	for _, port := range []int{0, -1, 65536} {
+		if err := WriteFile(path, `{"port":`+strconv.Itoa(port)+`}`); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := ReadProxyRuntime(); ok {
+			t.Fatalf("invalid port %d accepted", port)
+		}
+	}
+}
+
+func TestSaveProxyRuntimeRejectsInvalidPorts(t *testing.T) {
+	SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { SetHomeOverride("") })
+	for _, port := range []int{0, -1, 65536} {
+		if err := SaveHeadroomProxyRuntime(ProxyRuntime{Port: port}); err == nil {
+			t.Fatalf("invalid port %d accepted", port)
+		}
 	}
 }

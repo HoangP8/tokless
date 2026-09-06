@@ -128,6 +128,21 @@ func TestHeadroomRefusesDirectUserServer(t *testing.T) {
 	}
 }
 
+func TestHeadroomWireRollsBackWhenPreferencePersistenceFails(t *testing.T) {
+	setupHeadroomHome(t)
+	oldSetPreference := setProxyRoutingEnabled
+	setProxyRoutingEnabled = func(bool) error { return os.ErrPermission }
+	t.Cleanup(func() { setProxyRoutingEnabled = oldSetPreference })
+
+	ok, err := headroom.WireFor["claude"](core.RunOpts{})
+	if ok || err == nil {
+		t.Fatalf("wire = %v, %v; want preference failure", ok, err)
+	}
+	if agents.ClaudeProxyWired() {
+		t.Fatal("agent remained wired after preference persistence failure")
+	}
+}
+
 func TestHeadroomVerifierRejectsForeignEndpoint(t *testing.T) {
 	setupHeadroomHome(t)
 	if ok, err := headroom.WireFor["claude"](core.RunOpts{}); err != nil || !ok {

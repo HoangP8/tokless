@@ -140,7 +140,7 @@ func EnableProxyAutostart() (err error) {
 		return nil
 	}
 	if _, err := exec.LookPath("schtasks"); err != nil {
-		return fmt.Errorf("schtasks not found; keeping proxy running for this session")
+		return fmt.Errorf("%w: schtasks not found; keeping proxy running for this session", ErrProxyAutostartUnavailable)
 	}
 	if task, queryErr := readScheduledTask(); queryErr == nil && scheduledTaskMatches(task, bin) {
 		running, stateErr := scheduledTaskRunning()
@@ -307,7 +307,7 @@ func DisableProxyAutostart() error {
 		}
 		return fmt.Errorf("query %s: %w", proxyAutostartTask, err)
 	}
-	if !scheduledTaskMatches(out, util.ToklessAbsStrict()) {
+	if !scheduledTaskManaged(out) {
 		return nil
 	}
 	running, stateErr := scheduledTaskRunning()
@@ -328,4 +328,11 @@ func ProxyAutostartEnabled() bool {
 	out, err := readScheduledTask()
 	running, stateErr := scheduledTaskRunning()
 	return err == nil && stateErr == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime())
+}
+
+// ProxyAutostartConfigured reports whether Tokless owns a scheduled task,
+// regardless of whether it is currently running.
+func ProxyAutostartConfigured() bool {
+	out, err := readScheduledTask()
+	return err == nil && scheduledTaskMatches(out, util.ToklessAbsStrict())
 }

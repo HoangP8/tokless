@@ -564,6 +564,17 @@ func stopHeadroomDaemonForHandoff() error {
 	return stopHeadroomDaemonWithRuntime(false)
 }
 
+// StopProxyPreservingAutostart stops the daemon while retaining a managed
+// supervisor configuration for rollback to its prior inactive state.
+func StopProxyPreservingAutostart() error {
+	release, err := acquireProxyStartLock(proxyNow)
+	if err != nil {
+		return fmt.Errorf("headroom proxy rollback stop: %w", err)
+	}
+	defer release()
+	return stopHeadroomDaemonForHandoff()
+}
+
 func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 	pidFile, _ := proxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)

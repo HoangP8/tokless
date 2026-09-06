@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -24,16 +25,88 @@ func headroomWire(agent string) core.AgentFn {
 		if !headroomWired(agent) {
 			return true, nil
 		}
-		if !isTest() {
-			if err := headroompkg.StartProxy(); err != nil {
-				return false, err
+		if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
+			return true, nil
+		}
+		preferenceSet := util.ProxyRoutingPreferenceSet()
+		preferenceEnabled := util.ProxyRoutingEnabled()
+		runtimeBefore, runtimeWasSet := util.ReadProxyRuntime()
+		restoreRuntime := func() error {
+			if runtimeWasSet {
+				return util.SaveHeadroomProxyRuntime(runtimeBefore)
 			}
-			_ = headroompkg.EnableProxyAutostart()
+			return util.ClearHeadroomProxyRuntime()
+		}
+		wasRunning, autostartBefore := false, false
+		if !isTest() {
+			wasRunning = headroompkg.ProxyRunning()
+			autostartBefore = headroompkg.ProxyAutostartConfigured()
+			if err := headroompkg.StartProxy(); err != nil {
+				return false, errors.Join(err, restoreRuntime())
+			}
+			if !autostartBefore {
+				err := headroompkg.EnableProxyAutostart()
+				if err != nil && !errors.Is(err, headroompkg.ErrProxyAutostartUnavailable) {
+					if !wasRunning {
+						if stopErr := headroompkg.StopProxy(); stopErr != nil {
+							err = errors.Join(err, fmt.Errorf("proxy rollback: %w", stopErr))
+						}
+					}
+					return false, errors.Join(err, restoreRuntime())
+				}
+			}
+		}
+		wasWired := agents.ProxyAgentWired(agent)
+		rollback := func() error {
+			var rollbackErrs []error
+			if !wasWired && agents.ProxyAgentWired(agent) && !agents.RemoveProxyAgent(agent) {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("%s proxy wiring rollback failed", agent))
+			}
+			if !isTest() {
+				if !wasRunning {
+					stop := headroompkg.StopProxy
+					if autostartBefore {
+						stop = headroompkg.StopProxyPreservingAutostart
+					}
+					if err := stop(); err != nil {
+						rollbackErrs = append(rollbackErrs, fmt.Errorf("proxy rollback: %w", err))
+					}
+				} else if !autostartBefore {
+					if err := headroompkg.DisableProxyAutostart(); err != nil {
+						rollbackErrs = append(rollbackErrs, fmt.Errorf("autostart rollback: %w", err))
+					}
+					if err := headroompkg.StartProxy(); err != nil {
+						rollbackErrs = append(rollbackErrs, fmt.Errorf("proxy restart rollback: %w", err))
+					}
+				}
+			}
+			if !preferenceSet {
+				if err := util.ClearProxyRoutingPreference(); err != nil {
+					rollbackErrs = append(rollbackErrs, fmt.Errorf("proxy preference rollback: %w", err))
+				}
+			} else if err := util.SetProxyRoutingEnabled(preferenceEnabled); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("proxy preference rollback: %w", err))
+			}
+			if err := restoreRuntime(); err != nil {
+				rollbackErrs = append(rollbackErrs, fmt.Errorf("proxy runtime rollback: %w", err))
+			}
+			return errors.Join(rollbackErrs...)
 		}
 		if !agents.ConfigureProxyAgent(agent) {
-			return false, fmt.Errorf("%s proxy wiring not applied (differing existing config value, or write failed)", agent)
+			return false, errors.Join(
+				fmt.Errorf("%s proxy wiring not applied (differing existing config value, or write failed)", agent),
+				rollback(),
+			)
 		}
-		return headroomVerify(agent), nil
+		if !util.ProxyRoutingPreferenceSet() {
+			if err := setProxyRoutingEnabled(true); err != nil {
+				return false, errors.Join(fmt.Errorf("headroom proxy preference: %w", err), rollback())
+			}
+		}
+		if !headroomVerify(agent) {
+			return false, errors.Join(fmt.Errorf("%s proxy wiring verification failed", agent), rollback())
+		}
+		return true, nil
 	}
 }
 
@@ -61,6 +134,9 @@ func headroomUnwire(agent string) core.AgentFn {
 }
 
 func headroomVerify(agent string) bool {
+	if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
+		return true
+	}
 	if !isTest() && !util.HeadroomInstalled() {
 		return false
 	}

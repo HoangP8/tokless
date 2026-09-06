@@ -78,7 +78,7 @@ func EnableProxyAutostart() (err error) {
 		return nil
 	}
 	if _, err := exec.LookPath("launchctl"); err != nil {
-		return fmt.Errorf("launchctl not found; keeping proxy running for this session")
+		return fmt.Errorf("%w: launchctl not found; keeping proxy running for this session", ErrProxyAutostartUnavailable)
 	}
 	path := proxyAutostartPlistPath()
 	body := proxyAutostartPlistBody(bin)
@@ -94,9 +94,18 @@ func EnableProxyAutostart() (err error) {
 		return err
 	}
 	oldLoaded := false
+	oldEnabled := true
 	if oldPlistExists {
-		_, printErr := exec.Command("launchctl", "print", domain()+"/"+proxyAutostartLabel).Output()
-		oldLoaded = printErr == nil
+		output, printErr := exec.Command("launchctl", "print", domain()+"/"+proxyAutostartLabel).CombinedOutput()
+		if printErr == nil {
+			oldLoaded = true
+		} else if !launchctlServiceNotFound(output) {
+			return fmt.Errorf("query %s: %w", proxyAutostartLabel, printErr)
+		}
+		oldEnabled, err = launchctlServiceEnabled()
+		if err != nil {
+			return err
+		}
 	}
 	proxyWasRunning := ProxyRunning() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime()))
 	mutated := false
@@ -122,7 +131,15 @@ func EnableProxyAutostart() (err error) {
 			if rollbackErr := exec.Command("launchctl", "bootstrap", domain(), path).Run(); rollbackErr != nil {
 				rollbackErrs = append(rollbackErrs, rollbackErr)
 			}
-			if rollbackErr := exec.Command("launchctl", "enable", domain()+"/"+proxyAutostartLabel).Run(); rollbackErr != nil {
+			action := "disable"
+			if oldEnabled {
+				action = "enable"
+			}
+			if rollbackErr := exec.Command("launchctl", action, domain()+"/"+proxyAutostartLabel).Run(); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr)
+			}
+		} else if !oldEnabled {
+			if rollbackErr := exec.Command("launchctl", "disable", domain()+"/"+proxyAutostartLabel).Run(); rollbackErr != nil {
 				rollbackErrs = append(rollbackErrs, rollbackErr)
 			}
 		}
@@ -167,6 +184,15 @@ func EnableProxyAutostart() (err error) {
 	}
 	committed = true
 	return nil
+}
+
+func launchctlServiceEnabled() (bool, error) {
+	out, err := exec.Command("launchctl", "print-disabled", domain()).CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("query disabled launch agents: %w", err)
+	}
+	needle := `"` + proxyAutostartLabel + `" => true`
+	return !strings.Contains(string(out), needle), nil
 }
 
 func domain() string {
@@ -231,4 +257,12 @@ func ProxyAutostartEnabled() bool {
 	}
 	s := string(out)
 	return strings.Contains(s, "state = \"running\"")
+}
+
+// ProxyAutostartConfigured reports whether Tokless owns a persistent launch
+// agent, regardless of whether launchd currently has it loaded.
+func ProxyAutostartConfigured() bool {
+	raw, ok := util.ReadFileSafe(proxyAutostartPlistPath())
+	bin := util.ToklessAbs()
+	return ok && bin != "" && !util.IsGoTestExecutable(bin) && raw == proxyAutostartPlistBody(bin)
 }

@@ -2,6 +2,7 @@ package util
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +27,10 @@ func headroomProxyRuntimeFile() string {
 	return filepath.Join(HeadroomPathsResolved().Root, "proxy.runtime.json")
 }
 
+func headroomProxyPreferenceFile() string {
+	return filepath.Join(HeadroomPathsResolved().Root, "proxy.preference")
+}
+
 // ReadProxyRuntime returns the persisted proxy runtime, if any.
 func ReadProxyRuntime() (ProxyRuntime, bool) {
 	raw, ok := ReadFileSafe(headroomProxyRuntimeFile())
@@ -33,7 +38,7 @@ func ReadProxyRuntime() (ProxyRuntime, bool) {
 		return ProxyRuntime{}, false
 	}
 	var st ProxyRuntime
-	if err := json.Unmarshal([]byte(raw), &st); err != nil || st.Port <= 0 {
+	if err := json.Unmarshal([]byte(raw), &st); err != nil || st.Port <= 0 || st.Port > 65535 {
 		return ProxyRuntime{}, false
 	}
 	return st, true
@@ -42,8 +47,8 @@ func ReadProxyRuntime() (ProxyRuntime, bool) {
 // SaveHeadroomProxyRuntime persists the effective proxy runtime for future
 // `tokless proxy` invocations.
 func SaveHeadroomProxyRuntime(st ProxyRuntime) error {
-	if st.Port <= 0 {
-		return nil
+	if st.Port <= 0 || st.Port > 65535 {
+		return fmt.Errorf("invalid headroom proxy port %d", st.Port)
 	}
 	b, err := json.Marshal(st)
 	if err != nil {
@@ -55,6 +60,49 @@ func SaveHeadroomProxyRuntime(st ProxyRuntime) error {
 // ClearHeadroomProxyRuntime removes the persisted runtime (daemon stopped).
 func ClearHeadroomProxyRuntime() error {
 	if err := os.Remove(headroomProxyRuntimeFile()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// ProxyRoutingEnabled reports whether automatic proxy startup is allowed.
+// Missing preference keeps install's default-on behavior.
+func ProxyRoutingEnabled() bool {
+	raw, err := os.ReadFile(headroomProxyPreferenceFile())
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSpace(string(raw)) {
+	case "enabled":
+		return true
+	case "disabled":
+		return false
+	default:
+		return false
+	}
+}
+
+// ProxyRoutingPreferenceSet reports whether user has made an explicit choice.
+func ProxyRoutingPreferenceSet() bool {
+	_, err := os.Stat(headroomProxyPreferenceFile())
+	return err == nil
+}
+
+// SetProxyRoutingEnabled persists the user's automatic proxy startup choice.
+func SetProxyRoutingEnabled(enabled bool) error {
+	state := "disabled\n"
+	if enabled {
+		state = "enabled\n"
+	}
+	return WriteFileAtomic(headroomProxyPreferenceFile(), state, 0o600)
+}
+
+// ClearProxyRoutingPreference restores install's default-on behavior.
+func ClearProxyRoutingPreference() error {
+	if err := os.Remove(headroomProxyPreferenceFile()); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

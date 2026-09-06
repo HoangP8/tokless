@@ -69,21 +69,29 @@ func EnableProxyAutostart() (err error) {
 	}
 	if _, err := exec.LookPath("systemctl"); err != nil {
 		if isWSL() {
-			return fmt.Errorf("WSL proxy autostart requires systemd user services; enable systemd in /etc/wsl.conf")
+			return fmt.Errorf("%w: WSL proxy autostart requires systemd user services; enable systemd in /etc/wsl.conf", ErrProxyAutostartUnavailable)
 		}
-		return fmt.Errorf("systemctl not found; keeping proxy running for this session")
+		return fmt.Errorf("%w: systemctl not found; keeping proxy running for this session", ErrProxyAutostartUnavailable)
 	}
 	if _, err := exec.Command("systemctl", "--user", "show-environment").Output(); err != nil {
 		if isWSL() {
-			return fmt.Errorf("WSL proxy autostart requires a running systemd user bus; enable systemd in /etc/wsl.conf")
+			return fmt.Errorf("%w: WSL proxy autostart requires a running systemd user bus; enable systemd in /etc/wsl.conf", ErrProxyAutostartUnavailable)
 		}
-		return fmt.Errorf("systemd user bus unavailable; keeping proxy running for this session")
+		return fmt.Errorf("%w: systemd user bus unavailable; keeping proxy running for this session", ErrProxyAutostartUnavailable)
 	}
 	path := proxyAutostartUnitPath()
-	if cur, ok := util.ReadFileSafe(path); ok && cur == proxyAutostartUnitBody(bin) &&
-		systemdUserState("is-enabled") && systemdUserState("is-active") &&
-		ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
-		return nil
+	if cur, ok := util.ReadFileSafe(path); ok && cur == proxyAutostartUnitBody(bin) {
+		enabled, stateErr := systemdUserState("is-enabled")
+		if stateErr != nil {
+			return fmt.Errorf("query enabled state of %s: %w", proxyAutostartUnit, stateErr)
+		}
+		active, stateErr := systemdUserState("is-active")
+		if stateErr != nil {
+			return fmt.Errorf("query active state of %s: %w", proxyAutostartUnit, stateErr)
+		}
+		if enabled && active && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
+			return nil
+		}
 	}
 	oldUnit, oldUnitExists := util.ReadFileSafe(path)
 	if raw, ok := util.ReadFileSafe(path); ok && !strings.Contains(raw, "tokless-managed") {
@@ -91,16 +99,25 @@ func EnableProxyAutostart() (err error) {
 	}
 	user := os.Getenv("USER")
 	if user == "" {
-		return fmt.Errorf("cannot enable linger: USER is not set")
+		return fmt.Errorf("%w: cannot enable linger: USER is not set", ErrProxyAutostartUnavailable)
 	}
 	if _, err := exec.LookPath("loginctl"); err != nil {
-		return fmt.Errorf("loginctl not found; cannot enable proxy linger")
+		return fmt.Errorf("%w: loginctl not found; cannot enable proxy linger", ErrProxyAutostartUnavailable)
 	}
-	lingerWasEnabled := loginctlLinger(user)
+	lingerWasEnabled, err := loginctlLinger(user)
+	if err != nil {
+		return fmt.Errorf("query user linger: %w", err)
+	}
 	oldEnabled, oldActive := false, false
 	if oldUnitExists {
-		oldEnabled = systemdUserState("is-enabled")
-		oldActive = systemdUserState("is-active")
+		oldEnabled, err = systemdUserState("is-enabled")
+		if err != nil {
+			return fmt.Errorf("query enabled state of %s: %w", proxyAutostartUnit, err)
+		}
+		oldActive, err = systemdUserState("is-active")
+		if err != nil {
+			return fmt.Errorf("query active state of %s: %w", proxyAutostartUnit, err)
+		}
 	}
 	proxyWasRunning := ProxyRunning() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime()))
 	mutated := false
@@ -189,14 +206,42 @@ func EnableProxyAutostart() (err error) {
 	return nil
 }
 
-func loginctlLinger(user string) bool {
+func loginctlLinger(user string) (bool, error) {
 	out, err := exec.Command("loginctl", "show-user", user, "-p", "Linger", "--value").Output()
-	return err == nil && strings.TrimSpace(string(out)) == "yes"
+	if err != nil {
+		return false, err
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "yes":
+		return true, nil
+	case "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected linger state %q", strings.TrimSpace(string(out)))
+	}
 }
 
-func systemdUserState(action string) bool {
-	out, err := exec.Command("systemctl", "--user", action, proxyAutostartUnit).Output()
-	return err == nil && strings.TrimSpace(string(out)) == map[string]string{"is-enabled": "enabled", "is-active": "active"}[action]
+func systemdUserState(action string) (bool, error) {
+	out, err := exec.Command("systemctl", "--user", action, proxyAutostartUnit).CombinedOutput()
+	state := strings.TrimSpace(string(out))
+	if i := strings.IndexByte(state, '\n'); i >= 0 {
+		state = state[:i]
+	}
+	if action == "is-enabled" {
+		switch state {
+		case "enabled", "static", "indirect", "disabled", "masked", "generated", "transient", "bad-setting", "alias", "not-found":
+			return state == "enabled" || state == "static" || state == "indirect", nil
+		}
+	} else if action == "is-active" {
+		switch state {
+		case "active", "inactive", "failed", "activating", "deactivating", "maintenance", "unknown":
+			return state == "active", nil
+		}
+	}
+	if err != nil {
+		return false, fmt.Errorf("systemctl %s: %w (%s)", action, err, state)
+	}
+	return false, fmt.Errorf("systemctl %s returned unknown state %q", action, state)
 }
 
 func DisableProxyAutostart() error {
@@ -208,7 +253,14 @@ func DisableProxyAutostart() error {
 	if !ok || !strings.Contains(raw, "tokless-managed") {
 		return nil
 	}
-	wasEnabled, wasActive := systemdUserState("is-enabled"), systemdUserState("is-active")
+	wasEnabled, err := systemdUserState("is-enabled")
+	if err != nil {
+		return fmt.Errorf("query enabled state of %s: %w", proxyAutostartUnit, err)
+	}
+	wasActive, err := systemdUserState("is-active")
+	if err != nil {
+		return fmt.Errorf("query active state of %s: %w", proxyAutostartUnit, err)
+	}
 	rollback := func() error {
 		var errs []error
 		if err := util.WriteFile(path, raw); err != nil {
@@ -261,4 +313,12 @@ func ProxyAutostartEnabled() bool {
 	}
 	s := strings.TrimSpace(string(out))
 	return s == "enabled" || s == "static" || s == "indirect"
+}
+
+// ProxyAutostartConfigured reports whether Tokless owns a persistent unit,
+// regardless of whether systemd currently has it enabled or active.
+func ProxyAutostartConfigured() bool {
+	raw, ok := util.ReadFileSafe(proxyAutostartUnitPath())
+	bin := util.ToklessAbs()
+	return ok && bin != "" && !util.IsGoTestExecutable(bin) && raw == proxyAutostartUnitBody(bin)
 }

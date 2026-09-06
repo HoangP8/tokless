@@ -45,6 +45,21 @@ func TestProxyAutostartPlistBody(t *testing.T) {
 	}
 }
 
+func TestLaunchctlServiceNotFoundRequiresExplicitError(t *testing.T) {
+	for _, test := range []struct {
+		output string
+		want   bool
+	}{
+		{"Could not find service", true},
+		{"service not found", true},
+		{"Input/output error", false},
+	} {
+		if got := launchctlServiceNotFound([]byte(test.output)); got != test.want {
+			t.Fatalf("launchctlServiceNotFound(%q) = %v, want %v", test.output, got, test.want)
+		}
+	}
+}
+
 type plistBody struct {
 	Label            string   `xml:"dict>Label"`
 	ProgramArguments []string `xml:"dict>ProgramArguments>string"`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/util"
@@ -58,6 +59,9 @@ func TestRunProxyForegroundPersistsRuntimeBeforeExec(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_GEMINI_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "")
+	t.Setenv("TOKLESS_PROXY_PROVIDER", "stale-provider")
+	t.Setenv("OPENAI_TARGET_API_URL", "https://stale-openai")
+	t.Setenv("PATH", "keep-path")
 	bin := util.HeadroomBin()
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
@@ -67,9 +71,24 @@ func TestRunProxyForegroundPersistsRuntimeBeforeExec(t *testing.T) {
 	}
 	oldExec := proxyExec
 	t.Cleanup(func() { proxyExec = oldExec })
-	proxyExec = func(gotBin string, gotArgs, _ []string) error {
+	proxyExec = func(gotBin string, gotArgs, env []string) error {
 		if gotBin != bin || !equalStrings(gotArgs, []string{bin, "proxy", "--port", "9123", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}) {
 			t.Fatalf("exec = %q %v", gotBin, gotArgs)
+		}
+		for _, value := range env {
+			if strings.HasPrefix(value, "TOKLESS_PROXY_PROVIDER=") || strings.HasPrefix(value, "OPENAI_TARGET_API_URL=") {
+				t.Fatal("stale routing environment leaked into Headroom")
+			}
+		}
+		foundPath := false
+		for _, value := range env {
+			if value == "PATH=keep-path" {
+				foundPath = true
+				break
+			}
+		}
+		if !foundPath {
+			t.Fatal("PATH missing from Headroom environment")
 		}
 		return errors.New("stop test exec")
 	}
@@ -77,7 +96,7 @@ func TestRunProxyForegroundPersistsRuntimeBeforeExec(t *testing.T) {
 		t.Fatal("RunProxyForeground unexpectedly succeeded")
 	}
 	st, ok := util.ReadProxyRuntime()
-	if !ok || st.Port != 9123 {
-		t.Fatalf("runtime = %+v (ok=%v), want port 9123", st, ok)
+	if ok {
+		t.Fatalf("runtime survived exec failure: %+v", st)
 	}
 }
