@@ -15,6 +15,10 @@ import (
 
 const proxyAutostartUnit = "tokless-proxy.service"
 
+var stopProxyAutostartUnit = func() error {
+	return exec.Command("systemctl", "--user", "stop", proxyAutostartUnit).Run()
+}
+
 func proxyAutostartUnitPath() string {
 	cfg := os.Getenv("XDG_CONFIG_HOME")
 	if cfg == "" {
@@ -33,6 +37,7 @@ After=default.target
 [Service]
 Type=simple
 ExecStart=%[1]s __proxy-run
+UnsetEnvironment=TOKLESS_PROXY_PROVIDER TOKLESS_HEADROOM_PROXY_PORT TOKLESS_HEADROOM_ANTHROPIC_URL TOKLESS_HEADROOM_OPENAI_URL TOKLESS_HEADROOM_GEMINI_URL TOKLESS_HEADROOM_CLOUDCODE_URL OPENAI_TARGET_API_URL ANTHROPIC_TARGET_API_URL GROK_MODELS_BASE_URL
 Restart=on-failure
 
 [Install]
@@ -77,7 +82,7 @@ func EnableProxyAutostart() (err error) {
 	path := proxyAutostartUnitPath()
 	if cur, ok := util.ReadFileSafe(path); ok && cur == proxyAutostartUnitBody(bin) &&
 		systemdUserState("is-enabled") && systemdUserState("is-active") &&
-		ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 		return nil
 	}
 	oldUnit, oldUnitExists := util.ReadFileSafe(path)
@@ -97,6 +102,7 @@ func EnableProxyAutostart() (err error) {
 		oldEnabled = systemdUserState("is-enabled")
 		oldActive = systemdUserState("is-active")
 	}
+	proxyWasRunning := ProxyRunning() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime()))
 	mutated := false
 	committed := false
 	defer func() {
@@ -134,6 +140,11 @@ func EnableProxyAutostart() (err error) {
 				rollbackErrs = append(rollbackErrs, rollbackErr)
 			}
 		}
+		if !oldActive && proxyWasRunning {
+			if rollbackErr := restoreProxyAfterAutostartRollback(proxyWasRunning); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr)
+			}
+		}
 		err = errors.Join(err, errors.Join(rollbackErrs...))
 	}()
 	body := proxyAutostartUnitBody(bin)
@@ -150,7 +161,12 @@ func EnableProxyAutostart() (err error) {
 		}
 	}
 	mutated = true
-	if err := stopHeadroomDaemon(); err != nil {
+	if oldUnitExists {
+		if err := stopProxyAutostartUnit(); err != nil {
+			return fmt.Errorf("stop %s: %w", proxyAutostartUnit, err)
+		}
+	}
+	if err := stopHeadroomDaemonForHandoff(); err != nil {
 		return err
 	}
 	if err := exec.Command("systemctl", "--user", "enable", "--now", proxyAutostartUnit).Run(); err != nil {
@@ -158,12 +174,12 @@ func EnableProxyAutostart() (err error) {
 	}
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
-		if ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		if ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			break
 		}
 		proxySleep(proxyPollInterval)
 	}
-	if !ProxyRunning() || !proxySupervisedArgsMatch(ProxyPort()) {
+	if !ProxyRunning() || !proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 		return fmt.Errorf("%s enabled but proxy is not ready", proxyAutostartUnit)
 	}
 	if err := exec.Command("loginctl", "enable-linger", user).Run(); err != nil {

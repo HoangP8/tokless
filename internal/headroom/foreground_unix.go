@@ -17,7 +17,7 @@ func runHeadroomForeground(bin string, args []string) error {
 	if err := writeProxySupervisedState(os.Getpid(), bin, args, nil, identity.Start); err != nil {
 		return err
 	}
-	if err := proxyExec(bin, append([]string{bin}, args...), os.Environ()); err != nil {
+	if err := proxyExec(bin, append([]string{bin}, args...), proxyDaemonEnv()); err != nil {
 		_ = clearProxySupervisedState()
 		return err
 	}

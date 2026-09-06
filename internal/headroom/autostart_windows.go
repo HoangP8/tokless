@@ -64,20 +64,74 @@ func scheduledTaskMatches(raw []byte, bin string) bool {
 		task.Principals.Principal.RunLevel == "LeastPrivilege"
 }
 
-func scheduledTaskRunning() bool {
-	out, err := exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/fo", "CSV", "/nh").Output()
+var queryScheduledTaskState = func() ([]byte, error) {
+	return exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/fo", "CSV", "/nh").CombinedOutput()
+}
+
+func scheduledTaskRunning() (bool, error) {
+	out, err := queryScheduledTaskState()
 	if err != nil {
-		return false
+		if scheduledTaskNotFound(out) {
+			return false, nil
+		}
+		return false, err
 	}
 	records, err := csv.NewReader(strings.NewReader(string(out))).ReadAll()
 	if err != nil || len(records) == 0 || len(records[0]) == 0 {
-		return false
+		if err == nil {
+			err = errors.New("empty task state")
+		}
+		return false, err
 	}
-	return strings.EqualFold(strings.TrimSpace(records[0][len(records[0])-1]), "Running")
+	switch strings.ToLower(strings.TrimSpace(records[0][len(records[0])-1])) {
+	case "running":
+		return true, nil
+	case "ready", "queued":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected task state %q", records[0][len(records[0])-1])
+	}
 }
 
 func readScheduledTask() ([]byte, error) {
-	return exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").Output()
+	return exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").CombinedOutput()
+}
+
+func scheduledTaskNotFound(output []byte) bool {
+	s := strings.ToLower(string(output))
+	return strings.Contains(s, "cannot find") ||
+		strings.Contains(s, "does not exist") ||
+		strings.Contains(s, "not found")
+}
+
+var endProxyAutostartTask = func() error {
+	out, err := exec.Command("schtasks", "/end", "/tn", proxyAutostartTask).CombinedOutput()
+	if err != nil && scheduledTaskNotFound(out) {
+		return nil
+	}
+	return err
+}
+
+var deleteProxyAutostartTask = func() error {
+	out, err := exec.Command("schtasks", "/delete", "/tn", proxyAutostartTask, "/f").CombinedOutput()
+	if err != nil && scheduledTaskNotFound(out) {
+		return nil
+	}
+	return err
+}
+
+func endExistingProxyAutostartTask(exists bool) error {
+	if !exists {
+		return nil
+	}
+	return endProxyAutostartTask()
+}
+
+func endRunningProxyAutostartTask(running bool) error {
+	if !running {
+		return nil
+	}
+	return endProxyAutostartTask()
 }
 
 func EnableProxyAutostart() (err error) {
@@ -89,9 +143,15 @@ func EnableProxyAutostart() (err error) {
 		return fmt.Errorf("schtasks not found; keeping proxy running for this session")
 	}
 	if task, queryErr := readScheduledTask(); queryErr == nil && scheduledTaskMatches(task, bin) {
-		if scheduledTaskRunning() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		running, stateErr := scheduledTaskRunning()
+		if stateErr != nil {
+			return fmt.Errorf("query state of %s: %w", proxyAutostartTask, stateErr)
+		}
+		if running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			return nil
 		}
+	} else if queryErr != nil && !scheduledTaskNotFound(task) {
+		return fmt.Errorf("query %s: %w", proxyAutostartTask, queryErr)
 	}
 	var oldTask []byte
 	oldTaskRunning := false
@@ -100,31 +160,81 @@ func EnableProxyAutostart() (err error) {
 			return fmt.Errorf("refusing to replace non-tokless scheduled task %s", proxyAutostartTask)
 		}
 		oldTask = out
-		oldTaskRunning = scheduledTaskRunning()
+		var stateErr error
+		oldTaskRunning, stateErr = scheduledTaskRunning()
+		if stateErr != nil {
+			return fmt.Errorf("query state of %s: %w", proxyAutostartTask, stateErr)
+		}
+	} else if !scheduledTaskNotFound(out) {
+		return fmt.Errorf("query %s: %w", proxyAutostartTask, queryErr)
 	}
+	proxyWasRunning := ProxyRunning() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime()))
 	if err := requestProxyStop(); err != nil {
 		return fmt.Errorf("proxy stop request: %w", err)
 	}
 	started := false
 	taskCreated := false
+	taskCreateAttempted := false
+	oldTaskEnded := false
+	stopRequestCleared := false
 	defer func() {
 		if !started {
+			markerReady := true
+			if stopRequestCleared {
+				if requestErr := requestProxyStop(); requestErr != nil {
+					markerReady = false
+					err = errors.Join(err, fmt.Errorf("restore proxy stop request: %w", requestErr))
+				}
+			}
+			var stopErr error
 			if taskCreated {
-				rollbackErr := rollbackScheduledTask(oldTask, oldTaskRunning)
+				stopErr = stopHeadroomDaemonForHandoff()
+				if stopErr != nil {
+					markerReady = false
+					err = errors.Join(err, fmt.Errorf("stop replacement proxy: %w", stopErr))
+				}
+			}
+			rollbackNeeded := taskCreateAttempted || oldTaskEnded
+			rollbackOK := !rollbackNeeded
+			if rollbackNeeded {
+				rollbackErr := rollbackScheduledTask(oldTask, false)
 				if rollbackErr != nil {
+					markerReady = false
 					if err == nil {
 						err = fmt.Errorf("rollback %s: %w", proxyAutostartTask, rollbackErr)
 					} else {
 						err = errors.Join(err, fmt.Errorf("rollback %s: %w", proxyAutostartTask, rollbackErr))
 					}
+				} else {
+					rollbackOK = true
 				}
 			}
-			if cleanupErr := clearProxyStopRequest(); cleanupErr != nil {
-				err = errors.Join(err, fmt.Errorf("clear proxy stop request: %w", cleanupErr))
+			if markerReady && rollbackOK {
+				if clearErr := clearProxyStopRequest(); clearErr != nil {
+					markerReady = false
+					err = errors.Join(err, fmt.Errorf("clear proxy stop request for rollback: %w", clearErr))
+				}
+			}
+			if markerReady && rollbackOK && oldTaskEnded && oldTaskRunning {
+				if runErr := exec.Command("schtasks", "/run", "/tn", proxyAutostartTask).Run(); runErr != nil {
+					err = errors.Join(err, fmt.Errorf("restart %s: %w", proxyAutostartTask, runErr))
+					if markerErr := requestProxyStop(); markerErr != nil {
+						err = errors.Join(err, fmt.Errorf("restore proxy stop request after restart failure: %w", markerErr))
+					}
+				}
+			}
+			if markerReady && rollbackOK && (!oldTaskEnded || !oldTaskRunning) {
+				if restoreErr := restoreProxyAfterAutostartRollback(proxyWasRunning); restoreErr != nil {
+					err = errors.Join(err, restoreErr)
+				}
 			}
 		}
 	}()
-	_ = exec.Command("schtasks", "/end", "/tn", proxyAutostartTask).Run()
+	if err := endRunningProxyAutostartTask(oldTaskRunning); err != nil {
+		return fmt.Errorf("end %s: %w", proxyAutostartTask, err)
+	}
+	oldTaskEnded = len(oldTask) > 0
+	taskCreateAttempted = true
 	create := exec.Command("schtasks", "/create",
 		"/tn", proxyAutostartTask,
 		"/tr", `"`+bin+`" __proxy-watch`,
@@ -135,18 +245,23 @@ func EnableProxyAutostart() (err error) {
 		return err
 	}
 	taskCreated = true
-	if err := stopHeadroomDaemon(); err != nil {
+	if err := stopHeadroomDaemonForHandoff(); err != nil {
 		return err
 	}
 	if err := clearProxyStopRequest(); err != nil {
 		return fmt.Errorf("clear proxy stop request: %w", err)
 	}
+	stopRequestCleared = true
 	if err := exec.Command("schtasks", "/run", "/tn", proxyAutostartTask).Run(); err != nil {
 		return fmt.Errorf("initial start of %s: %w", proxyAutostartTask, err)
 	}
 	deadline := time.Now().Add(proxyReadyTimeout)
 	for time.Now().Before(deadline) {
-		if scheduledTaskRunning() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		running, stateErr := scheduledTaskRunning()
+		if stateErr != nil {
+			return fmt.Errorf("query state of %s: %w", proxyAutostartTask, stateErr)
+		}
+		if running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			started = true
 			return nil
 		}
@@ -157,7 +272,7 @@ func EnableProxyAutostart() (err error) {
 
 func rollbackScheduledTask(oldTask []byte, wasRunning bool) error {
 	if len(oldTask) == 0 {
-		return exec.Command("schtasks", "/delete", "/tn", proxyAutostartTask, "/f").Run()
+		return deleteProxyAutostartTask()
 	}
 	f, err := os.CreateTemp("", "tokless-task-*.xml")
 	if err != nil {
@@ -186,19 +301,31 @@ func DisableProxyAutostart() error {
 		return nil
 	}
 	out, err := readScheduledTask()
-	if err != nil || !scheduledTaskManaged(out) {
+	if err != nil {
+		if scheduledTaskNotFound(out) {
+			return nil
+		}
+		return fmt.Errorf("query %s: %w", proxyAutostartTask, err)
+	}
+	if !scheduledTaskMatches(out, util.ToklessAbsStrict()) {
 		return nil
 	}
-	if err := exec.Command("schtasks", "/end", "/tn", proxyAutostartTask).Run(); err != nil {
+	running, stateErr := scheduledTaskRunning()
+	if stateErr != nil {
+		return fmt.Errorf("query state of %s: %w", proxyAutostartTask, stateErr)
+	}
+	if err := endRunningProxyAutostartTask(running); err != nil {
 		return fmt.Errorf("end %s: %w", proxyAutostartTask, err)
 	}
-	if err := exec.Command("schtasks", "/delete", "/tn", proxyAutostartTask, "/f").Run(); err != nil {
-		return fmt.Errorf("delete %s: %w", proxyAutostartTask, err)
+	if err := deleteProxyAutostartTask(); err != nil {
+		rollbackErr := rollbackScheduledTask(out, running)
+		return errors.Join(fmt.Errorf("delete %s: %w", proxyAutostartTask, err), rollbackErr)
 	}
 	return nil
 }
 
 func ProxyAutostartEnabled() bool {
 	out, err := readScheduledTask()
-	return err == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && scheduledTaskRunning() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort())
+	running, stateErr := scheduledTaskRunning()
+	return err == nil && stateErr == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime())
 }

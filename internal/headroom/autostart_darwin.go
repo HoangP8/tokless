@@ -21,6 +21,10 @@ import (
 // __proxy-stop.
 const proxyAutostartLabel = "com.tokless.headroom.proxy"
 
+var runLaunchctl = func(args ...string) ([]byte, error) {
+	return exec.Command("launchctl", args...).CombinedOutput()
+}
+
 func proxyAutostartPlistPath() string {
 	return filepath.Join(util.Home(), "Library", "LaunchAgents", proxyAutostartLabel+".plist")
 }
@@ -74,7 +78,6 @@ func EnableProxyAutostart() (err error) {
 		return nil
 	}
 	if _, err := exec.LookPath("launchctl"); err != nil {
-		_ = clearProxySupervisedState()
 		return fmt.Errorf("launchctl not found; keeping proxy running for this session")
 	}
 	path := proxyAutostartPlistPath()
@@ -83,7 +86,7 @@ func EnableProxyAutostart() (err error) {
 		return fmt.Errorf("refusing to replace non-tokless launch agent %s", path)
 	}
 	if cur, ok := util.ReadFileSafe(path); ok && cur == body &&
-		ProxyAutostartEnabled() && ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		ProxyAutostartEnabled() && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 		return nil
 	}
 	oldPlist, oldPlistExists := util.ReadFileSafe(path)
@@ -95,6 +98,7 @@ func EnableProxyAutostart() (err error) {
 		_, printErr := exec.Command("launchctl", "print", domain()+"/"+proxyAutostartLabel).Output()
 		oldLoaded = printErr == nil
 	}
+	proxyWasRunning := ProxyRunning() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime()))
 	mutated := false
 	committed := false
 	defer func() {
@@ -102,10 +106,8 @@ func EnableProxyAutostart() (err error) {
 			return
 		}
 		var rollbackErrs []error
-		if rollbackErr := exec.Command("launchctl", "bootout", domain(), proxyAutostartLabel).Run(); rollbackErr != nil {
-			if _, printErr := exec.Command("launchctl", "print", domain()+"/"+proxyAutostartLabel).Output(); printErr == nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr)
-			}
+		if rollbackErr := bootoutProxyAgent(); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, rollbackErr)
 		}
 		if oldPlistExists {
 			if rollbackErr := util.WriteFile(path, oldPlist); rollbackErr != nil {
@@ -124,6 +126,11 @@ func EnableProxyAutostart() (err error) {
 				rollbackErrs = append(rollbackErrs, rollbackErr)
 			}
 		}
+		if !oldLoaded && proxyWasRunning {
+			if rollbackErr := restoreProxyAfterAutostartRollback(proxyWasRunning); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr)
+			}
+		}
 		err = errors.Join(err, errors.Join(rollbackErrs...))
 	}()
 	if cur, ok := util.ReadFileSafe(path); !ok || cur != body {
@@ -139,7 +146,7 @@ func EnableProxyAutostart() (err error) {
 	if err := bootoutProxyAgent(); err != nil {
 		return err
 	}
-	if err := stopHeadroomDaemon(); err != nil {
+	if err := stopHeadroomDaemonForHandoff(); err != nil {
 		return err
 	}
 	if err := exec.Command("launchctl", "bootstrap", domain(), path).Run(); err != nil {
@@ -150,12 +157,12 @@ func EnableProxyAutostart() (err error) {
 	}
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
-		if ProxyRunning() && proxySupervisedArgsMatch(ProxyPort()) {
+		if ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			break
 		}
 		proxySleep(proxyPollInterval)
 	}
-	if !ProxyRunning() || !proxySupervisedArgsMatch(ProxyPort()) {
+	if !ProxyRunning() || !proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 		return fmt.Errorf("%s loaded but proxy is not ready", proxyAutostartLabel)
 	}
 	committed = true
@@ -167,12 +174,24 @@ func domain() string {
 }
 
 func bootoutProxyAgent() error {
-	if err := exec.Command("launchctl", "bootout", domain(), proxyAutostartLabel).Run(); err != nil {
-		if _, printErr := exec.Command("launchctl", "print", domain()+"/"+proxyAutostartLabel).Output(); printErr == nil {
-			return fmt.Errorf("bootout %s: %w", proxyAutostartLabel, err)
-		}
+	output, err := runLaunchctl("bootout", domain(), proxyAutostartLabel)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if _, printErr := runLaunchctl("print", domain()+"/"+proxyAutostartLabel); printErr == nil {
+		return fmt.Errorf("bootout %s: %w", proxyAutostartLabel, err)
+	}
+	if launchctlServiceNotFound(output) {
+		return nil
+	}
+	return fmt.Errorf("bootout %s: %w", proxyAutostartLabel, err)
+}
+
+func launchctlServiceNotFound(output []byte) bool {
+	s := strings.ToLower(string(output))
+	return strings.Contains(s, "could not find service") ||
+		strings.Contains(s, "service not found") ||
+		strings.Contains(s, "no such process")
 }
 
 func DisableProxyAutostart() error {
@@ -180,14 +199,21 @@ func DisableProxyAutostart() error {
 		return nil
 	}
 	path := proxyAutostartPlistPath()
-	if raw, ok := util.ReadFileSafe(path); !ok || !strings.Contains(raw, "tokless-managed") {
+	raw, ok := util.ReadFileSafe(path)
+	if !ok || !strings.Contains(raw, "tokless-managed") {
 		return nil
 	}
 	if err := bootoutProxyAgent(); err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+		var rollbackErr error
+		if writeErr := util.WriteFile(path, raw); writeErr != nil {
+			rollbackErr = writeErr
+		} else if bootErr := exec.Command("launchctl", "bootstrap", domain(), path).Run(); bootErr != nil {
+			rollbackErr = bootErr
+		}
+		return errors.Join(err, rollbackErr)
 	}
 	return nil
 }

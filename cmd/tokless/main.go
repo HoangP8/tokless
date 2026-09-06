@@ -127,9 +127,14 @@ func proxyHelpText() string {
 	cy := util.C.Cyan
 	return util.C.Bold(util.C.Cyan("tokless proxy")) + " — headroom HTTP-proxy daemon (cache mode)\n\n" +
 		util.C.Bold("Usage:") + "\n" +
-		"  " + cy("tokless proxy up") + "       Start the proxy daemon and point agents at it\n" +
-		"  " + cy("tokless proxy down") + "     Unwire agents and stop the proxy daemon\n" +
+		"  " + cy("tokless proxy up") + "       Start local Headroom and route agents through it\n" +
+		"  " + cy("tokless proxy down") + "     Restore Tokless-owned routing and stop Headroom\n" +
 		"  " + cy("tokless proxy status") + "   Show daemon + per-agent wiring state\n\n" +
+		util.C.Bold("Safety:") + "\n" +
+		"  Native agent settings are changed; shell startup files are not.\n" +
+		"  Existing OAuth/BYOK settings are preserved where supported.\n" +
+		"  If you edit a managed setting, down refuses to overwrite it.\n\n" +
+		"  down --agents <list> leaves shared Headroom running for other agents.\n" +
 		util.C.Bold("Flags:") + "\n" +
 		"  --agents <list>    Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity (default: all; --agent alias)\n" +
 		"  --dry-run          Show what would be wired without changing anything\n" +
@@ -184,6 +189,9 @@ func run() int {
 	registerTools()
 	ensureProcessPath()
 	if len(os.Args) >= 2 && os.Args[1] == "__proxy-ensure" {
+		if !util.ProxyRoutingEnabled() {
+			return 0
+		}
 		if err := headroompkg.StartProxy(); err != nil {
 			util.L.Err(err.Error())
 			return 1
@@ -211,8 +219,15 @@ func run() int {
 		}
 		return 0
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "__copilot" {
+		return agents.RunCopilotCLI(os.Args[2:])
+	}
 	if isSessionBootArg(os.Args[1:]) {
-		ensureSessionBoot()
+		if len(os.Args) >= 4 && os.Args[1] == "copilot-hook" && os.Args[2] == "codegraph-index" && os.Args[3] == "--vscode" {
+			headroompkg.EnsureCopilotProxyUp()
+		} else {
+			ensureSessionBoot()
+		}
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "run-mcp" {
 		return commands.RunMcp(os.Args[2:])

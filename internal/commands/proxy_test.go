@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +19,13 @@ func proxyCmdTestHome(t *testing.T) {
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	bin := util.HeadroomBin()
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("test headroom"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { util.SetHomeOverride("") })
 }
 
@@ -72,9 +81,12 @@ func TestRunProxyStatusProbesDaemonOnceAndDoesNotWireManual(t *testing.T) {
 func TestRunProxyDownRetainsDaemonForSelectedSubset(t *testing.T) {
 	proxyCmdTestHome(t)
 	var stops int
-	oldStop := stopProxy
+	oldStop, oldDisable := stopProxy, disableProxyAutostart
 	stopProxy = func() error { stops++; return nil }
-	t.Cleanup(func() { stopProxy = oldStop })
+	disableProxyAutostart = func() error { t.Fatal("subset disabled autostart"); return nil }
+	t.Cleanup(func() {
+		stopProxy, disableProxyAutostart = oldStop, oldDisable
+	})
 	if got := RunProxyDown(InitOptions{Agents: []string{"grok"}}); got != 0 {
 		t.Fatalf("proxy down subset exit code = %d, want 0", got)
 	}
@@ -83,12 +95,50 @@ func TestRunProxyDownRetainsDaemonForSelectedSubset(t *testing.T) {
 	}
 }
 
+func TestRunProxyDownRetainsGrokDaemonWhenOtherAgentsSelected(t *testing.T) {
+	proxyCmdTestHome(t)
+	oldStop, oldDisable := stopProxy, disableProxyAutostart
+	stopProxy = func() error { t.Fatal("shared stop on subset"); return nil }
+	disableProxyAutostart = func() error { t.Fatal("autostart disable on subset"); return nil }
+	t.Cleanup(func() {
+		stopProxy, disableProxyAutostart = oldStop, oldDisable
+	})
+	if got := RunProxyDown(InitOptions{Agents: []string{"claude"}}); got != 0 {
+		t.Fatalf("exit = %d, want 0", got)
+	}
+}
+
+func TestRunProxyStatusHidesGrokWhenNotSelected(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldRunning := proxyRunning
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() { proxyRunning = oldRunning })
+	logs, err := util.CaptureLogs(func() error {
+		if got := RunProxyStatus(InitOptions{Agents: []string{"claude"}}); got != 0 {
+			t.Fatalf("status exit = %d", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs, "grok oauth proxy") {
+		t.Fatalf("status leaked grok daemon line: %q", logs)
+	}
+}
+
 func TestRunProxyDownDryRunMakesNoChanges(t *testing.T) {
 	proxyCmdTestHome(t)
-	oldRemove, oldStop := removeProxyAgent, stopProxy
-	t.Cleanup(func() { removeProxyAgent, stopProxy = oldRemove, oldStop })
+	oldRemove, oldStop, oldDisable := removeProxyAgent, stopProxy, disableProxyAutostart
+	t.Cleanup(func() { removeProxyAgent, stopProxy, disableProxyAutostart = oldRemove, oldStop, oldDisable })
 	removeProxyAgent = func(string) bool { t.Fatal("dry-run removed proxy wiring"); return false }
 	stopProxy = func() error { t.Fatal("dry-run stopped proxy"); return nil }
+	disableProxyAutostart = func() error { t.Fatal("dry-run disabled autostart"); return nil }
 	if got := RunProxyDown(InitOptions{DryRun: true}); got != 0 {
 		t.Fatalf("proxy down dry-run exit code = %d, want 0", got)
 	}
@@ -97,9 +147,10 @@ func TestRunProxyDownDryRunMakesNoChanges(t *testing.T) {
 func TestRunProxyDownStopsAfterFullUnwire(t *testing.T) {
 	proxyCmdTestHome(t)
 	var stops int
-	oldStop := stopProxy
+	oldStop, oldDisable := stopProxy, disableProxyAutostart
 	stopProxy = func() error { stops++; return nil }
-	t.Cleanup(func() { stopProxy = oldStop })
+	disableProxyAutostart = func() error { return nil }
+	t.Cleanup(func() { stopProxy, disableProxyAutostart = oldStop, oldDisable })
 	if got := RunProxyDown(InitOptions{}); got != 0 {
 		t.Fatalf("proxy down full exit code = %d, want 0", got)
 	}
@@ -111,9 +162,10 @@ func TestRunProxyDownStopsAfterFullUnwire(t *testing.T) {
 func TestRunProxyDownRetainsDaemonWhenUnwireFails(t *testing.T) {
 	proxyCmdTestHome(t)
 	var stops int
-	oldStop := stopProxy
+	oldStop, oldDisable := stopProxy, disableProxyAutostart
 	stopProxy = func() error { stops++; return nil }
-	t.Cleanup(func() { stopProxy = oldStop })
+	disableProxyAutostart = func() error { t.Fatal("unwire-fail disabled autostart"); return nil }
+	t.Cleanup(func() { stopProxy, disableProxyAutostart = oldStop, oldDisable })
 	oldRemove := removeProxyAgent
 	removeProxyAgent = func(string) bool { return false }
 	t.Cleanup(func() { removeProxyAgent = oldRemove })
@@ -167,13 +219,13 @@ func TestRunProxyUpKeepsSuccessfulWiringOnAgentFailure(t *testing.T) {
 		t.Fatalf("proxy up exit = %d, want 1 (agent wiring failure)", got)
 	}
 	if started != 1 || stopped != 0 {
-		t.Fatalf("proxy lifecycle start=%d stop=%d, want 1/0 (fail-soft keeps daemon)", started, stopped)
+		t.Fatalf("proxy lifecycle start=%d stop=%d, want 1/0 (shared daemon was already running)", started, stopped)
 	}
-	if len(wired) != 1 || !wired["claude"] {
-		t.Fatalf("successful wiring must survive: %v", wired)
+	if len(wired) != 0 {
+		t.Fatalf("failed proxy up must roll back wiring: %v", wired)
 	}
-	if removed != 0 {
-		t.Fatalf("agent wiring failures must not remove agents, removed=%d", removed)
+	if removed != 1 {
+		t.Fatalf("successful wiring must be rolled back, removed=%d", removed)
 	}
 }
 
@@ -195,5 +247,40 @@ func TestRunProxyUpDryRunMakesNoChanges(t *testing.T) {
 	}
 	if started != 0 || configured != 0 {
 		t.Fatalf("dry-run must not start proxy or wire agents, start=%d configured=%d", started, configured)
+	}
+}
+
+func TestPlanAProxyPortsPinned(t *testing.T) {
+	t.Setenv("TOKLESS_HEADROOM_PORT", "")
+	t.Setenv("TOKLESS_COPILOT_PROXY_PORT", "")
+	t.Setenv("TOKLESS_COPILOT_CLI_PROXY_PORT", "")
+	if got := util.HeadroomProxyPort(); got != 8787 {
+		t.Fatalf("shared port = %d, want 8787", got)
+	}
+	if got := agents.CopilotProxyPort(); got != 8789 {
+		t.Fatalf("copilot VS Code port = %d, want 8789", got)
+	}
+	if got := agents.CopilotCLIProxyPort(); got != 8790 {
+		t.Fatalf("copilot CLI port = %d, want 8790", got)
+	}
+	if util.HeadroomProxyPort() == 18787 {
+		t.Fatal("shared port must not be 18787")
+	}
+}
+
+
+func TestRunProxyUpGrokKeepsNativeOAuthSeparate(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("# test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := RunProxyUp(InitOptions{Agents: []string{"grok"}}); got != 0 {
+		t.Fatalf("exit = %d, want 0", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(grokHome, "config.toml"))
+	if err != nil || string(raw) != "# test\n" {
+		t.Fatalf("grok config changed: %q (err=%v)", raw, err)
 	}
 }

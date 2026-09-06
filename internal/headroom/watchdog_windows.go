@@ -21,7 +21,7 @@ func requestProxyStop() error {
 	if err := util.EnsureDir(util.HeadroomPathsResolved().Root); err != nil {
 		return err
 	}
-	return os.WriteFile(proxyStopRequestFile(), nil, 0o600)
+	return util.WriteFileAtomic(proxyStopRequestFile(), "", 0o600)
 }
 func clearProxyStopRequest() error {
 	err := os.Remove(proxyStopRequestFile())
@@ -39,6 +39,9 @@ func proxyStopRequested() (bool, error) {
 }
 
 func RunProxyWatchdog() error {
+	if !util.ProxyRoutingEnabled() {
+		return nil
+	}
 	bin := ResolveHeadroomBin()
 	if bin == "" {
 		return fmt.Errorf("headroom binary not found")
@@ -51,7 +54,7 @@ func RunProxyWatchdog() error {
 		return nil
 	}
 	for attempts := 0; ; attempts++ {
-		if err := runHeadroomSupervised(bin, proxyArgs(ProxyPort())); err != nil {
+		if err := runHeadroomSupervised(bin, proxyArgsFromRuntime(proxyPortFromRuntime())); err != nil {
 			requested, statErr := proxyStopRequested()
 			if statErr != nil {
 				return statErr
@@ -96,7 +99,13 @@ func runHeadroomSupervised(bin string, args []string) error {
 		released = true
 		return nil
 	}
+	if proxyOwnedProcessLive() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime())) {
+		release()
+		released = true
+		return nil
+	}
 	cmd := exec.Command(bin, args...)
+	cmd.Env = proxyDaemonEnv()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
@@ -125,7 +134,8 @@ func runHeadroomSupervised(bin string, args []string) error {
 	release()
 	released = true
 	err = cmd.Wait()
-	return errors.Join(err, cleanupSupervisedProcess(nil, pidFile))
+	cleanupErr := cleanupSupervisedProcess(nil, pidFile)
+	return errors.Join(err, cleanupErr)
 }
 
 func cleanupSupervisedProcess(proc *os.Process, pidFile string) error {

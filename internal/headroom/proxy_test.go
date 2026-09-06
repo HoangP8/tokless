@@ -22,12 +22,14 @@ func isolateProxyOps(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
 	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(util.Home(), ".config"))
 	oldProbe, oldSpawn := proxyLiveZProbe, proxySpawn
 	oldIdentity, oldKill := proxyIdentity, proxyKill
 	oldWrite, oldGone := proxyWrite, proxyGone
 	oldWait := proxyWait
 	oldSleep := proxySleep
 	oldNow := proxyNow
+	oldCopilotProbe := copilotProxyLiveProbe
 	t.Cleanup(func() {
 		proxyLiveZProbe, proxySpawn = oldProbe, oldSpawn
 		proxyIdentity, proxyKill = oldIdentity, oldKill
@@ -35,6 +37,7 @@ func isolateProxyOps(t *testing.T) {
 		proxyWait = oldWait
 		proxySleep = oldSleep
 		proxyNow = oldNow
+		copilotProxyLiveProbe = oldCopilotProbe
 		util.SetHomeOverride("")
 	})
 }
@@ -42,6 +45,7 @@ func isolateProxyOps(t *testing.T) {
 func proxyTestBin(t *testing.T) string {
 	t.Helper()
 	util.SetHomeOverride(t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(util.Home(), ".config"))
 	bin := util.HeadroomBin()
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
@@ -65,6 +69,30 @@ func TestProxyPortDefaults(t *testing.T) {
 	}
 	if got := ProxyURL(); got != "http://127.0.0.1:9123" {
 		t.Fatalf("ProxyURL = %q", got)
+	}
+}
+
+func TestEnsureProxyUpSkipsWhenRoutingDisabled(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	if err := util.SetProxyRoutingEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	proxySpawn = func(*exec.Cmd) error { t.Fatal("proxy started while routing disabled"); return nil }
+	if err := EnsureProxyUp(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureProxyUpReturnsStartFailure(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	if err := util.SetProxyRoutingEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	proxySpawn = func(*exec.Cmd) error { return errors.New("start failed") }
+	if err := EnsureProxyUp(); err == nil || !strings.Contains(err.Error(), "start failed") {
+		t.Fatalf("EnsureProxyUp error = %v, want start failure", err)
 	}
 }
 
@@ -360,7 +388,7 @@ func TestStartProxyRecordWriteFailureRollsBack(t *testing.T) {
 	}
 }
 
-func TestPersistProxyRuntimeProviderPreservation(t *testing.T) {
+func TestPersistProxyRuntimeProviderClearing(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
@@ -389,12 +417,12 @@ func TestPersistProxyRuntimeProviderPreservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, _ = util.ReadProxyRuntime()
-	if st.Provider != "apibox" {
-		t.Fatalf("clean-shell persist must preserve provider, got %+v", st)
+	if st.Provider != "" {
+		t.Fatalf("explicitly cleared provider must not persist, got %+v", st)
 	}
 }
 
-func TestPersistProxyRuntimeRestoresGeminiTargets(t *testing.T) {
+func TestPersistProxyRuntimeGeminiTargetClearing(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
 	t.Setenv("TOKLESS_HEADROOM_GEMINI_URL", "https://gemini.example.test")
@@ -405,12 +433,40 @@ func TestPersistProxyRuntimeRestoresGeminiTargets(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_GEMINI_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "")
 	gemini, cloudcode := ProxyUpstreamGeminiURLs()
-	if gemini != "https://gemini.example.test" || cloudcode != "https://cloudcode.example.test" {
-		t.Fatalf("restored Gemini targets = %q, %q", gemini, cloudcode)
+	if gemini != "" || cloudcode != "" {
+		t.Fatalf("explicitly cleared Gemini targets = %q, %q", gemini, cloudcode)
 	}
 	args := strings.Join(proxyArgs(8787), " ")
-	if !strings.Contains(args, "--gemini-api-url https://gemini.example.test") || !strings.Contains(args, "--cloudcode-api-url https://cloudcode.example.test") {
-		t.Fatalf("persisted targets absent from args: %s", args)
+	if strings.Contains(args, "--gemini-api-url") || strings.Contains(args, "--cloudcode-api-url") {
+		t.Fatalf("cleared targets remained in args: %s", args)
+	}
+}
+
+func TestProxyUpstreamURLsUsePersistedValuesOnlyWhenEnvUnset(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	os.Unsetenv("TOKLESS_HEADROOM_ANTHROPIC_URL")
+	os.Unsetenv("TOKLESS_HEADROOM_OPENAI_URL")
+	os.Unsetenv("TOKLESS_HEADROOM_GEMINI_URL")
+	os.Unsetenv("TOKLESS_HEADROOM_CLOUDCODE_URL")
+	if err := util.SaveHeadroomProxyRuntime(util.ProxyRuntime{
+		Port:         8787,
+		AnthropicURL: "https://old.anthropic.example",
+		OpenAIURL:    "https://old.openai.example",
+		GeminiURL:    "https://old.gemini.example",
+		CloudCodeURL: "https://old.cloudcode.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a, o := ProxyUpstreamURLs()
+	if a != "https://old.anthropic.example" || o != "https://old.openai.example" {
+		t.Fatalf("unset env upstreams = %q, %q; want old values", a, o)
+	}
+	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
+	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "https://new.openai.example")
+	a, o = ProxyUpstreamURLs()
+	if a != "https://api.anthropic.com" || o != "https://new.openai.example" {
+		t.Fatalf("explicit env upstreams = %q, %q; want defaults/new value", a, o)
 	}
 }
 
@@ -627,7 +683,7 @@ func TestStartProxyReusesHeadroomProbe(t *testing.T) {
 	}
 }
 
-func TestStartProxyRestartsStaleArgsDaemon(t *testing.T) {
+func TestStartProxyRefusesStaleArgsDaemon(t *testing.T) {
 	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
 	bin := proxyTestBin(t)
@@ -657,14 +713,70 @@ func TestStartProxyRestartsStaleArgsDaemon(t *testing.T) {
 		return nil
 	}
 	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
-	if err := StartProxy(); err != nil {
+	if err := StartProxy(); err == nil || !strings.Contains(err.Error(), "stale arguments") {
+		t.Fatalf("StartProxy error = %v, want stale-arguments refusal", err)
+	}
+	if killed || spawned || wrote {
+		t.Fatalf("stale-args daemon was modified: killed=%v spawned=%v wrote=%v", killed, spawned, wrote)
+	}
+}
+
+func TestStartProxyRefusesOwnedDaemonWhenPortChanges(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
+	pidFile, _ := proxyFiles()
+	oldArgs := proxyArgs(8787)
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5360, Executable: bin, Args: oldArgs, Start: "start"}); err != nil {
 		t.Fatal(err)
 	}
-	if !killed {
-		t.Fatal("stale-args daemon was not stopped before replacement")
+	spawned := false
+	proxyLiveZProbe = func(time.Duration) bool { return false }
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: oldArgs, Start: "start"}, nil
 	}
-	if !spawned || !wrote {
-		t.Fatalf("stale-args daemon not replaced: spawned=%v wrote=%v", spawned, wrote)
+	proxySpawn = func(*exec.Cmd) error {
+		spawned = true
+		return nil
+	}
+	if err := StartProxy(); err == nil || !strings.Contains(err.Error(), "stale arguments") {
+		t.Fatalf("StartProxy error = %v, want stale-arguments refusal", err)
+	}
+	if spawned {
+		t.Fatal("port change spawned a second proxy")
+	}
+	raw, ok := util.ReadFileSafe(pidFile)
+	if !ok || !strings.Contains(raw, `"pid":5360`) {
+		t.Fatalf("old ownership record was overwritten: %s", raw)
+	}
+}
+
+func TestClearProxyStateCanPreserveRuntimeForHandoff(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	state := util.ProxyRuntime{
+		Port:         9123,
+		AnthropicURL: "https://anthropic.example",
+		OpenAIURL:    "https://openai.example",
+		GeminiURL:    "https://gemini.example",
+		CloudCodeURL: "https://cloudcode.example",
+		Provider:     "apibox",
+	}
+	if err := util.SaveHeadroomProxyRuntime(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearProxyStateWithRuntime("", false); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := util.ReadProxyRuntime()
+	if !ok || got != state {
+		t.Fatalf("handoff runtime = %+v (ok=%v), want %+v", got, ok, state)
+	}
+	if err := clearProxyStateWithRuntime("", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := util.ReadProxyRuntime(); ok {
+		t.Fatal("normal cleanup retained runtime")
 	}
 }
 
@@ -843,6 +955,38 @@ func TestProxyUpstreamURLsDefaultsAndEnv(t *testing.T) {
 	if a != "https://custom.anthropic" || o != "https://custom.openai/v1" {
 		t.Fatalf("overrides = %q, %q", a, o)
 	}
+}
+
+func TestProxyArgsFromRuntimeIgnoresAmbientEnvironment(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	if err := util.SaveHeadroomProxyRuntime(util.ProxyRuntime{
+		Port:         19787,
+		AnthropicURL: "https://stored.anthropic",
+		OpenAIURL:    "https://stored.openai",
+		GeminiURL:    "https://stored.gemini",
+		CloudCodeURL: "https://stored.cloudcode",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9123")
+	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "https://ambient.anthropic")
+	args := proxyArgsFromRuntime(proxyPortFromRuntime())
+	want := []string{"--port", "19787", "--anthropic-api-url", "https://stored.anthropic", "--openai-api-url", "https://stored.openai", "--gemini-api-url", "https://stored.gemini", "--cloudcode-api-url", "https://stored.cloudcode"}
+	for _, value := range want {
+		if !proxyArgsContains(args, value) {
+			t.Fatalf("runtime args missing %q: %v", value, args)
+		}
+	}
+}
+
+func proxyArgsContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestResolveHeadroomBinPrefersManaged(t *testing.T) {
