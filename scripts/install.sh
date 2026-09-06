@@ -45,24 +45,16 @@ printf '{"method":"install script","path":"%s","version":"%s","at":"%s"}\n' \
   "$("${DEST}/tokless" --version 2>/dev/null)" \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${data_dir}/install.json"
 
-# Ensure ~/.local/bin is on PATH for new shells.
+# Do not edit shell startup files. PATH remains user-owned and process-local.
 case ":${PATH}:" in
   *":${DEST}:"*) : ;;
-  *)
-    case "$(basename "${SHELL:-bash}")" in
-      zsh) rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
-      *)   rc="$HOME/.bashrc" ;;
-    esac
-    line="export PATH=\"${DEST}:\$PATH\""
-    grep -qF "$DEST" "$rc" 2>/dev/null || printf '\n# tokless\n%s\n' "$line" >> "$rc"
-    ok "Added ${DEST} to PATH in ${rc}."
-    ;;
+  *) ok "Add ${DEST} to PATH if your shell does not already include it." ;;
 esac
 
 # Run now, reconnecting the keyboard via /dev/tty so the picker works under a pipe.
 if [ -r /dev/tty ]; then
   printf '\n'
-  TOKLESS_INSTALLER_RUN=1 "${DEST}/tokless" </dev/tty || true
+  TOKLESS_INSTALLER_RUN=1 "${DEST}/tokless" </dev/tty
 else
   ok "Run: tokless"
 fi

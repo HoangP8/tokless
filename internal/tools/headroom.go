@@ -28,6 +28,14 @@ func headroomWire(agent string) core.AgentFn {
 		if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
 			return true, nil
 		}
+		releaseLifecycle, err := acquireProxyLifecycleLock()
+		if err != nil {
+			return false, fmt.Errorf("proxy lifecycle lock: %w", err)
+		}
+		defer releaseLifecycle()
+		if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
+			return true, nil
+		}
 		preferenceSet := util.ProxyRoutingPreferenceSet()
 		preferenceEnabled := util.ProxyRoutingEnabled()
 		runtimeBefore, runtimeWasSet := util.ReadProxyRuntime()
@@ -121,6 +129,14 @@ func headroomUnwire(agent string) core.AgentFn {
 			return false, nil
 		}
 		if !agents.ProxyAgentWired(agent) {
+			return false, nil
+		}
+		releaseLifecycle, err := acquireProxyLifecycleLock()
+		if err != nil {
+			return false, fmt.Errorf("proxy lifecycle lock: %w", err)
+		}
+		defer releaseLifecycle()
+		if !headroomWired(agent) || !agents.ProxyAgentWired(agent) {
 			return false, nil
 		}
 		if !agents.RemoveProxyAgent(agent) {

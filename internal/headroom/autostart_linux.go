@@ -21,7 +21,7 @@ var stopProxyAutostartUnit = func() error {
 
 func proxyAutostartUnitPath() string {
 	cfg := os.Getenv("XDG_CONFIG_HOME")
-	if cfg == "" {
+	if cfg == "" || !filepath.IsAbs(cfg) {
 		cfg = filepath.Join(util.Home(), ".config")
 	}
 	return filepath.Join(cfg, "systemd", "user", proxyAutostartUnit)

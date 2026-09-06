@@ -51,3 +51,11 @@ func TestProxyAutostartConfiguredIncludesInactiveManagedUnit(t *testing.T) {
 		t.Fatal("managed inactive unit must count as configured")
 	}
 }
+
+func TestProxyAutostartUnitPathIgnoresRelativeXDGConfigHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative-config")
+	want := filepath.Join(util.Home(), ".config", "systemd", "user", proxyAutostartUnit)
+	if got := proxyAutostartUnitPath(); got != want {
+		t.Fatalf("proxyAutostartUnitPath() = %q, want %q", got, want)
+	}
+}

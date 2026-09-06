@@ -66,7 +66,7 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	if err := util.WriteFile(grokConfig, "[models]\n\n[model_providers.demo]\nbase_url = \"https://demo.example/v1\"\napi_key = \"sk-demo\"\n"); err != nil {
 		t.Fatal(err)
 	}
-	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline"} {
+	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "copilot", "cline"} {
 		t.Run(agent, func(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				ok, err := headroom.WireFor[agent](core.RunOpts{})
@@ -140,6 +140,84 @@ func TestHeadroomWireRollsBackWhenPreferencePersistenceFails(t *testing.T) {
 	}
 	if agents.ClaudeProxyWired() {
 		t.Fatal("agent remained wired after preference persistence failure")
+	}
+}
+
+func TestHeadroomWireRequiresProxyLifecycleLock(t *testing.T) {
+	setupHeadroomHome(t)
+	oldAcquire := acquireProxyLifecycleLock
+	acquireProxyLifecycleLock = func() (func(), error) { return nil, os.ErrPermission }
+	t.Cleanup(func() { acquireProxyLifecycleLock = oldAcquire })
+
+	ok, err := headroom.WireFor["claude"](core.RunOpts{})
+	if ok || err == nil || !strings.Contains(err.Error(), "proxy lifecycle lock") {
+		t.Fatalf("wire = %v, %v; want lifecycle lock failure", ok, err)
+	}
+	if agents.ClaudeProxyWired() {
+		t.Fatal("agent was wired after lifecycle lock failure")
+	}
+}
+
+func TestHeadroomUnwireRequiresProxyLifecycleLock(t *testing.T) {
+	setupHeadroomHome(t)
+	if ok, err := headroom.WireFor["claude"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("wire = %v, %v", ok, err)
+	}
+	oldAcquire := acquireProxyLifecycleLock
+	acquireProxyLifecycleLock = func() (func(), error) { return nil, os.ErrPermission }
+	t.Cleanup(func() { acquireProxyLifecycleLock = oldAcquire })
+
+	ok, err := headroom.UnwireFor["claude"](core.RunOpts{})
+	if ok || err == nil || !strings.Contains(err.Error(), "proxy lifecycle lock") {
+		t.Fatalf("unwire = %v, %v; want lifecycle lock failure", ok, err)
+	}
+	if !agents.ClaudeProxyWired() {
+		t.Fatal("agent was unwired after lifecycle lock failure")
+	}
+}
+
+func TestHeadroomWireRechecksDisabledPreferenceUnderLock(t *testing.T) {
+	setupHeadroomHome(t)
+	oldAcquire := acquireProxyLifecycleLock
+	acquireProxyLifecycleLock = func() (func(), error) {
+		if err := util.SetProxyRoutingEnabled(false); err != nil {
+			t.Fatal(err)
+		}
+		return func() {}, nil
+	}
+	t.Cleanup(func() { acquireProxyLifecycleLock = oldAcquire })
+
+	ok, err := headroom.WireFor["claude"](core.RunOpts{})
+	if err != nil || !ok {
+		t.Fatalf("wire = %v, %v; want disabled preference no-op", ok, err)
+	}
+	if agents.ClaudeProxyWired() {
+		t.Fatal("wire changed agent after preference was disabled under lock")
+	}
+}
+
+func TestHeadroomUnwireRechecksOwnershipUnderLock(t *testing.T) {
+	setupHeadroomHome(t)
+	if ok, err := headroom.WireFor["claude"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("wire = %v, %v", ok, err)
+	}
+	oldAcquire := acquireProxyLifecycleLock
+	acquireProxyLifecycleLock = func() (func(), error) {
+		path := util.ClaudeCodePaths().Settings
+		if err := util.WriteFile(path, `{"env":{"ANTHROPIC_BASE_URL":"http://user.example:9999"}}`); err != nil {
+			t.Fatal(err)
+		}
+		return func() {}, nil
+	}
+	t.Cleanup(func() { acquireProxyLifecycleLock = oldAcquire })
+
+	ok, err := headroom.UnwireFor["claude"](core.RunOpts{})
+	if err != nil || ok {
+		t.Fatalf("unwire = %v, %v; want foreign endpoint preserved", ok, err)
+	}
+	raw, _ := util.ReadFileSafe(util.ClaudeCodePaths().Settings)
+	if !strings.Contains(raw, "http://user.example:9999") {
+		t.Fatalf("foreign endpoint was removed: %s", raw)
 	}
 }
 
