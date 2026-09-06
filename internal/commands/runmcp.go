@@ -50,7 +50,6 @@ command:
 	if len(argv) == 0 {
 		return 1
 	}
-	ensureProxyForAgent(agent)
 	util.EnsureProcessPath()
 	if strings.Contains(argv[0], string(filepath.Separator)) {
 		util.PrependProcessPath(filepath.Dir(argv[0]))
@@ -74,9 +73,29 @@ command:
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
-		path = argv[0]
+		return 1
+	}
+	if err := ensureProxyForAgent(agent); err != nil {
+		util.L.Err("headroom proxy: " + err.Error())
+		return 1
 	}
 	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), tool, nil)
+}
+
+// ensureProxyForAgent silently starts the headroom daemon when an MCP server is
+// being booted for an agent tokless wires to the proxy.
+var ensureProxyUp = headroompkg.EnsureProxyUp
+
+func ensureProxyForAgent(agent string) error {
+	if agent == "" || proxyInstructions(agent) != nil {
+		return nil
+	}
+	for _, id := range ProxyAgentIDs() {
+		if agent == id {
+			return ensureProxyUp()
+		}
+	}
+	return nil
 }
 
 func codegraphWorkspace(workspace string) string {
@@ -152,20 +171,6 @@ func injectCodegraphPath(argv []string, workspace ...string) []string {
 	out := make([]string, 0, len(argv)+2)
 	out = append(out, argv...)
 	return append(out, "--path", dir)
-}
-
-// ensureProxyForAgent silently starts the headroom daemon when an MCP server is
-// being booted for an agent tokless wires to the proxy.
-func ensureProxyForAgent(agent string) {
-	if agent == "" || proxyInstructions(agent) != nil {
-		return
-	}
-	for _, id := range ProxyAgentIDs() {
-		if agent == id {
-			headroompkg.EnsureProxyUp()
-			return
-		}
-	}
 }
 
 func isCodegraphCommand(p string) bool {

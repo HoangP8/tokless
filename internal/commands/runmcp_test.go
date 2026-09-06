@@ -3,6 +3,7 @@
 package commands
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,19 +38,19 @@ func TestInjectCodegraphPathUsesWorkspace(t *testing.T) {
 	}
 }
 
-func TestRunMcpWaitsForCodegraphIndexBeforeStartingProxy(t *testing.T) {
+func TestRunMcpWaitsForCodegraphIndexBeforeStartingMcp(t *testing.T) {
 	binDir := t.TempDir()
 	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
 	indexing := filepath.Join(project, "indexing")
 	complete := filepath.Join(project, "complete")
-	proxy := filepath.Join(project, "proxy")
+	mcp := filepath.Join(project, "mcp")
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
 		"if [ \"$1\" = status ]; then echo '{\"initialized\":true,\"index\":{\"state\":\"complete\",\"pendingRefs\":0}}'; exit 0; fi\n" +
 		"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
 		"if [ \"$1\" = init ]; then touch \"$CODEGRAPH_INDEXING\"; sleep 1; mkdir -p .codegraph; touch .codegraph/codegraph.db \"$CODEGRAPH_COMPLETE\"; exit 0; fi\n" +
-		"touch \"$CODEGRAPH_PROXY\"\n" +
+		"touch \"$CODEGRAPH_MCP\"\n" +
 		"exit 0\n"
 	if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestRunMcpWaitsForCodegraphIndexBeforeStartingProxy(t *testing.T) {
 	t.Setenv("CODEGRAPH_LOG", log)
 	t.Setenv("CODEGRAPH_INDEXING", indexing)
 	t.Setenv("CODEGRAPH_COMPLETE", complete)
-	t.Setenv("CODEGRAPH_PROXY", proxy)
+	t.Setenv("CODEGRAPH_MCP", mcp)
 	t.Setenv("TOKLESS_TEST", "")
 	oldDir, err := os.Getwd()
 	if err != nil {
@@ -79,8 +80,8 @@ func TestRunMcpWaitsForCodegraphIndexBeforeStartingProxy(t *testing.T) {
 	if elapsed := time.Since(started); elapsed < 900*time.Millisecond {
 		t.Fatalf("RunMcp did not wait for slow CodeGraph index: %s", elapsed)
 	}
-	if _, err := os.Stat(proxy); err != nil {
-		t.Fatalf("proxy did not start: %v", err)
+	if _, err := os.Stat(mcp); err != nil {
+		t.Fatalf("MCP child did not start: %v", err)
 	}
 	if _, err := os.Stat(complete); err != nil {
 		t.Fatalf("CodeGraph index did not complete before proxy launch: %v", err)
@@ -331,5 +332,36 @@ func TestRunMcpRejectsMalformedToolBeforeLaunch(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("child ran despite malformed --tool: %v", err)
+	}
+}
+
+func TestRunMcpDoesNotStartProxyBeforeCommandValidation(t *testing.T) {
+	started := false
+	oldEnsure := ensureProxyUp
+	ensureProxyUp = func() error { started = true; return nil }
+	t.Cleanup(func() { ensureProxyUp = oldEnsure })
+	if code := RunMcp([]string{"--agent", "omp", "command-that-does-not-exist"}); code == 0 {
+		t.Fatal("missing MCP command succeeded")
+	}
+	if started {
+		t.Fatal("proxy started before MCP command validation completed")
+	}
+}
+
+func TestRunMcpStopsWhenProxyStartupFails(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "child")
+	marker := filepath.Join(t.TempDir(), "started")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\ntouch \"$RUN_MCP_MARKER\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RUN_MCP_MARKER", marker)
+	oldEnsure := ensureProxyUp
+	ensureProxyUp = func() error { return errors.New("proxy unavailable") }
+	t.Cleanup(func() { ensureProxyUp = oldEnsure })
+	if code := RunMcp([]string{"--agent", "omp", bin}); code == 0 {
+		t.Fatal("RunMcp succeeded despite proxy startup failure")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("MCP child ran after proxy startup failure: %v", err)
 	}
 }
