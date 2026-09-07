@@ -261,6 +261,23 @@ func TestRollbackProxyKillFailureSkipsWaitAndRetainsOwnershipRecord(t *testing.T
 	}
 }
 
+func TestRollbackProxyRefusesVerifiedReplacementIdentity(t *testing.T) {
+	isolateProxyOps(t)
+	proc := &os.Process{Pid: 4247}
+	expected := processIdentityInfo{Executable: "/bin/headroom", Args: []string{"proxy"}, Start: "original"}
+	identity := processIdentityInfo{Executable: "/bin/replacement", Args: []string{"proxy"}, Start: "replacement"}
+	killed := false
+	proxyIdentity = func(int) (processIdentityInfo, error) { return identity, nil }
+	proxyKill = func(*os.Process) error { killed = true; return nil }
+
+	if err := rollbackProxyWithIdentity(proc, "", &expected, errors.New("identity mismatch")); err == nil {
+		t.Fatal("rollbackProxyWithIdentity returned nil")
+	}
+	if killed {
+		t.Fatal("verified replacement process was killed")
+	}
+}
+
 func TestStopProxyRefusesMismatchedIdentity(t *testing.T) {
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
@@ -600,8 +617,11 @@ func TestStartProxyIdentityFailureRollsBackDirectChild(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("StartProxy error = %v", err)
 			}
-			if !killed || !waited {
-				t.Fatalf("rollback kill=%v wait=%v, want both", killed, waited)
+			if tt.name == "lookup error" && (!killed || !waited) {
+				t.Fatalf("rollback kill=%v wait=%v, want both for unavailable identity", killed, waited)
+			}
+			if tt.name == "mismatch" && (killed || waited) {
+				t.Fatalf("rollback kill=%v wait=%v, must not touch mismatched process", killed, waited)
 			}
 			if identityCalls != 1 {
 				t.Fatalf("proxyIdentity calls = %d, want 1", identityCalls)
@@ -656,8 +676,8 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 	if _, ok := util.ReadFileSafe(pidFile); ok {
 		t.Fatal("ownership record remains after rollback")
 	}
-	if identityCalls != 2 {
-		t.Fatalf("proxyIdentity calls = %d, want 2 (launch and readiness identity checks)", identityCalls)
+	if identityCalls != 3 {
+		t.Fatalf("proxyIdentity calls = %d, want 3 (launch, readiness, rollback identity checks)", identityCalls)
 	}
 }
 
@@ -777,6 +797,33 @@ func TestClearProxyStateCanPreserveRuntimeForHandoff(t *testing.T) {
 	}
 	if _, ok := util.ReadProxyRuntime(); ok {
 		t.Fatal("normal cleanup retained runtime")
+	}
+}
+
+func TestStopHeadroomProxyRefusesReplacementRecordCleanup(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	original := proxyOwnership{PID: 5361, Executable: bin, Args: proxyArgs(8787), Start: "start"}
+	if err := writeProxyOwnership(pidFile, original); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: original.Args, Start: original.Start}, nil
+	}
+	proxyKill = func(*os.Process) error {
+		return writeProxyOwnership(pidFile, proxyOwnership{PID: 5362, Executable: bin, Args: original.Args, Start: "replacement"})
+	}
+	proxyWait = func(*os.Process) error { return nil }
+	proxyGone = func(*os.Process) bool { return true }
+	proxyLiveZProbe = func(time.Duration) bool { return false }
+	proxyNow = func() time.Time { return time.Unix(100, 0) }
+
+	if err := stopHeadroomDaemonWithRuntime(true); err == nil || !strings.Contains(err.Error(), "replacement record") {
+		t.Fatalf("stopHeadroomDaemonWithRuntime error = %v", err)
+	}
+	if raw, ok := util.ReadFileSafe(pidFile); !ok || !strings.Contains(raw, `"pid":5362`) {
+		t.Fatal("replacement ownership record was removed")
 	}
 }
 

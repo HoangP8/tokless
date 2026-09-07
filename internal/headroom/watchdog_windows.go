@@ -115,6 +115,9 @@ func runHeadroomSupervised(bin string, args []string) error {
 	}
 	identity, err := verifyIdentityWithRetry(cmd.Process.Pid, bin, args)
 	if err != nil {
+		if identity.Executable != "" {
+			return err
+		}
 		return errors.Join(err, cleanupSupervisedProcess(cmd.Process, ""))
 	}
 	pidFile, _ := proxyFiles()
@@ -131,10 +134,13 @@ func runHeadroomSupervised(bin string, args []string) error {
 	if requested {
 		return cleanupSupervisedProcess(cmd.Process, pidFile)
 	}
+	pidRaw, pidExists := util.ReadFileSafe(pidFile)
+	supervisedPath := proxySupervisedFile()
+	supervisedRaw, supervisedExists := util.ReadFileSafe(supervisedPath)
 	release()
 	released = true
 	err = cmd.Wait()
-	cleanupErr := cleanupSupervisedProcess(nil, pidFile)
+	cleanupErr := cleanupSupervisedProcessAfterWait(pidFile, pidRaw, pidExists, supervisedRaw, supervisedExists)
 	return errors.Join(err, cleanupErr)
 }
 
@@ -150,12 +156,39 @@ func cleanupSupervisedProcess(proc *os.Process, pidFile string) error {
 		}
 	}
 	if pidFile != "" {
+		if err := removeSupervisedRecords(pidFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func cleanupSupervisedProcessAfterWait(pidFile, pidRaw string, pidExists bool, supervisedRaw string, supervisedExists bool) error {
+	release, err := acquireProxyStartLock(proxyNow)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if !proxyFileMatches(pidFile, pidRaw, pidExists) || !proxyFileMatches(proxySupervisedFile(), supervisedRaw, supervisedExists) {
+		return fmt.Errorf("supervised proxy record changed during watchdog cleanup — refusing to remove replacement record")
+	}
+	return removeSupervisedRecords(pidFile)
+}
+
+func removeSupervisedRecords(pidFile string) error {
+	_, pidExists := util.ReadFileSafe(pidFile)
+	supervisedPath := proxySupervisedFile()
+	_, supervisedExists := util.ReadFileSafe(supervisedPath)
+	var errs []error
+	if pidExists {
 		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err)
 		}
 	}
-	if err := clearProxySupervisedState(); err != nil {
-		errs = append(errs, err)
+	if supervisedExists {
+		if err := os.Remove(supervisedPath); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

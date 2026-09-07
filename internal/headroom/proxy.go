@@ -279,6 +279,37 @@ func clearProxyStateWithRuntime(pidFile string, clearRuntime bool) error {
 	return errors.Join(errs...)
 }
 
+func proxyFileMatches(path, expected string, expectedExists bool) bool {
+	raw, exists := util.ReadFileSafe(path)
+	return exists == expectedExists && (!exists || raw == expected)
+}
+
+func clearProxyStateWithRuntimeIfUnchanged(pidFile, pidRaw string, pidExists bool, supervisedRaw string, supervisedExists bool, clearRuntime bool) error {
+	if pidFile != "" && !proxyFileMatches(pidFile, pidRaw, pidExists) {
+		return fmt.Errorf("proxy ownership record changed during cleanup — refusing to remove replacement record")
+	}
+	if !proxyFileMatches(proxySupervisedFile(), supervisedRaw, supervisedExists) {
+		return fmt.Errorf("supervised proxy record changed during cleanup — refusing to remove replacement record")
+	}
+	var errs []error
+	if pidExists {
+		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	if supervisedExists {
+		if err := os.Remove(proxySupervisedFile()); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	if clearRuntime {
+		if err := clearProxyRuntime(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func proxySupervisedArgsMatch(port int) bool {
 	raw, ok := util.ReadFileSafe(proxySupervisedFile())
 	if !ok {
@@ -478,10 +509,13 @@ func StartProxy() error {
 	pid := cmd.Process.Pid
 	identity, err := verifyIdentityWithRetry(pid, bin, args)
 	if err != nil {
-		return rollbackProxy(cmd.Process, pidFile, err)
+		if identity.Executable != "" {
+			return err
+		}
+		return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, err)
 	}
 	if err := proxyWrite(pidFile, proxyOwnership{PID: pid, Executable: identity.Executable, Args: identity.Args, Start: identity.Start}); err != nil {
-		return rollbackProxy(cmd.Process, pidFile, fmt.Errorf("headroom proxy ownership record: %w", err))
+		return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy ownership record: %w", err))
 	}
 	util.L.Sub("headroom proxy on " + ProxyURL() + " (semantic cache off; log: " + logFile + ")")
 	deadline := proxyNow().Add(proxyReadyTimeout)
@@ -489,14 +523,14 @@ func StartProxy() error {
 		current, identityErr := proxyIdentity(pid)
 		if proxyLiveZProbe(proxyProbeTimeout) && identityErr == nil && current.equal(identity) && current.matches(bin, args) {
 			if err := persistProxyRuntime(port); err != nil {
-				return rollbackProxy(cmd.Process, pidFile, fmt.Errorf("headroom proxy runtime record: %w", err))
+				return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy runtime record: %w", err))
 			}
 			util.L.Ok("headroom proxy ready")
 			return nil
 		}
 		proxySleep(proxyPollInterval)
 	}
-	return rollbackProxy(cmd.Process, pidFile, fmt.Errorf("headroom proxy did not become ready within %s — see %s", proxyReadyTimeout, logFile))
+	return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy did not become ready within %s — see %s", proxyReadyTimeout, logFile))
 }
 
 func restoreProxyAfterAutostartRollback(wasRunning bool) error {
@@ -577,6 +611,7 @@ func StopProxyPreservingAutostart() error {
 
 func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 	pidFile, _ := proxyFiles()
+	supervisedRaw, supervisedExists := util.ReadFileSafe(proxySupervisedFile())
 	raw, ok := util.ReadFileSafe(pidFile)
 	if !ok {
 		return stopSupervisedDaemonWithRuntime(clearRuntime)
@@ -588,17 +623,27 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 	identity, err := proxyIdentity(record.PID)
 	if err != nil {
 		if proxySupervisedArgsMatch(proxyPortFromRuntime()) {
-			if err := stopSupervisedDaemonWithRuntime(clearRuntime); err != nil {
+			if !proxyFileMatches(pidFile, raw, true) || !proxyFileMatches(proxySupervisedFile(), supervisedRaw, supervisedExists) {
+				return fmt.Errorf("proxy ownership record changed during stale cleanup — refusing to remove replacement record")
+			}
+			if err := stopSupervisedDaemonWithRuntime(false); err != nil {
 				return err
+			}
+			current, currentOK := util.ReadFileSafe(pidFile)
+			if !currentOK || current != raw {
+				return fmt.Errorf("proxy ownership record changed during stale cleanup — refusing to remove replacement record")
 			}
 			if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("remove stale proxy ownership record %s: %w", pidFile, err)
+			}
+			if clearRuntime {
+				return clearProxyRuntime()
 			}
 			return nil
 		}
 		if proxyGone(&os.Process{Pid: record.PID}) {
 			util.L.Sub("headroom proxy already stopped — removing stale ownership record")
-			if err := clearProxyStateWithRuntime(pidFile, clearRuntime); err != nil {
+			if err := clearProxyStateWithRuntimeIfUnchanged(pidFile, raw, true, supervisedRaw, supervisedExists, clearRuntime); err != nil {
 				return fmt.Errorf("headroom proxy already stopped but state could not be cleared: %w", err)
 			}
 			return nil
@@ -607,11 +652,21 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 	}
 	if !identity.matchesRecord(record) {
 		if proxySupervisedArgsMatch(proxyPortFromRuntime()) {
-			if err := stopSupervisedDaemonWithRuntime(clearRuntime); err != nil {
+			if !proxyFileMatches(pidFile, raw, true) || !proxyFileMatches(proxySupervisedFile(), supervisedRaw, supervisedExists) {
+				return fmt.Errorf("proxy ownership record changed during stale cleanup — refusing to remove replacement record")
+			}
+			if err := stopSupervisedDaemonWithRuntime(false); err != nil {
 				return err
+			}
+			current, currentOK := util.ReadFileSafe(pidFile)
+			if !currentOK || current != raw {
+				return fmt.Errorf("proxy ownership record changed during stale cleanup — refusing to remove replacement record")
 			}
 			if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("remove stale proxy ownership record %s: %w", pidFile, err)
+			}
+			if clearRuntime {
+				return clearProxyRuntime()
 			}
 			return nil
 		}
@@ -630,7 +685,7 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 	deadline := proxyNow().Add(proxyStopTimeout)
 	for proxyNow().Before(deadline) {
 		if proxyGone(proc) && !proxyLiveZProbe(proxyProbeTimeout) {
-			if err := clearProxyStateWithRuntime(pidFile, clearRuntime); err != nil {
+			if err := clearProxyStateWithRuntimeIfUnchanged(pidFile, raw, true, supervisedRaw, supervisedExists, clearRuntime); err != nil {
 				return fmt.Errorf("headroom proxy stopped but state could not be cleared: %w", err)
 			}
 			util.L.Ok("headroom proxy stopped")
@@ -646,7 +701,8 @@ func stopSupervisedDaemon() error {
 }
 
 func stopSupervisedDaemonWithRuntime(clearRuntime bool) error {
-	raw, ok := util.ReadFileSafe(proxySupervisedFile())
+	supervisedPath := proxySupervisedFile()
+	raw, ok := util.ReadFileSafe(supervisedPath)
 	if !ok {
 		return nil
 	}
@@ -657,7 +713,7 @@ func stopSupervisedDaemonWithRuntime(clearRuntime bool) error {
 	identity, err := proxyIdentity(state.PID)
 	if err != nil || identity.Start != state.Start || !identity.matches(state.Executable, state.Args) {
 		if proxyGone(&os.Process{Pid: state.PID}) {
-			if err := clearProxyStateWithRuntime("", clearRuntime); err != nil {
+			if err := clearProxyStateWithRuntimeIfUnchanged("", "", false, raw, true, clearRuntime); err != nil {
 				return fmt.Errorf("supervised proxy stopped but state could not be cleared: %w", err)
 			}
 			return nil
@@ -677,7 +733,7 @@ func stopSupervisedDaemonWithRuntime(clearRuntime bool) error {
 	deadline := proxyNow().Add(proxyStopTimeout)
 	for proxyNow().Before(deadline) {
 		if proxyGone(proc) && !proxyLiveZProbe(proxyProbeTimeout) {
-			if err := clearProxyStateWithRuntime("", clearRuntime); err != nil {
+			if err := clearProxyStateWithRuntimeIfUnchanged("", "", false, raw, true, clearRuntime); err != nil {
 				return fmt.Errorf("supervised proxy stopped but state could not be cleared: %w", err)
 			}
 			return nil
@@ -790,14 +846,38 @@ func writeProxyOwnership(path string, record proxyOwnership) error {
 }
 
 func rollbackProxy(proc *os.Process, pidFile string, cause error) error {
+	return rollbackProxyWithIdentity(proc, pidFile, nil, cause)
+}
+
+func rollbackProxyWithIdentity(proc *os.Process, pidFile string, expected *processIdentityInfo, cause error) error {
+	pidRaw, pidExists := util.ReadFileSafe(pidFile)
+	supervisedPath := proxySupervisedFile()
+	supervisedRaw, supervisedExists := util.ReadFileSafe(supervisedPath)
+	if expected != nil && expected.Executable != "" {
+		current, err := proxyIdentity(proc.Pid)
+		if err != nil || !current.equal(*expected) {
+			return cause
+		}
+	}
 	if err := proxyKill(proc); err != nil {
 		return fmt.Errorf("%w; rollback kill for pid %d: %v", cause, proc.Pid, err)
 	}
 	if err := proxyWait(proc); err != nil {
 		return fmt.Errorf("%w; rollback wait for pid %d: %v", cause, proc.Pid, err)
 	}
-	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%w; rollback record removal: %v", cause, err)
+	if !proxyFileMatches(pidFile, pidRaw, pidExists) || !proxyFileMatches(supervisedPath, supervisedRaw, supervisedExists) {
+		return fmt.Errorf("%w; proxy ownership record changed during rollback — refusing to remove replacement record", cause)
 	}
-	return errors.Join(cause, clearProxySupervisedState())
+	var cleanupErr error
+	if pidExists {
+		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+			cleanupErr = fmt.Errorf("rollback record removal: %w", err)
+		}
+	}
+	if supervisedExists {
+		if err := os.Remove(supervisedPath); err != nil && !os.IsNotExist(err) {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	return errors.Join(cause, cleanupErr)
 }
