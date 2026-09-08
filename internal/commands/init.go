@@ -2,6 +2,7 @@ package commands
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
@@ -46,6 +47,7 @@ func RunInit(opts InitOptions) int {
 		MaybeSelfUpdate(opts)
 		util.L.Raw("")
 	}
+	var failures map[string][]string
 
 	allTools := core.ListTools()
 	var tools []*core.ToolManifest
@@ -186,14 +188,46 @@ func RunInit(opts InitOptions) int {
 		util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " " + a.Label + " not installed — install it first: " + util.C.Cyan(a.Homepage))
 	}
 
-	failures := map[string][]string{}
+	failures = map[string][]string{}
 	wireLogs := map[string]string{}
+	type wireChange struct {
+		tool  *core.ToolManifest
+		agent string
+	}
+	var wireChanges []wireChange
+	var cursorRollback func()
 	if contains(requested, "cursor") {
 		workspace, _, err := cursorProjectDir(true)
 		if err != nil {
 			failures["cursor"] = []string{"project rules"}
 			wireLogs["cursor"] = err.Error()
 		} else {
+			cursorHookSnapshot, snapshotErr := agents.SnapshotCursorProjectRulesHook()
+			if snapshotErr != nil {
+				failures["cursor"] = []string{"project rules hook"}
+				wireLogs["cursor"] = snapshotErr.Error()
+			} else {
+				type cursorRuleRollback struct {
+					path, content string
+				}
+				var newRules []cursorRuleRollback
+				for _, spec := range util.CursorProjectRuleSpecs() {
+					path := filepath.Join(workspace, ".cursor", "rules", spec.Filename)
+					if !util.Exists(path) {
+						newRules = append(newRules, cursorRuleRollback{path: path, content: util.CursorProjectRuleContent(spec)})
+					}
+				}
+				cursorRollback = func() {
+					if err := cursorHookSnapshot.Restore(); err != nil {
+						util.L.Sub("Cursor project-rules hook rollback failed: " + err.Error())
+					}
+					for _, rule := range newRules {
+						if raw, ok := util.ReadFileSafe(rule.path); ok && raw == rule.content {
+							_ = os.Remove(rule.path)
+						}
+					}
+				}
+			}
 			ok, err := util.InstallCursorProjectRules(workspace, opts.DryRun)
 			if err != nil || !ok {
 				failures["cursor"] = []string{"project rules"}
@@ -208,6 +242,9 @@ func RunInit(opts InitOptions) int {
 	}
 
 	if len(wireIDs) == 0 {
+		if cursorRollback != nil {
+			cursorRollback()
+		}
 		util.SetQuiet(false)
 		for id, failed := range failures {
 			util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + core.GetAgent(id).Label + ": " + joinComma(failed) + " not wired.")
@@ -244,6 +281,12 @@ func RunInit(opts InitOptions) int {
 					continue
 				}
 				okWire := false
+				wasWired := false
+				if verify, exists := tool.VerifyFor[agentID]; exists {
+					if current := verify(); current != nil {
+						wasWired = *current
+					}
+				}
 				if res, err := fn(core.RunOpts{DryRun: opts.DryRun, Upgrade: opts.Upgrade}); err == nil {
 					okWire = res
 				}
@@ -255,6 +298,11 @@ func RunInit(opts InitOptions) int {
 				}
 				if !okWire {
 					failed = append(failed, tool.Label)
+					if !opts.DryRun && !wasWired {
+						wireChanges = append(wireChanges, wireChange{tool: tool, agent: agentID})
+					}
+				} else if !opts.DryRun && !wasWired {
+					wireChanges = append(wireChanges, wireChange{tool: tool, agent: agentID})
 				}
 			}
 			return nil
@@ -269,11 +317,29 @@ func RunInit(opts InitOptions) int {
 	}
 	wireBar.Done("")
 	util.SetQuiet(false)
-	toolsPkg.EnsureInstructionSeparators(wireIDs)
+	if len(failures) > 0 && len(wireChanges) > 0 {
+		for i := len(wireChanges) - 1; i >= 0; i-- {
+			change := wireChanges[i]
+			if unwire, ok := change.tool.UnwireFor[change.agent]; ok {
+				removed, err := unwire(core.RunOpts{Agent: change.agent})
+				if err != nil {
+					util.L.Sub("rollback failed: " + change.tool.Label + " from " + change.agent + ": " + err.Error())
+				} else if !removed {
+					util.L.Sub("rollback failed: " + change.tool.Label + " from " + change.agent + ": configuration was not removed")
+				}
+			}
+		}
+	}
+	if len(failures) > 0 && cursorRollback != nil {
+		cursorRollback()
+	}
+	if len(failures) == 0 {
+		toolsPkg.EnsureInstructionSeparators(wireIDs)
+	}
 
 	var fullyOK []string
 	for _, id := range wireIDs {
-		if failures[id] == nil {
+		if failures[id] == nil && initAgentFullyWired(id, tools) {
 			fullyOK = append(fullyOK, id)
 		}
 	}
@@ -290,6 +356,20 @@ func RunInit(opts InitOptions) int {
 		return 1
 	}
 	return 0
+}
+
+func initAgentFullyWired(agentID string, tools []*core.ToolManifest) bool {
+	for _, tool := range tools {
+		verify, ok := tool.VerifyFor[agentID]
+		if !ok {
+			continue
+		}
+		wired := verify()
+		if wired == nil || !*wired {
+			return false
+		}
+	}
+	return true
 }
 
 // printEquippedAgentTree: one shared tool version block.

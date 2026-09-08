@@ -110,6 +110,22 @@ func TestAcquireProxyStartLockCreatesRuntimeDirectory(t *testing.T) {
 	}
 }
 
+func TestAcquireProxyLifecycleLockLivesOutsidePurgeRoot(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	release, err := AcquireProxyLifecycleLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if filepath.Dir(proxyLifecycleLock()) == util.HeadroomPathsResolved().Root {
+		t.Fatal("lifecycle lock must not live under purge root")
+	}
+	if _, err := os.Stat(proxyLifecycleLock()); err != nil {
+		t.Fatalf("lifecycle lock missing: %v", err)
+	}
+}
+
 func TestProxyLiveZRejectsNonHeadroomService(t *testing.T) {
 	for _, service := range []string{"other-service", "", "headroom"} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,6 +183,12 @@ func TestRunProxyDownRetainsDaemonWhenUnwireFails(t *testing.T) {
 
 func TestRunProxyUpKeepsSuccessfulWiringOnAgentFailure(t *testing.T) {
 	proxyCmdTestHome(t)
+	t.Setenv("TOKLESS_TEST", "1")
+	for _, dir := range []string{util.ClaudeCodePaths().Dir, util.CodexPathsResolved().Dir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	oldStart, oldStop := startProxy, stopProxy
 	oldEnable, oldAuto := enableProxyAutostart, proxyAutostartEnabled
 	oldRunning := proxyRunning
@@ -229,6 +236,147 @@ func TestRunProxyUpKeepsSuccessfulWiringOnAgentFailure(t *testing.T) {
 	}
 }
 
+func TestRunProxyUpReportsRollbackFailure(t *testing.T) {
+	proxyCmdTestHome(t)
+	t.Setenv("TOKLESS_TEST", "1")
+	oldStart, oldStop := startProxy, stopProxy
+	oldEnable, oldAuto, oldRunning := enableProxyAutostart, proxyAutostartEnabled, proxyRunning
+	oldConfigure, oldRemove, oldWired := configureProxyAgent, removeProxyAgent, proxyAgentWired
+	t.Cleanup(func() {
+		startProxy, stopProxy, enableProxyAutostart, proxyAutostartEnabled, proxyRunning = oldStart, oldStop, oldEnable, oldAuto, oldRunning
+		configureProxyAgent, removeProxyAgent, proxyAgentWired = oldConfigure, oldRemove, oldWired
+	})
+	startProxy = func() error { return nil }
+	stopProxy = func() error { return fmt.Errorf("injected stop failure") }
+	enableProxyAutostart = func() error { return nil }
+	proxyAutostartEnabled = func() bool { return true }
+	proxyRunning = func() bool { return false }
+	configureProxyAgent = func(id string) bool { return id == "claude" }
+	removeProxyAgent = func(string) bool { return true }
+	proxyAgentWired = func(string) bool { return false }
+
+	logs, err := util.CaptureLogs(func() error {
+		if got := RunProxyUp(InitOptions{Agents: []string{"claude", "codex"}}); got != 1 {
+			return fmt.Errorf("exit=%d", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs, "proxy rollback failed: injected stop failure") {
+		t.Fatalf("rollback failure not reported: %q", logs)
+	}
+}
+
+func TestRunProxyUpReportsGrokConfigureFailureAndPreservesState(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	config := `[model_providers.local]
+base_url = "https://provider.example/v1"
+api_key = "sk-local"
+
+[models]
+default = "local-model"
+
+[model.local-model]
+model_provider = "local"
+`
+	configFile := filepath.Join(grokHome, "config.toml")
+	if err := os.WriteFile(configFile, []byte(config), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	oldStart, oldStop, oldRunning := startProxy, stopProxy, proxyRunning
+	startProxy = func() error { return nil }
+	stopProxy = func() error { return nil }
+	proxyRunning = func() bool { return false }
+	t.Cleanup(func() { startProxy, stopProxy, proxyRunning = oldStart, oldStop, oldRunning })
+	util.SetWriteFileOverride(func(path, content string) error {
+		if path == configFile {
+			return fmt.Errorf("injected Grok config write failure")
+		}
+		return os.WriteFile(path, []byte(content), 0o600)
+	})
+	t.Cleanup(func() { util.SetWriteFileOverride(nil) })
+
+	exit := 0
+	logs, err := util.CaptureLogs(func() error {
+		exit = RunProxyUp(InitOptions{Agents: []string{"grok"}})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exit != 1 {
+		t.Fatalf("exit=%d logs=%q", exit, logs)
+	}
+	if !strings.Contains(logs, "injected Grok config write failure") {
+		t.Fatalf("configure failure not surfaced: %q", logs)
+	}
+	if got, _ := util.ReadFileSafe(configFile); got != config {
+		t.Fatal("Grok config changed after command-facing configure failure")
+	}
+	if _, ok := util.ReadFileSafe(filepath.Join(util.HeadroomPathsResolved().Root, "grok.proxy.stash.json")); ok {
+		t.Fatal("Grok stash survived command-facing configure failure")
+	}
+	if info, err := os.Stat(configFile); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("config mode=%v err=%v", info.Mode().Perm(), err)
+	}
+}
+
+func TestRunProxyDownReportsGrokRemoveFailureAndPreservesState(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	configFile := filepath.Join(grokHome, "config.toml")
+	if err := os.WriteFile(configFile, []byte(`[model_providers.local]
+base_url = "https://provider.example/v1"
+api_key = "sk-local"
+`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := agents.ConfigureGrokProxyChecked(); err != nil {
+		t.Fatal(err)
+	}
+	configBefore, _ := util.ReadFileSafe(configFile)
+	stashFile := filepath.Join(util.HeadroomPathsResolved().Root, "grok.proxy.stash.json")
+	stashBefore, _ := util.ReadFileSafe(stashFile)
+	writes := 0
+	util.SetWriteFileOverride(func(path, content string) error {
+		if path == configFile {
+			writes++
+			if writes == 1 {
+				return fmt.Errorf("injected Grok remove write failure")
+			}
+		}
+		return os.WriteFile(path, []byte(content), 0o600)
+	})
+	t.Cleanup(func() { util.SetWriteFileOverride(nil) })
+
+	logs, err := util.CaptureLogs(func() error {
+		if got := RunProxyDown(InitOptions{Agents: []string{"grok"}}); got != 1 {
+			return fmt.Errorf("exit=%d", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs, "injected Grok remove write failure") {
+		t.Fatalf("remove failure not surfaced: %q", logs)
+	}
+	if got, _ := util.ReadFileSafe(configFile); got != configBefore {
+		t.Fatal("Grok config changed after command-facing remove failure")
+	}
+	if got, _ := util.ReadFileSafe(stashFile); got != stashBefore {
+		t.Fatal("Grok stash changed after command-facing remove failure")
+	}
+	if info, err := os.Stat(configFile); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("config mode=%v err=%v", info.Mode().Perm(), err)
+	}
+}
+
 func TestRunProxyUpDryRunMakesNoChanges(t *testing.T) {
 	proxyCmdTestHome(t)
 	oldStart, oldEnable := startProxy, enableProxyAutostart
@@ -250,6 +398,20 @@ func TestRunProxyUpDryRunMakesNoChanges(t *testing.T) {
 	}
 }
 
+func TestValidateProxyUpAgentsFailsClosedOnForeignState(t *testing.T) {
+	proxyCmdTestHome(t)
+	t.Setenv("TOKLESS_TEST", "1")
+	if err := os.MkdirAll(filepath.Dir(util.ClaudeCodePaths().Settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(util.ClaudeCodePaths().Settings, []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://foreign.example"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProxyUpAgents([]string{"claude"}); err == nil {
+		t.Fatal("foreign proxy state must fail closed")
+	}
+}
+
 func TestPlanAProxyPortsPinned(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_PORT", "")
 	t.Setenv("TOKLESS_COPILOT_PROXY_PORT", "")
@@ -268,19 +430,133 @@ func TestPlanAProxyPortsPinned(t *testing.T) {
 	}
 }
 
+func TestRunProxyUpStartsHeadroomBeforeConfiguringGrok(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok-4.6\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldStart, oldStartGrok, oldStopGrok, oldOwned, oldEnable, oldAuto, oldRunning := startProxy, startGrokProxy, stopGrokProxy, grokProxyOwned, enableProxyAutostart, proxyAutostartEnabled, proxyRunning
+	startProxy = func() error {
+		raw, err := os.ReadFile(filepath.Join(grokHome, "config.toml"))
+		if err != nil || string(raw) != "[models]\ndefault = \"grok-4.6\"\n" {
+			t.Fatalf("Grok configured before Headroom start: %q (err=%v)", raw, err)
+		}
+		return nil
+	}
+	startGrokProxy = func() error {
+		raw, err := os.ReadFile(filepath.Join(grokHome, "config.toml"))
+		if err != nil || string(raw) == "# test\n" {
+			t.Fatalf("Grok OAuth proxy started before Grok configuration: %q (err=%v)", raw, err)
+		}
+		return nil
+	}
+	enableProxyAutostart = func() error { return nil }
+	proxyAutostartEnabled = func() bool { return true }
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() {
+		startProxy, startGrokProxy, stopGrokProxy, grokProxyOwned = oldStart, oldStartGrok, oldStopGrok, oldOwned
+		enableProxyAutostart, proxyAutostartEnabled, proxyRunning = oldEnable, oldAuto, oldRunning
+	})
+	if got := RunProxyUp(InitOptions{Agents: []string{"grok"}}); got != 0 {
+		t.Fatalf("exit = %d, want 0", got)
+	}
+	if got := agents.DetectProxy("grok"); got.State != agents.ProxyStateManaged {
+		t.Fatalf("Grok state = %s (%s), want managed", got.State, got.Detail)
+	}
+}
 
-func TestRunProxyUpGrokKeepsNativeOAuthSeparate(t *testing.T) {
+func TestRunProxyUpStopsOwnedGrokDaemonWhenStartupReturnsError(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok-4.6\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldStart, oldStop, oldOwned := startGrokProxy, stopGrokProxy, grokProxyOwned
+	oldRunning := proxyRunning
+	startGrokProxy = func() error { return os.ErrPermission }
+	stopped := 0
+	stopGrokProxy = func() error { stopped++; return nil }
+	grokProxyOwned = func() bool { return true }
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() {
+		startGrokProxy, stopGrokProxy, grokProxyOwned, proxyRunning = oldStart, oldStop, oldOwned, oldRunning
+	})
+
+	if got := RunProxyUp(InitOptions{Agents: []string{"grok"}}); got != 1 {
+		t.Fatalf("exit = %d, want 1", got)
+	}
+	if stopped != 1 {
+		t.Fatalf("owned Grok daemon stops = %d, want 1", stopped)
+	}
+}
+
+func TestRunProxyUpStopsNewGrokDaemonWhenLaterAgentFails(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok-4.6\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldStart, oldStop := startProxy, stopProxy
+	oldStartGrok, oldStopGrok := startGrokProxy, stopGrokProxy
+	oldEnable, oldAuto, oldRunning := enableProxyAutostart, proxyAutostartEnabled, proxyRunning
+	oldConfigure, oldRemove, oldWired := configureProxyAgent, removeProxyAgent, proxyAgentWired
+	t.Cleanup(func() {
+		startProxy, stopProxy = oldStart, oldStop
+		startGrokProxy, stopGrokProxy = oldStartGrok, oldStopGrok
+		enableProxyAutostart, proxyAutostartEnabled, proxyRunning = oldEnable, oldAuto, oldRunning
+		configureProxyAgent, removeProxyAgent, proxyAgentWired = oldConfigure, oldRemove, oldWired
+	})
+	started, stopped := 0, 0
+	startProxy = func() error { return nil }
+	stopProxy = func() error { return nil }
+	startGrokProxy = func() error { started++; return nil }
+	stopGrokProxy = func() error { stopped++; return nil }
+	enableProxyAutostart = func() error { return nil }
+	proxyAutostartEnabled = func() bool { return true }
+	proxyRunning = func() bool { return true }
+	configureProxyAgent = func(id string) bool { return id != "codex" }
+	removeProxyAgent = func(string) bool { return true }
+	proxyAgentWired = func(string) bool { return false }
+
+	if got := RunProxyUp(InitOptions{Agents: []string{"grok", "codex"}}); got != 1 {
+		t.Fatalf("exit = %d, want 1", got)
+	}
+	if started != 1 || stopped != 1 {
+		t.Fatalf("Grok daemon lifecycle start=%d stop=%d, want 1/1", started, stopped)
+	}
+}
+
+func TestRunProxyUpGrokOnlyPreservesSharedPreference(t *testing.T) {
 	proxyCmdTestHome(t)
 	grokHome := t.TempDir()
 	t.Setenv("GROK_HOME", grokHome)
 	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("# test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := util.SetProxyRoutingEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	oldStart, oldRunning := startGrokProxy, proxyRunning
+	startGrokProxy = func() error { return nil }
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() { startGrokProxy, proxyRunning = oldStart, oldRunning })
+
 	if got := RunProxyUp(InitOptions{Agents: []string{"grok"}}); got != 0 {
 		t.Fatalf("exit = %d, want 0", got)
 	}
-	raw, err := os.ReadFile(filepath.Join(grokHome, "config.toml"))
-	if err != nil || string(raw) != "# test\n" {
-		t.Fatalf("grok config changed: %q (err=%v)", raw, err)
+	if util.ProxyRoutingEnabled() {
+		t.Fatal("Grok-only proxy up enabled shared routing preference")
+	}
+}
+
+func TestRunProxyUpRejectsProxyLanePortCollision(t *testing.T) {
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "8788")
+	t.Setenv("TOKLESS_GROK_PROXY_PORT", "8788")
+	if err := validateProxyLanePorts(); err == nil {
+		t.Fatal("duplicate proxy lane ports must fail closed")
 	}
 }

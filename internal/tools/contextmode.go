@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -557,12 +558,30 @@ func ctxWireCopilot(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would add context-mode MCP + hooks + copilot-instructions.md for copilot")
 		return true, nil
 	}
-	agents.ConfigureCopilotMcp("context-mode")
-	agents.ConfigureCopilotIdeMcp("context-mode")
-	agents.InstallCopilotContextModeHook()
-	agents.InstallCopilotIdeContextModeHook()
-	WriteOwner("copilot", "context-mode")
-	agents.SyncCopilotIdeInstructions()
+	err := withCopilotTransaction(func() error {
+		if _, _, err := agents.ConfigureCopilotMcpSafe("context-mode"); err != nil {
+			return err
+		}
+		if _, _, err := agents.ConfigureCopilotIdeMcpSafe("context-mode"); err != nil {
+			return err
+		}
+		if err := agents.InstallCopilotContextModeHookSafe(); err != nil {
+			return err
+		}
+		if err := agents.InstallCopilotIdeContextModeHookSafe(); err != nil {
+			return err
+		}
+		if !WriteOwner("copilot", "context-mode") && !HasOwner("copilot", "context-mode") {
+			return fmt.Errorf("failed to write Copilot context-mode owner")
+		}
+		if err := agents.SyncCopilotIdeInstructionsSafe(); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
 	return agents.CopilotMcpHas("context-mode") && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook(), nil
 }
 
@@ -570,12 +589,28 @@ func ctxUnwireCopilot(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	agents.RemoveCopilotMcp("context-mode")
-	agents.RemoveCopilotIdeMcp("context-mode")
-	agents.RemoveCopilotContextModeHook()
-	agents.RemoveCopilotIdeContextModeHook()
-	RemoveOwner("copilot", "context-mode")
-	return true, nil
+	err := withCopilotTransaction(func() error {
+		if _, err := agents.RemoveCopilotMcpSafe("context-mode"); err != nil {
+			return err
+		}
+		if _, err := agents.RemoveCopilotIdeMcpSafe("context-mode"); err != nil {
+			return err
+		}
+		if err := agents.RemoveCopilotContextModeHookSafe(); err != nil {
+			return err
+		}
+		if err := agents.RemoveCopilotIdeContextModeHookSafe(); err != nil {
+			return err
+		}
+		if err := RemoveOwnerSafe("copilot", "context-mode"); err != nil {
+			return err
+		}
+		if err := agents.SyncCopilotIdeInstructionsSafe(); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err == nil, err
 }
 
 // --- verify ---

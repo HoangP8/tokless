@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -917,6 +918,64 @@ func InstallCursorProjectRulesHook() bool {
 		}
 	}
 	return true
+}
+
+type CursorProjectRulesHookSnapshot struct {
+	files []cursorProjectRulesHookFileSnapshot
+}
+
+type cursorProjectRulesHookFileSnapshot struct {
+	path   string
+	raw    string
+	exists bool
+}
+
+func SnapshotCursorProjectRulesHook() (CursorProjectRulesHookSnapshot, error) {
+	snapshot := CursorProjectRulesHookSnapshot{}
+	for _, path := range cursorHooksFiles() {
+		file := cursorProjectRulesHookFileSnapshot{path: path}
+		if raw, ok := util.ReadFileSafe(path); ok {
+			file.raw, file.exists = raw, true
+		} else if _, err := os.Stat(path); err != nil && !os.IsNotExist(err) {
+			return CursorProjectRulesHookSnapshot{}, err
+		}
+		snapshot.files = append(snapshot.files, file)
+	}
+	return snapshot, nil
+}
+
+func (snapshot CursorProjectRulesHookSnapshot) Restore() error {
+	for _, file := range snapshot.files {
+		if file.exists {
+			if err := util.WriteFile(file.path, file.raw); err != nil {
+				return err
+			}
+			continue
+		}
+		current, ok := util.ReadFileSafe(file.path)
+		if !ok || !hasCursorProjectRulesHook(file.path, cursorProjectRulesHookCommandFor(cursorTargetBridge(file.path))) {
+			continue
+		}
+		if !removeCursorProjectRulesHook(file.path) {
+			return fmt.Errorf("restore Cursor project-rules hook %s", file.path)
+		}
+		current, stillExists := util.ReadFileSafe(file.path)
+		if stillExists && cursorProjectRulesHookScaffold(current) {
+			if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cursorProjectRulesHookScaffold(raw string) bool {
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil || cfg.Len() != 1 {
+		return false
+	}
+	version, ok := cfg.Get("version")
+	return ok && cursorVersionOne(version)
 }
 
 func removeCursorProjectRulesHook(path string) bool {

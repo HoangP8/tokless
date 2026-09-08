@@ -9,6 +9,21 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+type purgeOps struct {
+	proxyRunning                 func() bool
+	proxyAutostartEnabled        func() bool
+	startProxy                   func() error
+	enableAutostart              func() error
+	copilotRunning               func() bool
+	startCopilotProxy            func() error
+	acquireLifecycle             func() (func(), error)
+	stopProxyPreservingAutostart func() error
+	stopCopilotProxy             func() error
+	disableAutostart             func() error
+	removeAll                    func(string) error
+	removeFile                   func(string) error
+}
+
 func RunDisable(opts InitOptions) int {
 	return disableImpl(opts, false, "Disabled")
 }
@@ -37,13 +52,81 @@ func purgeBinaries(opts InitOptions) int {
 	return runPurge()
 }
 
-// runPurge removes rtk binary and npm globals. Best-effort; errors logged.
+// runPurge removes tokless-managed binaries, packages, and daemon state.
 func runPurge() int {
-	n := 0
+	return runPurgeWith(purgeOps{
+		proxyRunning:                 headroompkg.ProxyRunning,
+		proxyAutostartEnabled:        headroompkg.ProxyAutostartEnabled,
+		startProxy:                   headroompkg.StartProxy,
+		enableAutostart:              headroompkg.EnableProxyAutostart,
+		copilotRunning:               headroompkg.CopilotProxyRunning,
+		startCopilotProxy:            headroompkg.StartCopilotProxy,
+		acquireLifecycle:             headroompkg.AcquireProxyLifecycleLock,
+		stopProxyPreservingAutostart: headroompkg.StopProxyPreservingAutostart,
+		stopCopilotProxy:             headroompkg.StopCopilotProxy,
+		disableAutostart:             headroompkg.DisableProxyAutostart,
+		removeAll:                    os.RemoveAll,
+		removeFile:                   os.Remove,
+	})
+}
+
+func runPurgeWith(ops purgeOps) int {
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return 0
+	}
+	releaseLifecycle, err := ops.acquireLifecycle()
+	if err != nil {
+		util.L.Sub("proxy lifecycle lock: " + err.Error())
+		return 1
+	}
+	defer releaseLifecycle()
+	var stopErrs []error
+	proxyWasRunning := ops.proxyRunning()
+	autostartWasEnabled := ops.proxyAutostartEnabled()
+	copilotWasRunning := ops.copilotRunning()
+	restoreLifecycle := func() {
+		if proxyWasRunning && !ops.proxyRunning() {
+			if err := ops.startProxy(); err != nil {
+				util.L.Sub("headroom proxy restore: " + err.Error())
+			}
+		}
+		if autostartWasEnabled && !ops.proxyAutostartEnabled() {
+			if err := ops.enableAutostart(); err != nil {
+				util.L.Sub("headroom autostart restore: " + err.Error())
+			}
+		}
+		if copilotWasRunning && !ops.copilotRunning() {
+			if err := ops.startCopilotProxy(); err != nil {
+				util.L.Sub("Copilot proxy restore: " + err.Error())
+			}
+		}
+	}
+	if err := ops.stopProxyPreservingAutostart(); err != nil {
+		util.L.Sub("headroom proxy: " + err.Error())
+		stopErrs = append(stopErrs, err)
+	}
+	if err := ops.stopCopilotProxy(); err != nil {
+		util.L.Sub("Copilot proxy: " + err.Error())
+		stopErrs = append(stopErrs, err)
+	}
+	if len(stopErrs) > 0 {
+		restoreLifecycle()
+		return 1
+	}
+	if err := ops.disableAutostart(); err != nil {
+		util.L.Sub("headroom autostart: " + err.Error())
+		restoreLifecycle()
+		return 1
+	}
+	failed := false
 	if p := util.ResolveRtkBin(); p != "" && util.Exists(p) {
 		if r := util.Run(p, []string{"init", "--uninstall"}, util.RunOptions{Capture: true}); r.Code == 0 {
-			_ = os.Remove(p)
-			n++
+			if err := ops.removeFile(p); err != nil {
+				util.L.Sub("rtk binary: " + err.Error())
+				failed = true
+			}
+		} else {
+			failed = true
 		}
 	}
 	npm := util.ResolveNpmBinary()
@@ -51,26 +134,30 @@ func runPurge() int {
 		for _, pkg := range []string{"context-mode", "@colbymchenry/codegraph"} {
 			if util.NpmInstalledVersionExported(pkg) != nil {
 				if r := util.Run(npm, []string{"uninstall", "-g", pkg}, util.RunOptions{Capture: true}); r.Code == 0 {
-					n++
+					continue
 				}
+				failed = true
 			}
 		}
 	}
 	if util.Which("pi") != "" {
 		for _, src := range agents.PiPackageList() {
 			if agents.PiSourceHas(src) {
-				if agents.PiRemoveSource(src) {
-					n++
+				if !agents.PiRemoveSource(src) {
+					failed = true
 				}
 			}
 		}
 	}
-	_ = headroompkg.StopProxy()
-	_ = headroompkg.DisableProxyAutostart()
-	if err := os.RemoveAll(util.HeadroomPathsResolved().Root); err != nil {
-		return n + 1
+	if len(stopErrs) == 0 {
+		if err := ops.removeAll(util.HeadroomPathsResolved().Root); err != nil {
+			failed = true
+		}
 	}
-	return n
+	if failed {
+		return 1
+	}
+	return 0
 }
 
 func disableImpl(opts InitOptions, removeTools bool, verb string) int {
@@ -85,7 +172,7 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	}
 	if len(detected) == 0 {
 		if removeTools && !opts.DryRun {
-			_ = purgeBinaries(opts)
+			return purgeBinaries(opts)
 		}
 		util.L.Raw("  " + util.C.Gray("nothing wired."))
 		util.L.Raw("")
@@ -108,6 +195,8 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		return 0
 	}
 	cursorRulesFailed := false
+	unwireFailed := false
+	var unwireFailures []string
 	if removeTools && !opts.DryRun && contains(agentIDs, "cursor") && len(tools) == len(allTools) {
 		if !agents.RemoveCursorProjectRulesHook() {
 			cursorRulesFailed = true
@@ -122,7 +211,17 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 		_ = util.WithSilencedLogs(func() error {
 			for _, tool := range tools {
 				if unwire, ok := tool.UnwireFor[id]; ok && !opts.DryRun {
-					_, _ = unwire(core.RunOpts{DryRun: opts.DryRun})
+					wasWired := false
+					if verify, exists := tool.VerifyFor[id]; exists && tool.ID != "headroom" {
+						if current := verify(); current != nil {
+							wasWired = *current
+						}
+					}
+					ok, err := unwire(core.RunOpts{DryRun: opts.DryRun})
+					if err != nil || (!ok && wasWired) {
+						unwireFailed = true
+						unwireFailures = append(unwireFailures, id+"/"+tool.ID)
+					}
 				}
 			}
 			return nil
@@ -131,9 +230,21 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	}
 	bar.Done("")
 
-	if removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {
-		_ = purgeBinaries(opts)
-		_ = os.Remove(util.InstallMarkerPath())
+	if unwireFailed {
+		util.L.Err("one or more Tokless-owned configurations could not be removed")
+		for _, failure := range unwireFailures {
+			util.L.Sub("unwire failed: " + failure)
+		}
+	}
+
+	if !unwireFailed && removeTools && !opts.DryRun && len(tools) == len(allTools) && len(agentIDs) == len(detected) {
+		purgeFailed := purgeBinaries(opts) != 0
+		if !purgeFailed {
+			_ = os.Remove(util.InstallMarkerPath())
+		}
+		if purgeFailed {
+			return 1
+		}
 	}
 
 	labels := make([]string, len(agentIDs))
@@ -148,7 +259,7 @@ func disableImpl(opts InitOptions, removeTools bool, verb string) int {
 	util.L.Raw("  " + util.C.Green(util.Sym.Check) + " " + verb + " " + util.C.Bold(joinComma(toolLabels)) +
 		util.C.Gray(" from ") + util.C.Bold(joinComma(labels)) + ".")
 	util.L.Raw("")
-	if cursorRulesFailed {
+	if cursorRulesFailed || unwireFailed {
 		return 1
 	}
 	return 0

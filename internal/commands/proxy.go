@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -24,6 +25,40 @@ func resolveProxyAgents(opts InitOptions) []string {
 	return ProxyAgentIDs()
 }
 
+func completeProxyAgentSelection(ids []string) bool {
+	all := ProxyAgentIDs()
+	if len(ids) != len(all) {
+		return false
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
+	}
+	for _, id := range all {
+		if !seen[id] {
+			return false
+		}
+	}
+	return true
+}
+
+func resolveProxyUpAgents(opts InitOptions) []string {
+	ids := resolveProxyAgents(opts)
+	var out []string
+	for _, id := range ids {
+		if id == "copilot" {
+			if agents.CopilotCLIProxyApplicable() || agents.CopilotVSCodeProxyApplicable() {
+				out = append(out, id)
+			}
+			continue
+		}
+		if agents.ProxyAgentApplicable(id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func resolveHeadroomProxyAgents(opts InitOptions) []string {
 	var out []string
 	for _, id := range resolveProxyAgents(opts) {
@@ -32,6 +67,47 @@ func resolveHeadroomProxyAgents(opts InitOptions) []string {
 		}
 	}
 	return out
+}
+
+func validateProxyUpAgents(ids []string) error {
+	for _, id := range ids {
+		if proxyInstructions(id) != nil {
+			continue
+		}
+		if id == "copilot" {
+			if !agents.CopilotCLIProxyApplicable() && !agents.CopilotVSCodeProxyApplicable() {
+				continue
+			}
+		} else if !agents.ProxyAgentApplicable(id) {
+			continue
+		}
+		detection := agents.DetectProxy(id)
+		switch detection.State {
+		case agents.ProxyStateForeignBYOK, agents.ProxyStateConflict, agents.ProxyStateUnreadable:
+			return fmt.Errorf("%s: refusing proxy up with %s state (%s)", id, detection.State, detection.Detail)
+		}
+	}
+	return nil
+}
+
+func validateProxyLanePorts() error {
+	ports := []struct {
+		name string
+		port int
+	}{
+		{"shared Headroom", headroompkg.ProxyPort()},
+		{"Grok OAuth", util.GrokOAuthProxyPort()},
+		{"Copilot VS Code", agents.CopilotProxyPort()},
+		{"Copilot CLI", agents.CopilotCLIProxyPort()},
+	}
+	seen := make(map[int]string, len(ports))
+	for _, lane := range ports {
+		if previous, ok := seen[lane.port]; ok {
+			return fmt.Errorf("proxy lane ports conflict: %s and %s both use %d", previous, lane.name, lane.port)
+		}
+		seen[lane.port] = lane.name
+	}
+	return nil
 }
 
 // proxyInstructions returns the exact manual/env guidance for agents that
@@ -55,12 +131,22 @@ func configureProxyAgentImpl(id string) bool {
 
 var removeProxyAgent = removeProxyAgentImpl
 
+var removeProxyAgentChecked = removeProxyAgentCheckedImpl
+
 func removeProxyAgentImpl(id string) bool {
 	removed := agents.RemoveProxyAgent(id)
 	if removed && proxyAgentWired(id) {
 		return false
 	}
 	return removed
+}
+
+func removeProxyAgentCheckedImpl(id string) (bool, error) {
+	removed, err := agents.RemoveProxyAgentChecked(id)
+	if err == nil && removed && proxyAgentWired(id) {
+		return false, nil
+	}
+	return removed, err
 }
 
 var proxyAgentWired = proxyAgentWiredImpl
@@ -75,35 +161,54 @@ var enableProxyAutostart = headroompkg.EnableProxyAutostart
 var disableProxyAutostart = headroompkg.DisableProxyAutostart
 var proxyAutostartEnabled = headroompkg.ProxyAutostartEnabled
 var proxyRunning = headroompkg.ProxyRunning
-var configureCopilotCLI = agents.ConfigureCopilotCLIProxy
+var stopCopilotProxy = headroompkg.StopCopilotProxy
+var startCopilotProxy = headroompkg.StartCopilotProxy
+var copilotProxyRunning = headroompkg.CopilotProxyRunning
+var startGrokProxy = headroompkg.StartGrokOAuthProxy
+var stopGrokProxy = headroompkg.StopGrokOAuthProxy
+var grokProxyOwned = headroompkg.GrokOAuthProxyOwned
 
 // RunProxyUp starts the headroom proxy daemon and points agents at it.
 func RunProxyUp(opts InitOptions) int {
 	cmdHeader("proxy up", "start the headroom HTTP proxy and point agents at it")
-	selectedAgents := resolveProxyAgents(opts)
-	headroomAgents := resolveHeadroomProxyAgents(opts)
-	if len(headroomAgents) == 0 {
-		if hasGrokAgent(selectedAgents) {
-			util.L.Raw("  " + util.C.Gray("grok: native OAuth kept separate; shared Headroom routing skipped"))
-		}
+	selectedAgents := resolveProxyUpAgents(opts)
+	headroomAgents := resolveHeadroomProxyAgents(InitOptions{Agents: selectedAgents})
+	grokSelected := hasGrokAgent(selectedAgents) && agents.ProxyAgentApplicable("grok")
+	if len(headroomAgents) == 0 && !grokSelected {
 		return 0
 	}
+	if err := validateProxyUpAgents(selectedAgents); err != nil {
+		util.L.Err(err.Error())
+		return 1
+	}
+	if err := validateProxyLanePorts(); err != nil {
+		util.L.Err(err.Error())
+		return 1
+	}
 	if opts.DryRun {
+		if grokSelected {
+			util.L.Raw("  " + util.C.Gray("grok: would configure native OAuth and BYOK routing"))
+		}
 		for _, id := range headroomAgents {
 			if proxyInstructions(id) != nil {
 				continue
 			}
-			if agents.ProxyAgentApplicable(id) {
-				if id == "copilot" {
-					util.L.Raw("  " + util.C.Gray(id+": would install managed CLI wrapper on port "+strconv.Itoa(agents.CopilotCLIProxyPort())+" and VS Code proxy on port "+strconv.Itoa(agents.CopilotProxyPort())))
-				} else {
-					util.L.Raw("  " + util.C.Gray(id+": would wire to "+agents.ProxyEndpointFor(id)))
+			if id == "copilot" {
+				if !agents.CopilotCLIProxyApplicable() && !agents.CopilotVSCodeProxyApplicable() {
+					continue
 				}
+			} else if !agents.ProxyAgentApplicable(id) {
+				continue
+			}
+			if id == "copilot" {
+				util.L.Raw("  " + util.C.Gray(id+": would install managed CLI wrapper on port "+strconv.Itoa(agents.CopilotCLIProxyPort())+" and VS Code proxy on port "+strconv.Itoa(agents.CopilotProxyPort())))
+			} else {
+				util.L.Raw("  " + util.C.Gray(id+": would wire to "+agents.ProxyEndpointFor(id)))
 			}
 		}
 		return 0
 	}
-	if contains(headroomAgents, "copilot") && agents.ProxyAgentApplicable("copilot") {
+	if contains(headroomAgents, "copilot") && (agents.CopilotCLIProxyApplicable() || agents.CopilotVSCodeProxyApplicable()) {
 		if err := agents.ValidateCopilotProxyPorts(); err != nil {
 			util.L.Err(err.Error())
 			return 1
@@ -117,33 +222,91 @@ func RunProxyUp(opts InitOptions) int {
 	defer lifecycleRelease()
 	preferenceSet := util.ProxyRoutingPreferenceSet()
 	preferenceEnabled := util.ProxyRoutingEnabled()
-	if err := util.SetProxyRoutingEnabled(true); err != nil {
-		util.L.Err("proxy preference: " + err.Error())
-		return 1
+	sharedNeeded := len(headroomAgents) > 0 || (grokSelected && agents.GrokProxyUsesHeadroom())
+	if sharedNeeded {
+		if err := util.SetProxyRoutingEnabled(true); err != nil {
+			util.L.Err("proxy preference: " + err.Error())
+			return 1
+		}
 	}
-	if headroompkg.ResolveHeadroomBin() == "" {
+	if sharedNeeded && headroompkg.ResolveHeadroomBin() == "" {
 		util.L.Err("headroom binary not found — run `tokless` first to install headroom")
-		_ = restoreProxyPreference(preferenceSet, preferenceEnabled)
+		logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
 		return 1
 	}
 	wasRunning := proxyRunning()
-	if err := startProxy(); err != nil {
-		util.L.Err(err.Error())
-		_ = restoreProxyPreference(preferenceSet, preferenceEnabled)
-		return 1
+	sharedStarted := false
+	if sharedNeeded {
+		if err := startProxy(); err != nil {
+			util.L.Err(err.Error())
+			logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
+			return 1
+		}
+		sharedStarted = !wasRunning
 	}
 	wired, failed := 0, 0
 	configured := make([]string, 0)
 	agentsBefore := make(map[string]bool)
+	grokConfigured := false
+	grokStarted := false
+	grokRunningBefore := headroompkg.GrokOAuthProxyRunning()
+	if grokSelected {
+		wasWired := agents.GrokProxyWired()
+		changed, _, configureErr := agents.ConfigureGrokProxyChecked()
+		if configureErr != nil {
+			util.L.Err("grok: configure failed: " + configureErr.Error())
+			if sharedStarted {
+				logProxyRollbackError("proxy rollback", stopProxy())
+			}
+			logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
+			return 1
+		}
+		if !changed && !wasWired && !agents.GrokProxyWired() {
+			if agents.DetectProxy("grok").State != agents.ProxyStateUnconfigured {
+				util.L.Err("grok: not wired (differing existing config value, or write failed)")
+				if sharedStarted {
+					logProxyRollbackError("proxy rollback", stopProxy())
+				}
+				logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
+				return 1
+			}
+		}
+		grokConfigured = !wasWired && agents.GrokProxyWired()
+		if agents.GrokOAuthProxyWired() {
+			if err := startGrokProxy(); err != nil {
+				util.L.Err("grok OAuth proxy: " + err.Error())
+				if !grokRunningBefore && grokProxyOwned() {
+					if stopErr := stopGrokProxy(); stopErr != nil {
+						util.L.Sub("grok proxy rollback failed: " + stopErr.Error())
+					}
+				}
+				if grokConfigured {
+					if !agents.RemoveGrokProxy() {
+						util.L.Sub("agent rollback failed: grok")
+					}
+				}
+				if sharedStarted {
+					logProxyRollbackError("proxy rollback", stopProxy())
+				}
+				logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
+				return 1
+			}
+			grokStarted = !grokRunningBefore
+		}
+	}
 	for _, id := range headroomAgents {
 		if proxyInstructions(id) != nil {
 			continue
 		}
-		if !agents.ProxyAgentApplicable(id) {
+		if id == "copilot" {
+			if !agents.CopilotCLIProxyApplicable() && !agents.CopilotVSCodeProxyApplicable() {
+				continue
+			}
+		} else if !agents.ProxyAgentApplicable(id) {
 			continue
 		}
 		if id == "copilot" {
-			agentsBefore[id] = agents.CopilotCLIProxyWired()
+			agentsBefore[id] = agents.CopilotProxyWired()
 		} else {
 			agentsBefore[id] = proxyAgentWired(id)
 		}
@@ -167,6 +330,16 @@ func RunProxyUp(opts InitOptions) int {
 		}
 	}
 	rollback := func() {
+		if grokStarted {
+			if err := stopGrokProxy(); err != nil {
+				util.L.Sub("grok proxy rollback failed: " + err.Error())
+			}
+		}
+		if grokConfigured {
+			if !agents.RemoveGrokProxy() {
+				util.L.Sub("agent rollback failed: grok")
+			}
+		}
 		for i := len(configured) - 1; i >= 0; i-- {
 			id := configured[i]
 			if removeProxyAgent(id) {
@@ -174,7 +347,7 @@ func RunProxyUp(opts InitOptions) int {
 			}
 			util.L.Sub("agent rollback failed: " + id)
 		}
-		if !wasRunning {
+		if sharedStarted {
 			if err := stopProxy(); err != nil {
 				util.L.Sub("proxy rollback failed: " + err.Error())
 			}
@@ -182,15 +355,19 @@ func RunProxyUp(opts InitOptions) int {
 	}
 	if failed > 0 {
 		rollback()
-		_ = restoreProxyPreference(preferenceSet, preferenceEnabled)
+		logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
 		return 1
 	}
-	if err := enableProxyAutostart(); err != nil {
+	if len(headroomAgents) == 0 {
+		if grokSelected {
+			util.L.Sub("shared Headroom: not needed for Grok OAuth")
+		}
+	} else if err := enableProxyAutostart(); err != nil {
 		util.L.Sub("autostart: " + err.Error())
 		if startErr := startProxy(); startErr != nil {
 			util.L.Err(startErr.Error())
 			rollback()
-			_ = restoreProxyPreference(preferenceSet, preferenceEnabled)
+			logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
 			return 1
 		}
 	} else if proxyAutostartEnabled() {
@@ -198,7 +375,7 @@ func RunProxyUp(opts InitOptions) int {
 	} else if !proxyRunning() {
 		util.L.Err("proxy did not remain running")
 		rollback()
-		_ = restoreProxyPreference(preferenceSet, preferenceEnabled)
+		logProxyRollbackError("proxy preference rollback", restoreProxyPreference(preferenceSet, preferenceEnabled))
 		return 1
 	}
 	util.L.Raw("")
@@ -208,11 +385,17 @@ func RunProxyUp(opts InitOptions) int {
 	if wired == 0 {
 		util.L.Raw("  " + util.C.Gray("No agents wired."))
 	}
-	if hasGrokAgent(selectedAgents) {
+	if grokSelected {
 		util.L.Raw("")
 		util.L.Raw("  " + util.C.Dim("Grok CLI OAuth: native and separate from shared Headroom routing."))
 	}
 	return 0
+}
+
+func logProxyRollbackError(action string, err error) {
+	if err != nil {
+		util.L.Err(action + ": " + err.Error())
+	}
 }
 
 func restoreProxyPreference(wasSet, wasEnabled bool) error {
@@ -248,6 +431,9 @@ func RunProxyDown(opts InitOptions) int {
 	defer lifecycleRelease()
 	failed := 0
 	selected := opts.Agents != nil
+	proxyAgents := resolveProxyAgents(opts)
+	complete := !selected || completeProxyAgentSelection(proxyAgents)
+	grokSelected := contains(proxyAgents, "grok")
 	preferenceSet := util.ProxyRoutingPreferenceSet()
 	preferenceEnabled := util.ProxyRoutingEnabled()
 	restorePreference := func() {
@@ -256,25 +442,53 @@ func RunProxyDown(opts InitOptions) int {
 		}
 	}
 	wiredBefore := map[string]bool{}
-	copilotCLIBefore := false
+	copilotBefore := false
+	var copilotSnapshot agents.CopilotProxySnapshot
 	if contains(resolveProxyAgents(opts), "copilot") {
-		copilotCLIBefore = agents.CopilotCLIProxyWired()
+		copilotBefore = agents.CopilotProxyWired()
+		if copilotBefore {
+			copilotSnapshot, err = agents.SnapshotCopilotProxy()
+			if err != nil {
+				util.L.Err("copilot proxy snapshot: " + err.Error())
+				return 1
+			}
+		}
 	}
-	sharedRunningBefore := !selected && proxyRunning()
-	autostartBefore := !selected && proxyAutostartEnabled()
+	sharedRunningBefore := complete && proxyRunning()
+	copilotRunningBefore := copilotBefore && copilotProxyRunning()
+	grokRunningBefore := headroompkg.GrokOAuthProxyRunning()
+	grokOAuthWiredBefore := agents.GrokOAuthProxyWired()
+	grokUsesSharedBefore := agents.GrokProxyUsesHeadroom()
+	grokStopped := false
+	autostartBefore := complete && proxyAutostartEnabled()
 	restoreCopilotWiring := func() {
-		if copilotCLIBefore && !agents.CopilotCLIProxyWired() {
-			if _, file := configureCopilotCLI(); !agents.CopilotCLIProxyWired() {
-				util.L.Sub("agent restore failed: copilot CLI (" + file + ")")
+		if copilotBefore && !agents.CopilotProxyWired() {
+			if err := copilotSnapshot.Restore(); err != nil {
+				util.L.Sub("agent restore failed: copilot proxy: " + err.Error())
 			}
 		}
 	}
 	restoreAll := func() {
 		restoreProxyAgents(wiredBefore)
+		if grokOAuthWiredBefore && !agents.GrokOAuthProxyWired() {
+			if _, _, err := agents.ConfigureGrokProxyChecked(); err != nil {
+				util.L.Sub("agent restore failed: grok: " + err.Error())
+			}
+		}
 		restoreCopilotWiring()
+		if copilotRunningBefore && !copilotProxyRunning() {
+			if err := startCopilotProxy(); err != nil {
+				util.L.Sub("Copilot proxy restore: " + err.Error())
+			}
+		}
 		if sharedRunningBefore && !proxyRunning() {
 			if err := startProxy(); err != nil {
 				util.L.Sub("proxy restore failed: " + err.Error())
+			}
+		}
+		if grokRunningBefore && !headroompkg.GrokOAuthProxyRunning() {
+			if err := startGrokProxy(); err != nil {
+				util.L.Sub("grok proxy restore failed: " + err.Error())
 			}
 		}
 		if autostartBefore && !proxyAutostartEnabled() {
@@ -283,28 +497,59 @@ func RunProxyDown(opts InitOptions) int {
 			}
 		}
 	}
-	for _, id := range resolveProxyAgents(opts) {
-		if proxyInstructions(id) == nil {
-			if id == "copilot" {
-				wiredBefore[id] = copilotCLIBefore
-			} else {
-				wiredBefore[id] = proxyAgentWired(id)
-			}
+	if (grokSelected || !selected) && (grokRunningBefore || grokOAuthWiredBefore) {
+		if err := stopGrokProxy(); err != nil {
+			util.L.Err("grok OAuth proxy stop: " + err.Error())
+			restoreAll()
+			return 1
 		}
+		grokStopped = true
 	}
-	for _, id := range resolveProxyAgents(opts) {
+	for _, id := range proxyAgents {
 		if proxyInstructions(id) != nil {
 			continue
 		}
 		if id == "copilot" {
+			wiredBefore[id] = copilotBefore
+		} else {
+			wiredBefore[id] = proxyAgentWired(id)
+		}
+	}
+	for _, id := range proxyAgents {
+		if proxyInstructions(id) != nil {
+			continue
+		}
+		if id == "copilot" {
+			if !copilotBefore {
+				util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" copilot: not wired"))
+				continue
+			}
 			if agents.RemoveCopilotProxy() {
+				if err := stopCopilotProxy(); err != nil {
+					logProxyRollbackError("copilot proxy rollback", copilotSnapshot.Restore())
+					util.L.Err("copilot: private proxy stop failed: " + err.Error())
+					failed++
+					continue
+				}
 				util.L.Ok("copilot: proxy wiring removed")
-			} else if copilotCLIBefore {
+			} else {
 				util.L.Err("copilot: unwire failed — removal did not take effect; leaving config untouched")
 				failed++
 			}
-			if !copilotCLIBefore {
-				util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" copilot: not wired"))
+			continue
+		}
+		if id == "grok" {
+			removed, err := removeProxyAgentChecked(id)
+			if err != nil {
+				util.L.Err("grok: unwire failed: " + err.Error())
+				failed++
+			} else if removed {
+				util.L.Ok("grok: proxy wiring removed")
+			} else if wiredBefore[id] {
+				util.L.Err("grok: unwire failed — removal did not take effect; leaving config untouched")
+				failed++
+			} else {
+				util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" grok: not wired"))
 			}
 			continue
 		}
@@ -318,11 +563,18 @@ func RunProxyDown(opts InitOptions) int {
 			util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" "+id+": not wired"))
 		}
 	}
-	if selected {
+	if !complete {
 		util.L.Raw("")
 		if failed > 0 {
 			restoreAll()
 			return 1
+		}
+		if grokSelected && !grokStopped && (grokRunningBefore || grokOAuthWiredBefore) {
+			if err := stopGrokProxy(); err != nil {
+				util.L.Err("grok OAuth proxy stop: " + err.Error())
+				restoreAll()
+				return 1
+			}
 		}
 		return 0
 	}
@@ -331,7 +583,7 @@ func RunProxyDown(opts InitOptions) int {
 			continue
 		}
 		if id == "copilot" {
-			if agents.CopilotCLIProxyWired() {
+			if agents.CopilotProxyWired() {
 				failed++
 			}
 			continue
@@ -351,11 +603,27 @@ func RunProxyDown(opts InitOptions) int {
 		util.L.Raw("")
 		return 1
 	}
-	if err := stopProxy(); err != nil {
-		util.L.Err(err.Error())
-		restoreAll()
-		util.L.Raw("")
-		return 1
+	if !grokStopped && (grokRunningBefore || grokOAuthWiredBefore) {
+		if err := stopGrokProxy(); err != nil {
+			util.L.Err("grok OAuth proxy stop: " + err.Error())
+			restoreAll()
+			util.L.Raw("")
+			return 1
+		}
+	}
+	sharedNeeded := !grokSelected || !grokOAuthWiredBefore || sharedRunningBefore || grokUsesSharedBefore
+	for id, wired := range wiredBefore {
+		if wired && id != "grok" && id != "copilot" {
+			sharedNeeded = true
+		}
+	}
+	if sharedNeeded {
+		if err := stopProxy(); err != nil {
+			util.L.Err(err.Error())
+			restoreAll()
+			util.L.Raw("")
+			return 1
+		}
 	}
 	if err := util.SetProxyRoutingEnabled(false); err != nil {
 		util.L.Err("proxy preference: " + err.Error())

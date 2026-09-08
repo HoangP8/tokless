@@ -230,15 +230,19 @@ func WriteOwner(agent, owner string) bool {
 
 // RemoveOwner removes owner's section; removes file when empty.
 func RemoveOwner(agent, owner string) {
+	_ = RemoveOwnerSafe(agent, owner)
+}
+
+func RemoveOwnerSafe(agent, owner string) error {
 	path := instructionPath(agent)
 	if path == "" {
-		return
+		return fmt.Errorf("no instruction path for agent %s", agent)
 	}
 	cur, ok := util.ReadFileSafe(path)
 	if !ok {
-		return
+		return nil
 	}
-	removeOwnerInPath(path, cur, owner)
+	return removeOwnerInPath(path, cur, owner)
 }
 
 // HasOwner reports whether owner appears in the managed body.
@@ -255,6 +259,12 @@ func HasOwner(agent, owner string) bool {
 }
 
 func writeOwnerInPath(path, cur, owner string) bool {
+	write := func(content string) error {
+		if agentPathIsCopilotProject(path) {
+			return agents.WriteCopilotProjectFile(path, content)
+		}
+		return util.WriteFile(path, content)
+	}
 	cleaned := stripLegacy(cur)
 	head, blocks, tail := fileParts(cleaned)
 	head = stripIndexPreamble(head)
@@ -276,12 +286,12 @@ func writeOwnerInPath(path, cur, owner string) bool {
 		if current == want {
 			return false
 		}
-		return util.WriteFile(path, joinFile(head, want, tail)) == nil
+		return write(joinFile(head, want, tail)) == nil
 	}
 	owners = append(owners, owner)
 	sortOwnersByRegistry(owners)
 	body := strings.TrimRight(util.ToklessAgentBody(owners), "\n")
-	return util.WriteFile(path, joinFile(head, body, tail)) == nil
+	return write(joinFile(head, body, tail)) == nil
 }
 
 func instructionConflictChoice(path string) string {
@@ -325,13 +335,19 @@ func sortOwnersByRegistry(owners []string) {
 	})
 }
 
-func removeOwnerInPath(path, cur, owner string) {
+func removeOwnerInPath(path, cur, owner string) error {
+	write := func(content string) error {
+		if agentPathIsCopilotProject(path) {
+			return agents.WriteCopilotProjectFile(path, content)
+		}
+		return util.WriteFile(path, content)
+	}
 	cleaned := stripLegacy(cur)
 	head, blocks, tail := fileParts(cleaned)
 	head = stripIndexPreamble(head)
 	owners := ownersFromBlocks(blocks)
 	if !containsOwner(owners, owner) {
-		return
+		return nil
 	}
 	kept := make([]string, 0, len(owners))
 	for _, o := range owners {
@@ -344,14 +360,27 @@ func removeOwnerInPath(path, cur, owner string) {
 		trimmed := stripIndexPreamble(head)
 		s := joinFile(trimmed, "", tail)
 		if strings.TrimSpace(s) == "" {
-			_ = os.Remove(path)
-			return
+			if agentPathIsCopilotProject(path) {
+				return agents.ClearCopilotProjectFile(path)
+			}
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
 		}
-		_ = util.WriteFile(path, strings.TrimRight(s, "\n")+"\n")
-		return
+		return write(strings.TrimRight(s, "\n") + "\n")
 	}
 	body := strings.TrimRight(util.ToklessAgentBody(kept), "\n")
-	_ = util.WriteFile(path, joinFile(head, body, tail))
+	return write(joinFile(head, body, tail))
+}
+
+func agentPathIsCopilotProject(path string) bool {
+	root, err := filepath.Abs(agents.IdeProjectRoot())
+	if err != nil {
+		return false
+	}
+	clean := filepath.Clean(path)
+	return filepath.HasPrefix(clean, root+string(os.PathSeparator))
 }
 
 // stripIndexPreamble drops overview when last owner is removed.
@@ -388,7 +417,7 @@ func removeOwnerAtPath(path, owner string) {
 	if !ok {
 		return
 	}
-	removeOwnerInPath(path, cur, owner)
+	_ = removeOwnerInPath(path, cur, owner)
 }
 
 func hasOwnerInRaw(raw, owner string) bool {

@@ -878,13 +878,22 @@ func rtkWireCopilot() core.AgentFn {
 			util.L.Sub("[dry-run] would install Copilot preToolUse hook (~/.copilot/hooks/tokless-rtk.json + .github/hooks/tokless-rtk.json)")
 			return true, nil
 		}
-		if os.Getenv("TOKLESS_TEST") == "1" {
-			rtkTestShim("copilot")
-			agents.InstallCopilotIdeRtkHook()
-			return agents.HasCopilotRtkHook() && agents.HasCopilotIdeRtkHook(), nil
+		err := withCopilotTransaction(func() error {
+			if os.Getenv("TOKLESS_TEST") == "1" {
+				rtkTestShim("copilot")
+				if err := agents.InstallCopilotIdeRtkHookSafe(); err != nil {
+					return err
+				}
+				return nil
+			}
+			if err := agents.InstallCopilotRtkHookSafe(); err != nil {
+				return err
+			}
+			return agents.InstallCopilotIdeRtkHookSafe()
+		})
+		if err != nil {
+			return false, err
 		}
-		agents.InstallCopilotRtkHook()
-		agents.InstallCopilotIdeRtkHook()
 		return agents.HasCopilotRtkHook() && agents.HasCopilotIdeRtkHook(), nil
 	}
 }
@@ -1005,10 +1014,16 @@ var rtk = &core.ToolManifest{
 			return true, nil
 		},
 		"copilot": func(core.RunOpts) (bool, error) {
-			agents.RemoveCopilotRtkHook()
-			agents.RemoveCopilotIdeRtkHook()
-			RemoveOwner("copilot", "rtk")
-			return true, nil
+			err := withCopilotTransaction(func() error {
+				if err := agents.RemoveCopilotRtkHookSafe(); err != nil {
+					return err
+				}
+				if err := agents.RemoveCopilotIdeRtkHookSafe(); err != nil {
+					return err
+				}
+				return RemoveOwnerSafe("copilot", "rtk")
+			})
+			return err == nil, err
 		},
 		"droid": func(core.RunOpts) (bool, error) {
 			agents.RemoveDroidRtkHook()

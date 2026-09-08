@@ -386,6 +386,9 @@ func codegraphWire(agent string) core.AgentFn {
 			return codegraphVerify("cline"), nil
 		}
 		if isTest() {
+			if agent == "copilot" {
+				return codegraphWireCopilot(opts)
+			}
 			if !codegraphConfigureMcp(agent) {
 				return false, nil
 			}
@@ -410,6 +413,9 @@ func codegraphWire(agent string) core.AgentFn {
 		}
 		if opts.DryRun {
 			return codegraphRealInstall(opts, agent), nil
+		}
+		if agent == "copilot" {
+			return codegraphWireCopilot(opts)
 		}
 		if agent == "omp" {
 			if !codegraphConfigureMcp(agent) {
@@ -449,6 +455,37 @@ func codegraphWire(agent string) core.AgentFn {
 		}
 		return codegraphVerify(agent), nil
 	}
+}
+
+func codegraphWireCopilot(opts core.RunOpts) (bool, error) {
+	err := withCopilotTransaction(func() error {
+		if !isTest() && !codegraphRealInstall(opts, "copilot") {
+			util.L.Debug("codegraph's own installer failed; writing MCP entry directly")
+		}
+		if _, _, err := agents.ConfigureCopilotMcpSafe("codegraph"); err != nil {
+			return err
+		}
+		if err := agents.InstallCopilotCodegraphIndexHookSafe(); err != nil {
+			return err
+		}
+		if err := agents.InstallCopilotIdeCodegraphIndexHookSafe(); err != nil {
+			return err
+		}
+		if _, _, err := agents.ConfigureCopilotIdeMcpSafe("codegraph"); err != nil {
+			return err
+		}
+		if !WriteOwner("copilot", "codegraph") && !HasOwner("copilot", "codegraph") {
+			return fmt.Errorf("failed to write Copilot codegraph owner")
+		}
+		if err := agents.SyncCopilotIdeInstructionsSafe(); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return codegraphVerify("copilot"), nil
 }
 
 // writeCodegraphBlock writes the unified TOKLESS block with codegraph as one
@@ -566,13 +603,29 @@ var codegraph = &core.ToolManifest{
 			return true, nil
 		},
 		"copilot": func(core.RunOpts) (bool, error) {
-			agents.RemoveCopilotMcp("codegraph")
-			agents.RemoveCopilotCodegraphIndexHook()
-			agents.RemoveCopilotIdeMcp("codegraph")
-			agents.RemoveCopilotIdeCodegraphIndexHook()
-			unwireAutoIndex("copilot")
-			RemoveOwner("copilot", "codegraph")
-			return true, nil
+			err := withCopilotTransaction(func() error {
+				if _, err := agents.RemoveCopilotMcpSafe("codegraph"); err != nil {
+					return err
+				}
+				if err := agents.RemoveCopilotCodegraphIndexHookSafe(); err != nil {
+					return err
+				}
+				if _, err := agents.RemoveCopilotIdeMcpSafe("codegraph"); err != nil {
+					return err
+				}
+				if err := agents.RemoveCopilotIdeCodegraphIndexHookSafe(); err != nil {
+					return err
+				}
+				unwireAutoIndex("copilot")
+				if err := RemoveOwnerSafe("copilot", "codegraph"); err != nil {
+					return err
+				}
+				if err := agents.SyncCopilotIdeInstructionsSafe(); err != nil {
+					return err
+				}
+				return nil
+			})
+			return err == nil, err
 		},
 		"droid": func(core.RunOpts) (bool, error) {
 			agents.RemoveDroidMcp("codegraph")

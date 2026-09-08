@@ -611,9 +611,12 @@ func TestPiUnwire(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(piDir, "settings.json"), []byte(settings), 0644); err != nil {
 		t.Fatalf("write settings: %v", err)
 	}
-	mcp := `{"mcpServers":{"codegraph":{"command":"codegraph"},"context-mode":{"command":"context-mode"}}}`
-	if err := os.WriteFile(filepath.Join(piDir, "mcp.json"), []byte(mcp), 0644); err != nil {
-		t.Fatalf("write mcp: %v", err)
+	util.SetHomeOverride(tempdir)
+	if changed, _ := agents.ConfigurePiMcp("codegraph"); !changed {
+		t.Fatal("configure codegraph MCP")
+	}
+	if changed, _ := agents.ConfigurePiMcp("context-mode"); !changed {
+		t.Fatal("configure context-mode MCP")
 	}
 	if err := os.WriteFile(filepath.Join(piDir, "extensions", "rtk.ts"), []byte("// rtk"), 0644); err != nil {
 		t.Fatalf("write rtk: %v", err)
@@ -625,7 +628,6 @@ func TestPiUnwire(t *testing.T) {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
-	util.SetHomeOverride(tempdir)
 	t.Setenv("HOME", tempdir)
 	t.Setenv("PI_CODING_AGENT_DIR", "")
 	defer util.SetHomeOverride("")

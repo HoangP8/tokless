@@ -35,7 +35,7 @@ exit 1
 func TestCursorCodegraphWireVerifiesWithoutInstructionOwner(t *testing.T) {
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })
-	t.Setenv("CURSOR_CONFIG_DIR", util.CursorPathsResolved().Dir)
+	t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(util.Home(), ".cursor"))
 	t.Setenv("WSL_DISTRO_NAME", "")
 	t.Setenv("WSL_INTEROP", "")
 	if changed, _ := agents.ConfigureCursorMcp("codegraph"); !changed || !agents.ConfigureCursorMcpPermissions("codegraph") || !agents.InstallCursorCodegraphIndexHook() {

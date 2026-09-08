@@ -336,8 +336,7 @@ func proxyStartLock() string {
 }
 
 func proxyLifecycleLock() string {
-	root := util.HeadroomPathsResolved().Root
-	return filepath.Join(root, "proxy.lifecycle.lock")
+	return filepath.Join(util.ToklessDataDir(), "proxy.lifecycle.lock")
 }
 
 // acquireProxyStartLock takes the start lock, waiting (bounded) for a
@@ -353,7 +352,7 @@ func AcquireProxyLifecycleLock() (func(), error) {
 }
 
 func acquireProxyLock(path string, now func() time.Time) (func(), error) {
-	if err := util.EnsureDir(util.HeadroomPathsResolved().Root); err != nil {
+	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	deadline := now().Add(proxyStartLockWait)
