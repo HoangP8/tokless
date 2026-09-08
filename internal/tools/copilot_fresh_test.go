@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,6 +163,53 @@ func TestRemoveCopilotMcp(t *testing.T) {
 	}
 }
 
+func TestCopilotMcpRefusesForeignEntries(t *testing.T) {
+	copilotTestHome(t)
+	p := util.CopilotPathsResolved()
+	_ = util.EnsureDir(p.Dir)
+	original := `{"mcpServers":{"context-mode":{"type":"local","command":"user-tool","args":["context-mode"],"description":"tokless context-mode"}}}`
+	if err := os.WriteFile(p.McpConfig, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := agents.ConfigureCopilotMcpSafe("context-mode"); err == nil {
+		t.Fatal("foreign entry should not be overwritten")
+	}
+	raw, _ := util.ReadFileSafe(p.McpConfig)
+	if raw != original {
+		t.Fatalf("foreign entry changed:\n%s", raw)
+	}
+	if removed, err := agents.RemoveCopilotMcpSafe("context-mode"); err == nil || removed {
+		t.Fatalf("foreign entry should not be removed: removed=%v err=%v", removed, err)
+	}
+}
+
+func TestCopilotMcpRejectsWrongShapedContainers(t *testing.T) {
+	copilotTestHome(t)
+	p := util.CopilotPathsResolved()
+	_ = util.EnsureDir(p.Dir)
+	if err := os.WriteFile(p.McpConfig, []byte(`{"mcpServers":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := agents.ConfigureCopilotMcpSafe("codegraph"); err == nil {
+		t.Fatal("wrong-shaped CLI container should fail")
+	}
+
+	ide := filepath.Join(t.TempDir(), ".vscode")
+	project := filepath.Dir(ide)
+	agents.SetIdeProjectRoot(project)
+	t.Cleanup(func() { agents.SetIdeProjectRoot("") })
+	if err := os.MkdirAll(ide, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ideFile := filepath.Join(ide, "mcp.json")
+	if err := os.WriteFile(ideFile, []byte(`{"servers":"user-value"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := agents.ConfigureCopilotIdeMcpSafe("codegraph"); err == nil {
+		t.Fatal("wrong-shaped IDE container should fail")
+	}
+}
+
 func TestCopilotRtkHook(t *testing.T) {
 	copilotTestHome(t)
 	t.Setenv("TOKLESS_TEST", "1")
@@ -217,6 +265,23 @@ func TestCopilotRtkHook(t *testing.T) {
 	}
 }
 
+func TestCopilotRtkVerifyRequiresBothScopes(t *testing.T) {
+	copilotTestHome(t)
+	t.Setenv("TOKLESS_TEST", "1")
+
+	agents.InstallCopilotRtkHook()
+	if !agents.HasCopilotRtkHook() {
+		t.Fatal("CLI hook fixture not installed")
+	}
+	if verify, ok := rtk.VerifyFor["copilot"]; !ok || verify() == nil || *verify() {
+		t.Fatal("RTK must not verify when IDE scope is missing")
+	}
+	agents.InstallCopilotIdeRtkHook()
+	if verify, ok := rtk.VerifyFor["copilot"]; !ok || verify() == nil || !*verify() {
+		t.Fatal("RTK must verify when both scopes are wired")
+	}
+}
+
 func TestCopilotContextModeHook(t *testing.T) {
 	copilotTestHome(t)
 	t.Setenv("TOKLESS_TEST", "1")
@@ -263,6 +328,23 @@ func TestCopilotContextModeHook(t *testing.T) {
 	}
 }
 
+func TestCopilotCodegraphHooksBootstrapOnSessionStart(t *testing.T) {
+	tmp := copilotTestHome(t)
+	t.Setenv("TOKLESS_TEST", "1")
+
+	agents.InstallCopilotCodegraphIndexHook()
+	agents.InstallCopilotIdeCodegraphIndexHook()
+
+	cliRaw, ok := util.ReadFileSafe(filepath.Join(util.CopilotPathsResolved().HooksDir, "tokless-codegraph-index.json"))
+	if !ok || !strings.Contains(cliRaw, "sessionStart") || !strings.Contains(cliRaw, "copilot-hook codegraph-index") {
+		t.Fatalf("CLI CodeGraph hook is not SessionStart: %s", cliRaw)
+	}
+	ideRaw, ok := util.ReadFileSafe(filepath.Join(tmp, ".github", "hooks", "tokless-codegraph-index.json"))
+	if !ok || !strings.Contains(ideRaw, "SessionStart") || strings.Contains(ideRaw, "PostToolUse") || !strings.Contains(ideRaw, "copilot-hook codegraph-index --vscode") {
+		t.Fatalf("VS Code CodeGraph hook is not SessionStart: %s", ideRaw)
+	}
+}
+
 func TestCopilotInstructionBlock(t *testing.T) {
 	copilotTestHome(t)
 	t.Setenv("TOKLESS_TEST", "1")
@@ -306,8 +388,8 @@ func TestCopilotInstructionToolsSyncIdeInstructions(t *testing.T) {
 	if !ok {
 		t.Fatal("IDE instructions not written")
 	}
-	if ide != cli {
-		t.Fatalf("IDE instructions differ from CLI instructions\nIDE:\n%s\nCLI:\n%s", ide, cli)
+	if !strings.Contains(ide, cli) {
+		t.Fatalf("IDE instructions missing CLI body\nIDE:\n%s\nCLI:\n%s", ide, cli)
 	}
 }
 
@@ -342,6 +424,64 @@ func TestCopilotContextModeWireUnwire(t *testing.T) {
 	}
 	if agents.HasCopilotContextModeHook() {
 		t.Fatal("context-mode hook not removed")
+	}
+}
+
+func TestCopilotContextModeWireRollsBackOnLaterFailure(t *testing.T) {
+	copilotTestHome(t)
+	t.Setenv("TOKLESS_TEST", "1")
+	project := agents.IdeProjectRoot()
+	ideHook := filepath.Join(project, ".github", "hooks", "context-mode.json")
+	util.SetWriteFileOverride(func(path, content string) error {
+		if path == ideHook {
+			return os.ErrPermission
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(content), 0o644)
+	})
+	t.Cleanup(func() { util.SetWriteFileOverride(nil) })
+
+	if ok, err := ctxWireCopilot(core.RunOpts{Agent: "copilot"}); err == nil || ok {
+		t.Fatalf("wire should fail and rollback: ok=%v err=%v", ok, err)
+	}
+	if agents.CopilotMcpHas("context-mode") || agents.HasCopilotContextModeHook() || HasOwner("copilot", "context-mode") {
+		t.Fatal("failed wiring left Copilot state behind")
+	}
+	if util.Exists(ideHook) {
+		t.Fatal("failed IDE hook write left file behind")
+	}
+}
+
+func TestCopilotTransactionPreservesForeignReplacement(t *testing.T) {
+	tmp := copilotTestHome(t)
+	path := filepath.Join(tmp, ".github", "hooks", "context-mode.json")
+	foreign := "{\"foreign\":true}\n"
+	triggered := false
+	util.SetWriteFileOverride(func(writePath, content string) error {
+		if writePath == path && !triggered {
+			triggered = true
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(path, []byte(foreign), 0o644); err != nil {
+				return err
+			}
+			return os.ErrPermission
+		}
+		if err := os.MkdirAll(filepath.Dir(writePath), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(writePath, []byte(content), 0o644)
+	})
+	t.Cleanup(func() { util.SetWriteFileOverride(nil) })
+
+	if ok, err := ctxWireCopilot(core.RunOpts{Agent: "copilot"}); err == nil || ok {
+		t.Fatalf("wire should fail: ok=%v err=%v", ok, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != foreign {
+		t.Fatalf("foreign replacement changed: %q err=%v", got, err)
 	}
 }
 
