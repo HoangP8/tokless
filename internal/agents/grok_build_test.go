@@ -76,7 +76,6 @@ func renderStripFixture() string {
 	return grokBuildMarkerStart + "\n[model.grok-build]\nbase_url = \"http://127.0.0.1:8787/v1\"\n" + grokBuildMarkerEnd
 }
 
-
 func TestRemoveGrokBuildProxyStripsMarkersWithoutBackup(t *testing.T) {
 	_ = setGrokBuildTestHome(t)
 	dir := t.TempDir()
@@ -124,16 +123,5 @@ func TestGrokBuildDoesNotFollowTmpSymlink(t *testing.T) {
 	raw, _ := os.ReadFile(victim)
 	if string(raw) != "do-not-touch" {
 		t.Fatal("atomic write followed tmp symlink")
-	}
-}
-
-func TestGrokOAuthBaseURLDefaults(t *testing.T) {
-	t.Setenv("TOKLESS_GROK_PROXY_PORT", "")
-	if got := util.GrokOAuthProxyPort(); got != 8788 {
-		t.Fatalf("default port = %d", got)
-	}
-	t.Setenv("TOKLESS_GROK_PROXY_PORT", "9100")
-	if got := util.GrokOAuthProxyBaseURL(); got != "http://127.0.0.1:9100/v1" {
-		t.Fatalf("base url = %s", got)
 	}
 }

@@ -12,6 +12,8 @@ import (
 
 const grokShimMarker = "# tokless:grok-launcher"
 
+var removeGrokShimRename = os.Rename
+
 func grokBinFile() string {
 	return filepath.Join(grokDir(), "bin", "grok")
 }
@@ -46,11 +48,13 @@ func shQuote(s string) string {
 
 func renderGrokShim() string {
 	port := strconv.Itoa(util.GrokOAuthProxyPort())
+	tokless := shQuote(util.ToklessAbsStrict())
 	return "#!/bin/sh\n" +
 		grokShimPortLine() + "\n" +
 		"REAL=" + shQuote(grokRealBinFile()) + "\n" +
+		"TOKLESS=" + tokless + "\n" +
 		"PORT=\"${TOKLESS_GROK_PROXY_PORT:-" + port + "}\"\n" +
-		"if curl -sfm 1 \"http://127.0.0.1:${PORT}/livez\" 2>/dev/null | grep -q '\"service\":\"headroom-proxy\"'; then\n" +
+		"if \"$TOKLESS\" __grok-proxy-owned >/dev/null 2>&1 && curl -sfm 1 \"http://127.0.0.1:${PORT}/livez\" 2>/dev/null | grep -q '\"service\":\"headroom-proxy\"'; then\n" +
 		"  GROK_MODELS_BASE_URL=\"http://127.0.0.1:${PORT}/v1\" exec \"$REAL\" \"$@\"\n" +
 		"fi\n" +
 		"exec \"$REAL\" \"$@\"\n"
@@ -86,18 +90,26 @@ func InstallGrokShim() (bool, error) {
 }
 
 func RemoveGrokShim() bool {
+	removed, _ := removeGrokShimChecked()
+	return removed
+}
+
+func removeGrokShimChecked() (bool, error) {
 	bin, real := grokBinFile(), grokRealBinFile()
 	raw, ok := util.ReadFileSafe(bin)
-	if !ok || !isGrokShim(raw) {
-		return false
+	if !ok || !looksLikeToklessShim(raw) || !strings.Contains(raw, grokShimMarker) {
+		return false, nil
 	}
 	if _, err := os.Stat(real); err != nil {
-		return false
+		return false, fmt.Errorf("grok launcher: real binary unavailable: %w", err)
 	}
-	return os.Rename(real, bin) == nil
+	if err := removeGrokShimRename(real, bin); err != nil {
+		return false, fmt.Errorf("grok launcher: restore real binary: %w", err)
+	}
+	return true, nil
 }
 
 func GrokShimWired() bool {
 	raw, ok := util.ReadFileSafe(grokBinFile())
-	return ok && isGrokShim(raw) && strings.Contains(string(raw), grokShimPortLine())
+	return ok && looksLikeToklessShim(raw) && strings.Contains(raw, grokShimMarker)
 }

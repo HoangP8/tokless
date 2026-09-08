@@ -1,11 +1,14 @@
 package agents
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/HoangP8/tokless/internal/util"
 )
 
 func seedGrokBinary(t *testing.T) string {
@@ -139,6 +142,41 @@ func TestConfigureGrokProxyInstallsShimForOAuthConfig(t *testing.T) {
 	}
 }
 
+func TestRemoveGrokProxyRollsBackConfigWhenShimRestoreFails(t *testing.T) {
+	_ = seedGrokBinaryInGrokHome(t)
+	if err := os.WriteFile(grokConfigFile(), []byte(grokUserConfig), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ConfigureGrokProxyChecked(); err != nil {
+		t.Fatal(err)
+	}
+	configBefore, _ := util.ReadFileSafe(grokConfigFile())
+	stashBefore, _ := util.ReadFileSafe(grokStashPath())
+	shimBefore, _ := util.ReadFileSafe(grokBinFile())
+	realBefore, _ := util.ReadFileSafe(grokRealBinFile())
+	removeGrokShimRename = func(string, string) error { return errors.New("injected rename failure") }
+	t.Cleanup(func() { removeGrokShimRename = os.Rename })
+
+	if RemoveGrokProxy() {
+		t.Fatal("remove reported success")
+	}
+	if got, _ := util.ReadFileSafe(grokConfigFile()); got != configBefore {
+		t.Fatal("config changed after failed shim restore")
+	}
+	if got, _ := util.ReadFileSafe(grokStashPath()); got != stashBefore {
+		t.Fatal("stash changed after failed shim restore")
+	}
+	if got, _ := util.ReadFileSafe(grokBinFile()); got != shimBefore {
+		t.Fatal("shim changed after failed restore")
+	}
+	if got, _ := util.ReadFileSafe(grokRealBinFile()); got != realBefore {
+		t.Fatal("real binary changed after failed restore")
+	}
+	if info, err := os.Stat(grokConfigFile()); err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("config mode = %v, err=%v", info.Mode().Perm(), err)
+	}
+}
+
 func TestConfigureGrokProxyStripsLegacyMarkerAndInstallsShim(t *testing.T) {
 	_ = seedGrokBinaryInGrokHome(t)
 	content := "[models]\ndefault = \"grok-4.6\"\n\n" + renderStripFixture() + "\n"
@@ -237,6 +275,7 @@ func TestShimRequiresHeadroomIdentityBody(t *testing.T) {
 	}
 	probe := func(body string) bool {
 		replaced := strings.Replace(line, "curl -sfm 1 \"http://127.0.0.1:${PORT}/livez\"", "printf '%s' '"+body+"'", 1)
+		replaced = strings.Replace(replaced, "\"$TOKLESS\" __grok-proxy-owned >/dev/null 2>&1 && ", "true && ", 1)
 		cond := strings.TrimSuffix(strings.TrimPrefix(replaced, "if "), "; then")
 		return exec.Command("sh", "-c", cond).Run() == nil
 	}

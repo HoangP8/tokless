@@ -2,6 +2,8 @@ package agents
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,23 +37,38 @@ type grokStashEntry struct {
 }
 
 type grokStashFile struct {
-	Providers map[string]grokStashEntry `json:"providers"`
+	Providers       map[string]grokStashEntry `json:"providers"`
+	OAuthHeaderRaw  string                    `json:"oauth_header_raw,omitempty"`
+	OAuthHeaderSet  bool                      `json:"oauth_header_set,omitempty"`
+	OAuthModelsMade bool                      `json:"oauth_models_made,omitempty"`
 }
+
+const grokOAuthUpstream = "https://cli-chat-proxy.grok.com"
+
+func grokProxyEndpoint() string { return util.HeadroomProxyOpenAIURL() }
 
 func grokStashPath() string {
 	return filepath.Join(util.HeadroomPathsResolved().Root, "grok.proxy.stash.json")
 }
 
 func loadGrokStash() map[string]grokStashEntry {
-	raw, ok := util.ReadFileSafe(grokStashPath())
+	f, ok := loadGrokStashFile()
 	if !ok {
 		return map[string]grokStashEntry{}
 	}
+	return f.Providers
+}
+
+func loadGrokStashFile() (grokStashFile, bool) {
+	raw, ok := util.ReadFileSafe(grokStashPath())
+	if !ok {
+		return grokStashFile{}, false
+	}
 	var f grokStashFile
 	if json.Unmarshal([]byte(raw), &f) != nil || f.Providers == nil {
-		return map[string]grokStashEntry{}
+		return grokStashFile{}, false
 	}
-	return f.Providers
+	return f, true
 }
 
 func grokStashValid() bool {
@@ -64,36 +81,18 @@ func grokStashValid() bool {
 }
 
 func saveGrokStash(m map[string]grokStashEntry) error {
-	b, err := json.Marshal(grokStashFile{Providers: m})
+	f, _ := loadGrokStashFile()
+	f.Providers = m
+	return saveGrokStashFile(f)
+}
+
+func saveGrokStashFile(f grokStashFile) error {
+	b, err := json.Marshal(f)
 	if err != nil {
 		return err
 	}
 	path := grokStashPath()
-	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return util.WriteFileAtomic(path, string(b), 0o600)
 }
 
 func clearGrokStash() error {
@@ -111,7 +110,7 @@ var reGrokProviderHeader = regexp.MustCompile(`(?m)^\[model_providers\.("[^"]+"|
 // grokLocalBYOK lists user-declared provider ids that carry an absolute http(s)
 // base_url distinct from the proxy plus an api_key.
 func grokLocalBYOK(raw string) []string {
-	endpoint := ProxyEndpointFor("grok")
+	endpoint := grokProxyEndpoint()
 	var ids []string
 	for _, m := range reGrokProviderHeader.FindAllStringSubmatch(raw, -1) {
 		id := m[1]
@@ -297,6 +296,247 @@ func grokSetHeaderValue(raw, id, origin string) string {
 	return raw[:cstart] + strings.Join(lines, "\n") + raw[cend:]
 }
 
+func grokExistingTableHeader(raw, table string) (string, bool) {
+	body, ok := grokParentBody(raw, table)
+	if ok {
+		if sp, inlineOK := grokFindInline(body); inlineOK {
+			m := reGrokHeaderKVValue.FindStringSubmatch(body[sp.open+1 : sp.close])
+			if m == nil {
+				return "", false
+			}
+			if m[1] != "" {
+				if value, err := strconv.Unquote(`"` + m[1] + `"`); err == nil {
+					return value, true
+				}
+			}
+			return m[2], true
+		}
+	}
+	if cs, ce, childOK := grokChildSectionFor(raw, table); childOK {
+		m := reGrokHeaderKVValue.FindStringSubmatch(raw[cs:ce])
+		if m != nil {
+			if m[1] != "" {
+				if value, err := strconv.Unquote(`"` + m[1] + `"`); err == nil {
+					return value, true
+				}
+			}
+			return m[2], true
+		}
+	}
+	return "", false
+}
+
+func grokExistingTableHeaderRaw(raw, table string) string {
+	body, ok := grokParentBody(raw, table)
+	if ok {
+		if sp, inlineOK := grokFindInline(body); inlineOK {
+			return reGrokHeaderKV.FindString(body[sp.open+1 : sp.close])
+		}
+	}
+	if cs, ce, childOK := grokChildSectionFor(raw, table); childOK {
+		for _, line := range strings.Split(raw[cs:ce], "\n") {
+			if reGrokHeaderKVLine.MatchString(line) {
+				return line
+			}
+		}
+	}
+	return ""
+}
+
+func grokSetTableHeaderValue(raw, table, origin string) string {
+	if current, ok := grokExistingTableHeader(raw, table); ok && current == origin {
+		return raw
+	}
+	entry := headroomBaseURLHeader + ` = ` + util.TomlQuoted(origin)
+	withInline := grokEditParent(raw, table, func(b string) string {
+		sp, ok := grokFindInline(b)
+		if !ok {
+			return b
+		}
+		inner := b[sp.open+1 : sp.close]
+		if reGrokHeaderKV.MatchString(inner) {
+			inner = reGrokHeaderKV.ReplaceAllString(inner, entry)
+		} else if strings.TrimSpace(inner) == "" {
+			inner = " " + entry + " "
+		} else {
+			trimmed := strings.TrimLeft(inner, " \t")
+			lead := inner[:len(inner)-len(trimmed)]
+			inner = lead + entry + ", " + trimmed
+		}
+		return b[:sp.open+1] + inner + b[sp.close:]
+	})
+	if withInline != raw {
+		return withInline
+	}
+	if cstart, cend, hasChild := grokChildSectionFor(raw, table); hasChild {
+		lines := strings.Split(raw[cstart:cend], "\n")
+		replaced := false
+		for i, line := range lines {
+			if reGrokHeaderKVLine.MatchString(line) {
+				lines[i] = reGrokHeaderIndent.FindString(line) + entry
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			insert := 1
+			indent := ""
+			for insert < len(lines) && strings.TrimSpace(lines[insert]) != "" {
+				indent = reGrokHeaderIndent.FindString(lines[insert])
+				insert++
+			}
+			lines = append(lines[:insert], append([]string{indent + entry}, lines[insert:]...)...)
+		}
+		return raw[:cstart] + strings.Join(lines, "\n") + raw[cend:]
+	}
+	return grokEditParent(raw, table, func(b string) string {
+		line := "extra_headers = { " + entry + " }\n"
+		trimmed := strings.TrimRight(b, "\n")
+		return trimmed + "\n" + line + "\n"
+	})
+}
+
+func grokRemoveTableHeaderValue(raw, table string) string {
+	withInline := grokEditParent(raw, table, func(b string) string {
+		sp, ok := grokFindInline(b)
+		if !ok || !reGrokHeaderKV.MatchString(b[sp.open+1:sp.close]) {
+			return b
+		}
+		inner := reGrokHeaderKV.ReplaceAllString(b[sp.open+1:sp.close], "")
+		if i := strings.Index(inner, ","); i >= 0 && strings.TrimSpace(inner[:i]) == "" {
+			inner = inner[:i] + strings.TrimPrefix(inner[i+1:], " ")
+		}
+		if strings.TrimSpace(inner) == "" {
+			start, end := sp.start, sp.end
+			if end < len(b) && b[end] == '\n' {
+				end++
+			} else if start > 0 && b[start-1] == '\n' {
+				start--
+			}
+			return b[:start] + b[end:]
+		}
+		return b[:sp.open+1] + inner + b[sp.close:]
+	})
+	if withInline != raw {
+		return withInline
+	}
+	cstart, cend, hasChild := grokChildSectionFor(raw, table)
+	if !hasChild {
+		return raw
+	}
+	lines := strings.Split(raw[cstart:cend], "\n")
+	var kept []string
+	for _, line := range lines {
+		if !reGrokHeaderKVLine.MatchString(line) {
+			kept = append(kept, line)
+		}
+	}
+	if len(kept) <= 2 && strings.TrimSpace(kept[len(kept)-1]) == "" {
+		return raw[:cstart] + raw[cend:]
+	}
+	return raw[:cstart] + strings.Join(kept, "\n") + raw[cend:]
+}
+
+func grokSetOAuthHeader(raw string, stash *grokStashFile) (string, bool) {
+	const table = "models"
+	if stash.Providers == nil {
+		stash.Providers = map[string]grokStashEntry{}
+	}
+	if !util.HasBlock(raw, table) {
+		raw = strings.TrimRight(raw, "\n") + "\n\n[models]\n"
+		stash.OAuthModelsMade = true
+	}
+	if current, ok := grokExistingTableHeader(raw, table); ok {
+		if current == grokOAuthUpstream {
+			return raw, false
+		}
+		if !stash.OAuthHeaderSet {
+			stash.OAuthHeaderRaw = grokExistingTableHeaderRaw(raw, table)
+		}
+	}
+	next := grokSetTableHeaderValue(raw, table, grokOAuthUpstream)
+	if next != raw {
+		stash.OAuthHeaderSet = true
+	}
+	return next, next != raw
+}
+
+func grokOAuthApplicable(raw string) bool {
+	defaultModel := util.TomlBlockField(raw, "models", "default")
+	if defaultModel == "" {
+		return false
+	}
+	modelTable := "model." + defaultModel
+	provider := util.TomlBlockField(raw, modelTable, "model_provider")
+	return provider == "" || !util.HasBlock(raw, "model_providers."+provider)
+}
+
+func grokRemoveEmptyModelsTable(raw string) string {
+	body, ok := util.BlockText(raw, "models")
+	if !ok {
+		return raw
+	}
+	lines := strings.Split(body, "\n")
+	if len(lines) > 0 {
+		lines = lines[1:]
+	}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			return raw
+		}
+	}
+	next := util.RemoveBlock(raw, "models")
+	if next != raw && strings.HasSuffix(next, "\n\n") {
+		next = strings.TrimSuffix(next, "\n")
+	}
+	return next
+}
+
+func grokRemoveOAuthHeader(raw string, stash grokStashFile) (string, bool) {
+	if !stash.OAuthHeaderSet && !stash.OAuthModelsMade {
+		return raw, false
+	}
+	if current, ok := grokExistingTableHeader(raw, "models"); !ok || current != grokOAuthUpstream {
+		return raw, false
+	}
+	if stash.OAuthHeaderSet && stash.OAuthHeaderRaw != "" {
+		next := grokEditParent(raw, "models", func(body string) string {
+			sp, ok := grokFindInline(body)
+			if !ok {
+				return body
+			}
+			inner := body[sp.open+1 : sp.close]
+			loc := reGrokHeaderKV.FindStringIndex(inner)
+			if loc == nil {
+				return body
+			}
+			return body[:sp.open+1] + inner[:loc[0]] + stash.OAuthHeaderRaw + inner[loc[1]:] + body[sp.close:]
+		})
+		if next == raw {
+			if cs, ce, childOK := grokChildSectionFor(raw, "models"); childOK {
+				lines := strings.Split(raw[cs:ce], "\n")
+				for i, line := range lines {
+					if reGrokHeaderKVLine.MatchString(line) {
+						lines[i] = stash.OAuthHeaderRaw
+						break
+					}
+				}
+				next = raw[:cs] + strings.Join(lines, "\n") + raw[ce:]
+			}
+		}
+		if stash.OAuthModelsMade {
+			next = grokRemoveEmptyModelsTable(next)
+		}
+		return next, next != raw
+	}
+	next := grokRemoveTableHeaderValue(raw, "models")
+	if stash.OAuthModelsMade {
+		next = grokRemoveEmptyModelsTable(next)
+	}
+	return next, next != raw
+}
+
 // grokRemoveHeaderValue strips our header key back out, collapsing emptied
 // inline tables or child tables.
 func grokRemoveHeaderValue(raw, id string) string {
@@ -349,7 +589,11 @@ func grokRemoveHeaderValue(raw, id string) string {
 // grokChildSection returns the [start,end) span of an [id.extra_headers]
 // child table.
 func grokChildSection(raw, id string) (int, int, bool) {
-	re := regexp.MustCompile(`(?m)^\[model_providers\.` + regexp.QuoteMeta(id) + `\.extra_headers\][ \t]*(?:#.*)?$`)
+	return grokChildSectionFor(raw, "model_providers."+id)
+}
+
+func grokChildSectionFor(raw, parent string) (int, int, bool) {
+	re := regexp.MustCompile(`(?m)^\[` + regexp.QuoteMeta(parent) + `\.extra_headers\][ \t]*(?:#.*)?$`)
 	loc := re.FindStringIndex(raw)
 	if loc == nil {
 		return 0, 0, false
@@ -656,41 +900,104 @@ func grokRemoveOriginalPath(raw, id string) string {
 // --- configure / remove / status ---
 
 func ConfigureGrokProxy() (bool, string) {
-	changed := false
-	file := grokConfigFile()
-	if err := withProxyRouteStashLock(func() error {
-		changed, file = configureGrokProxyLocked()
-		return nil
-	}); err != nil {
-		util.L.Err("grok proxy lock failed: " + err.Error())
-	}
-	if shimChanged, err := InstallGrokShim(); err != nil {
-		util.L.Err(err.Error())
-	} else if shimChanged {
-		changed = true
+	changed, file, err := ConfigureGrokProxyChecked()
+	if err != nil {
+		util.L.Err("grok proxy configuration failed: " + err.Error())
 	}
 	return changed, file
 }
 
-func configureGrokProxyLocked() (bool, string) {
+func ConfigureGrokProxyChecked() (bool, string, error) {
+	changed := false
+	file := grokConfigFile()
+	var configureErr error
+	if err := withProxyRouteStashLock(func() error {
+		configRaw, configExists := util.ReadFileSafe(file)
+		stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
+		shimRaw, shimExists := util.ReadFileSafe(grokBinFile())
+		realRaw, realExists := util.ReadFileSafe(grokRealBinFile())
+		shimPresent := shimExists || realExists
+		shimMode := os.FileMode(0o755)
+		if info, err := os.Lstat(grokBinFile()); err == nil {
+			shimMode = info.Mode().Perm()
+		}
+		configMode := os.FileMode(0o600)
+		if info, err := os.Lstat(file); err == nil {
+			configMode = info.Mode().Perm()
+		}
+		realMode := os.FileMode(0o755)
+		if info, err := os.Lstat(grokRealBinFile()); err == nil {
+			realMode = info.Mode().Perm()
+		}
+		var err error
+		changed, file, err = configureGrokProxyLocked()
+		if err != nil {
+			if rollbackErr := restoreGrokProxyState(file, configRaw, configExists, configMode, stashRaw, stashExists); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+			return err
+		}
+		if shimPresent {
+			shimChanged, err := InstallGrokShim()
+			if err != nil {
+				if rollbackErr := restoreGrokProxyAll(file, configRaw, configExists, configMode, stashRaw, stashExists, shimRaw, shimExists, shimMode, realRaw, realExists, realMode); rollbackErr != nil {
+					return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+				}
+				return err
+			}
+			changed = changed || shimChanged
+		}
+		return nil
+	}); err != nil {
+		util.L.Err("grok proxy lock failed: " + err.Error())
+		configureErr = err
+	}
+	return changed, file, configureErr
+}
+
+func restoreGrokProxyState(file, configRaw string, configExists bool, configMode os.FileMode, stashRaw string, stashExists bool) error {
+	return errors.Join(
+		restoreGrokProxyFile(file, configRaw, configExists, configMode),
+		restoreGrokProxyFile(grokStashPath(), stashRaw, stashExists, 0o600),
+	)
+}
+
+func restoreGrokProxyAll(file, configRaw string, configExists bool, configMode os.FileMode, stashRaw string, stashExists bool, shimRaw string, shimExists bool, shimMode os.FileMode, realRaw string, realExists bool, realMode os.FileMode) error {
+	return errors.Join(
+		restoreGrokProxyState(file, configRaw, configExists, configMode, stashRaw, stashExists),
+		restoreGrokProxyFile(grokBinFile(), shimRaw, shimExists, shimMode),
+		restoreGrokProxyFile(grokRealBinFile(), realRaw, realExists, realMode),
+	)
+}
+
+func restoreGrokProxyFile(path, raw string, exists bool, mode os.FileMode) error {
+	if !exists {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return util.WriteFileMode(path, raw, mode)
+}
+
+func configureGrokProxyLocked() (bool, string, error) {
 	if !grokStashValid() {
-		return false, grokConfigFile()
+		return false, grokConfigFile(), fmt.Errorf("grok proxy stash is invalid")
 	}
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if !ok {
-		return false, grokConfigFile()
+		return false, grokConfigFile(), nil
 	}
+	stripped := false
 	if next := stripGrokBuildBlocks(raw); next != raw {
-		if err := util.WriteFile(grokConfigFile(), next); err != nil {
-			return false, grokConfigFile()
-		}
 		raw = next
+		stripped = true
 	}
-	if len(grokLocalBYOK(raw)) == 0 && len(loadGrokStash()) == 0 {
-		return true, grokConfigFile()
+	stashFile, _ := loadGrokStashFile()
+	if stashFile.Providers == nil {
+		stashFile.Providers = map[string]grokStashEntry{}
 	}
-	stash := loadGrokStash()
-	stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
+	stash := stashFile.Providers
 	wired := false
 	ids := grokLocalBYOK(raw)
 	seen := make(map[string]bool, len(ids)+len(stash))
@@ -705,7 +1012,7 @@ func configureGrokProxyLocked() (bool, string) {
 	for _, id := range ids {
 		table := "model_providers." + id
 		current := util.TomlBlockField(raw, table, "base_url")
-		if sameProxyBase(current, ProxyEndpointFor("grok")) {
+		if sameProxyBase(current, grokProxyEndpoint()) {
 			if s, ok := stash[id]; ok && s.BaseURL != "" {
 				if next := grokSetHeaderValue(raw, id, s.BaseURL); next != raw {
 					raw = next
@@ -727,7 +1034,7 @@ func configureGrokProxyLocked() (bool, string) {
 		headerRaw, headerChild := grokExistingHeaderRaw(raw, id)
 		pathRaw, pathChild := grokExistingPathRaw(raw, id)
 		baseLine := grokBaseURLLine(raw, id)
-		next := grokSwapBaseURL(raw, table, ProxyEndpointFor("grok"))
+		next := grokSwapBaseURL(raw, table, grokProxyEndpoint())
 		next = grokSetHeaderValue(next, id, current)
 		next = grokSetOriginalPath(next, id)
 		if next != raw {
@@ -736,58 +1043,98 @@ func configureGrokProxyLocked() (bool, string) {
 		}
 		stash[id] = grokStashEntry{BaseURL: current, BaseLine: baseLine, Header: userHeader, HeaderRaw: headerRaw, HeaderChild: headerChild, HeaderSet: userHeaderSet, PathRaw: pathRaw, PathChild: pathChild, PathSet: true}
 	}
-	changed := wired
+	if grokOAuthApplicable(raw) {
+		if next, oauthChanged := grokSetOAuthHeader(raw, &stashFile); oauthChanged {
+			raw = next
+			wired = true
+		}
+	}
+	stashFile.Providers = stash
+	changed := wired || stripped
 	if changed {
-		if len(stash) > 0 {
-			if err := saveGrokStash(stash); err != nil {
-				return false, grokConfigFile()
-			}
-		} else if err := clearGrokStash(); err != nil {
-			return false, grokConfigFile()
+		if err := saveGrokStashFile(stashFile); err != nil {
+			return false, grokConfigFile(), fmt.Errorf("save grok proxy stash: %w", err)
 		}
 	}
 	if changed {
 		if err := util.WriteFile(grokConfigFile(), raw); err != nil {
-			_ = restoreProxyRouteStash("grok", stashRaw, stashExists)
-			return false, grokConfigFile()
+			return false, grokConfigFile(), fmt.Errorf("write grok proxy config: %w", err)
 		}
 	}
-	return changed, grokConfigFile()
+	return changed, grokConfigFile(), nil
 }
 
 func RemoveGrokProxy() bool {
-	removed := false
-	if err := withProxyRouteStashLock(func() error {
-		removed = removeGrokProxyLocked()
-		return nil
-	}); err != nil {
-		util.L.Err("grok proxy lock failed: " + err.Error())
-	}
-	if RemoveGrokShim() {
-		removed = true
+	removed, err := RemoveGrokProxyChecked()
+	if err != nil {
+		util.L.Err("grok proxy removal failed: " + err.Error())
 	}
 	return removed
 }
 
-func removeGrokProxyLocked() bool {
+func RemoveGrokProxyChecked() (bool, error) {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		file := grokConfigFile()
+		configRaw, configExists := util.ReadFileSafe(file)
+		stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
+		shimRaw, shimExists := util.ReadFileSafe(grokBinFile())
+		realRaw, realExists := util.ReadFileSafe(grokRealBinFile())
+		configMode := os.FileMode(0o600)
+		if info, err := os.Lstat(file); err == nil {
+			configMode = info.Mode().Perm()
+		}
+		shimMode := os.FileMode(0o755)
+		if info, err := os.Lstat(grokBinFile()); err == nil {
+			shimMode = info.Mode().Perm()
+		}
+		realMode := os.FileMode(0o755)
+		if info, err := os.Lstat(grokRealBinFile()); err == nil {
+			realMode = info.Mode().Perm()
+		}
+		var err error
+		removed, err = removeGrokProxyLocked()
+		if err != nil {
+			if rollbackErr := restoreGrokProxyAll(file, configRaw, configExists, configMode, stashRaw, stashExists, shimRaw, shimExists, shimMode, realRaw, realExists, realMode); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+			return err
+		}
+		shimRemoved, err := removeGrokShimChecked()
+		if err != nil {
+			if rollbackErr := restoreGrokProxyAll(file, configRaw, configExists, configMode, stashRaw, stashExists, shimRaw, shimExists, shimMode, realRaw, realExists, realMode); rollbackErr != nil {
+				return fmt.Errorf("%w; rollback failed: %v", err, rollbackErr)
+			}
+			return err
+		}
+		if shimRemoved {
+			removed = true
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	return removed, nil
+}
+
+func removeGrokProxyLocked() (bool, error) {
 	if !grokStashValid() {
-		return false
+		return false, fmt.Errorf("grok proxy stash is invalid")
 	}
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if !ok {
-		return false
+		return false, nil
 	}
-	if len(loadGrokStash()) == 0 {
-		return removeGrokBuildProxyLocked()
+	stashFile, _ := loadGrokStashFile()
+	if len(stashFile.Providers) == 0 && !stashFile.OAuthHeaderSet && !stashFile.OAuthModelsMade {
+		return removeGrokBuildProxyLocked(), nil
 	}
 	removed := false
-	original := raw
-	stashRaw, stashExists := util.ReadFileSafe(grokStashPath())
-	stash := loadGrokStash()
+	stash := stashFile.Providers
 	for id, s := range stash {
 		table := "model_providers." + id
 		current := util.TomlBlockField(raw, table, "base_url")
-		if s.BaseURL == "" || !util.HasBlock(raw, table) || !sameProxyBase(current, ProxyEndpointFor("grok")) {
+		if s.BaseURL == "" || !util.HasBlock(raw, table) || !sameProxyBase(current, grokProxyEndpoint()) {
 			continue
 		}
 		next := grokRestoreBaseURL(raw, id, s.BaseLine, s.BaseURL)
@@ -807,37 +1154,51 @@ func removeGrokProxyLocked() bool {
 		}
 		delete(stash, id)
 	}
+	if next, oauthRemoved := grokRemoveOAuthHeader(raw, stashFile); oauthRemoved {
+		raw = next
+		removed = true
+		stashFile.OAuthHeaderRaw = ""
+		stashFile.OAuthHeaderSet = false
+		stashFile.OAuthModelsMade = false
+	}
 	if !removed {
-		return false
+		return false, nil
 	}
 	if err := util.WriteFile(grokConfigFile(), raw); err != nil {
-		return false
+		return false, fmt.Errorf("write restored grok config: %w", err)
 	}
-	if len(stash) > 0 {
-		if err := saveGrokStash(stash); err != nil {
-			_ = util.WriteFile(grokConfigFile(), original)
-			_ = restoreProxyRouteStash("grok", stashRaw, stashExists)
-			return false
+	stashFile.Providers = stash
+	if len(stash) > 0 || stashFile.OAuthHeaderSet || stashFile.OAuthModelsMade {
+		if err := saveGrokStashFile(stashFile); err != nil {
+			return false, fmt.Errorf("save remaining grok proxy stash: %w", err)
 		}
 	} else {
 		if err := clearGrokStash(); err != nil {
-			_ = util.WriteFile(grokConfigFile(), original)
-			_ = restoreProxyRouteStash("grok", stashRaw, stashExists)
-			return false
+			return false, fmt.Errorf("clear grok proxy stash: %w", err)
 		}
 	}
-	return true
+	return true, nil
 }
 
 func GrokProxyWired() bool {
 	if GrokShimWired() {
 		return true
 	}
-	stash := loadGrokStash()
+	stashFile, _ := loadGrokStashFile()
+	stash := stashFile.Providers
+	raw, ok := util.ReadFileSafe(grokConfigFile())
 	if len(stash) == 0 {
+		if ok {
+			if (stashFile.OAuthHeaderSet || stashFile.OAuthModelsMade) && func() bool {
+				upstream, exists := grokExistingTableHeader(raw, "models")
+				return exists && upstream == grokOAuthUpstream
+			}() {
+				return true
+			}
+		}
 		return false
 	}
-	raw, ok := util.ReadFileSafe(grokConfigFile())
+	raw, ok = util.ReadFileSafe(grokConfigFile())
 	if !ok {
 		return false
 	}
@@ -845,12 +1206,36 @@ func GrokProxyWired() bool {
 		s := stash[id]
 		upstream, upstreamOK := grokExistingHeader(raw, id)
 		path, pathOK := grokExistingPath(raw, id)
-		if sameProxyBase(util.TomlBlockField(raw, "model_providers."+id, "base_url"), ProxyEndpointFor("grok")) &&
+		if sameProxyBase(util.TomlBlockField(raw, "model_providers."+id, "base_url"), grokProxyEndpoint()) &&
 			s.BaseURL != "" && upstreamOK && upstream == s.BaseURL && pathOK && path == "/chat/completions" {
 			return true
 		}
 	}
 	return false
+}
+
+func GrokOAuthProxyWired() bool {
+	if GrokShimWired() {
+		return true
+	}
+	raw, ok := util.ReadFileSafe(grokConfigFile())
+	if !ok {
+		return false
+	}
+	stash, _ := loadGrokStashFile()
+	if !stash.OAuthHeaderSet && !stash.OAuthModelsMade {
+		return false
+	}
+	upstream, exists := grokExistingTableHeader(raw, "models")
+	return exists && upstream == grokOAuthUpstream
+}
+
+func GrokProxyUsesHeadroom() bool {
+	raw, ok := util.ReadFileSafe(grokConfigFile())
+	if !ok {
+		return false
+	}
+	return len(grokLocalBYOK(raw)) > 0 || len(loadGrokStash()) > 0
 }
 
 func detectGrokProxy(cap ProxyCapability) ProxyDetection {
@@ -865,7 +1250,7 @@ func detectGrokProxy(cap ProxyCapability) ProxyDetection {
 	routed := 0
 	for id := range stash {
 		if util.HasBlock(raw, "model_providers."+id) &&
-			sameProxyBase(util.TomlBlockField(raw, "model_providers."+id, "base_url"), ProxyEndpointFor("grok")) {
+			sameProxyBase(util.TomlBlockField(raw, "model_providers."+id, "base_url"), grokProxyEndpoint()) {
 			routed++
 		}
 	}
@@ -881,6 +1266,9 @@ func detectGrokProxy(cap ProxyCapability) ProxyDetection {
 	}
 	if GrokShimWired() {
 		return proxyDetection(cap.ID, "OAuth grok launcher installed", ProxyStateManaged)
+	}
+	if upstream, exists := grokExistingTableHeader(raw, "models"); exists && upstream == grokOAuthUpstream {
+		return proxyDetection(cap.ID, "native OAuth Grok requests use xAI CLI endpoint", ProxyStateManaged)
 	}
 	if strings.Contains(raw, grokBuildMarkerStart) || util.HasBlock(raw, "model.grok-build") {
 		return proxyDetection(cap.ID, "[model.grok-build] legacy marker present — rerun init to convert to launcher", ProxyStateUnconfigured)

@@ -2,6 +2,7 @@ package headroom
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -47,8 +48,6 @@ func grokProxyLiveZ(timeout time.Duration) bool {
 
 func GrokOAuthProxyRunning() bool { return grokProxyLiveZ(proxyProbeTimeout) }
 
-// GrokOAuthProxyOwned reports whether the healthy listener is owned by a
-// verified tokless grok daemon (pid record + process identity match).
 func GrokOAuthProxyOwned() bool { return GrokOAuthProxyRunning() && grokOwnershipValid() }
 
 func grokOwnershipValid() bool {
@@ -62,23 +61,44 @@ func grokOwnershipValid() bool {
 		return false
 	}
 	identity, err := proxyIdentity(record.PID)
-	if err != nil {
-		return false
-	}
-	return identity.matchesRecord(record)
+	return err == nil && identity.matchesRecord(record)
 }
 
 func grokRollback(proc *os.Process, pidFile string, cause error) error {
+	return grokRollbackWithIdentity(proc, pidFile, nil, cause)
+}
+
+func grokRollbackWithIdentity(proc *os.Process, pidFile string, expected *processIdentityInfo, cause error) error {
+	recordRaw, recordExists := util.ReadFileSafe(pidFile)
+	if expected != nil && expected.Executable != "" {
+		current, err := proxyIdentity(proc.Pid)
+		if err != nil || !current.equal(*expected) {
+			return cause
+		}
+	}
 	if err := proxyKill(proc); err != nil {
 		return fmt.Errorf("%w; grok rollback kill for pid %d: %v", cause, proc.Pid, err)
 	}
-	if err := proxyWait(proc); err != nil {
-		return fmt.Errorf("%w; grok rollback wait: %v", cause, err)
+	if err := proxyWait(proc); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		util.L.Sub("grok rollback wait: " + err.Error())
 	}
-	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%w; grok rollback record removal: %v", cause, err)
+	deadline := proxyNow().Add(proxyStopTimeout)
+	for proxyNow().Before(deadline) {
+		if proxyGone(proc) && !grokProxyLiveZ(proxyProbeTimeout) {
+			if recordExists {
+				current, ok := util.ReadFileSafe(pidFile)
+				if !ok || current != recordRaw {
+					return fmt.Errorf("%w; grok proxy ownership record changed during rollback — refusing to remove replacement record", cause)
+				}
+				if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("%w; grok rollback record removal: %v", cause, err)
+				}
+			}
+			return cause
+		}
+		proxySleep(proxyPollInterval)
 	}
-	return cause
+	return fmt.Errorf("%w; grok rollback did not stop pid %d", cause, proc.Pid)
 }
 
 func StartGrokOAuthProxy() error {
@@ -99,7 +119,7 @@ func StartGrokOAuthProxy() error {
 	}
 	port := util.GrokOAuthProxyPort()
 	args := grokProxyArgs(port)
-	_, logFile := grokProxyFiles()
+	pidFile, logFile := grokProxyFiles()
 	if err := util.EnsureDir(filepath.Dir(logFile)); err != nil {
 		return err
 	}
@@ -113,28 +133,42 @@ func StartGrokOAuthProxy() error {
 	if err := proxySpawn(cmd); err != nil {
 		return fmt.Errorf("grok proxy failed to start: %w", err)
 	}
-	pidFile, _ := grokProxyFiles()
 	identity, err := verifyIdentityWithRetry(cmd.Process.Pid, bin, args)
 	if err != nil {
-		return grokRollback(cmd.Process, pidFile, err)
+		if identity.Executable == "" {
+			return cleanupUnverifiedChild(cmd.Process, fmt.Errorf("grok proxy startup identity unavailable; refusing to signal pid %d: %w", cmd.Process.Pid, err))
+		}
+		return fmt.Errorf("grok proxy startup identity unavailable; refusing to signal pid %d: %w", cmd.Process.Pid, err)
 	}
 	if err := proxyWrite(pidFile, proxyOwnership{PID: cmd.Process.Pid, Executable: identity.Executable, Args: identity.Args, Start: identity.Start}); err != nil {
-		return grokRollback(cmd.Process, pidFile, fmt.Errorf("grok proxy ownership record: %w", err))
+		return grokRollbackWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("grok proxy ownership record: %w", err))
 	}
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
+		current, identityErr := proxyIdentity(cmd.Process.Pid)
+		if identityErr != nil || !current.equal(identity) {
+			return grokRollbackWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("grok proxy identity changed during startup"))
+		}
 		if grokProxyLiveZ(proxyProbeTimeout) {
 			return nil
 		}
 		proxySleep(proxyPollInterval)
 	}
-	return grokRollback(cmd.Process, pidFile, fmt.Errorf("grok proxy did not become ready within %s — see %s", proxyReadyTimeout, logFile))
+	return grokRollbackWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("grok proxy did not become ready within %s — see %s", proxyReadyTimeout, logFile))
 }
 
 func StopGrokOAuthProxy() error {
+	release, err := acquireProxyStartLock(proxyNow)
+	if err != nil {
+		return fmt.Errorf("grok proxy stop: %w", err)
+	}
+	defer release()
 	pidFile, _ := grokProxyFiles()
 	raw, ok := util.ReadFileSafe(pidFile)
 	if !ok {
+		if GrokOAuthProxyRunning() {
+			return fmt.Errorf("Grok OAuth proxy listener is running without tokless ownership — refusing to stop")
+		}
 		return nil
 	}
 	var record proxyOwnership
@@ -144,6 +178,13 @@ func StopGrokOAuthProxy() error {
 	identity, err := proxyIdentity(record.PID)
 	if err != nil {
 		if proxyGone(&os.Process{Pid: record.PID}) {
+			if grokProxyLiveZ(proxyProbeTimeout) {
+				return fmt.Errorf("grok proxy pid %d is gone but a healthy listener remains — refusing to remove ownership record", record.PID)
+			}
+			current, currentOK := util.ReadFileSafe(pidFile)
+			if !currentOK || current != raw {
+				return fmt.Errorf("grok proxy ownership record changed during stale cleanup — refusing to remove replacement record")
+			}
 			return os.Remove(pidFile)
 		}
 		return fmt.Errorf("grok proxy pid %d identity could not be verified — refusing to stop", record.PID)
@@ -158,9 +199,16 @@ func StopGrokOAuthProxy() error {
 	if err := proxyKill(proc); err != nil {
 		return fmt.Errorf("failed to stop grok proxy pid %d: %w", record.PID, err)
 	}
+	if waitErr := proxyWait(proc); waitErr != nil && !errors.Is(waitErr, os.ErrProcessDone) {
+		util.L.Sub("grok proxy wait: " + waitErr.Error())
+	}
 	deadline := proxyNow().Add(proxyStopTimeout)
 	for proxyNow().Before(deadline) {
 		if proxyGone(proc) && !grokProxyLiveZ(proxyProbeTimeout) {
+			current, currentOK := util.ReadFileSafe(pidFile)
+			if !currentOK || current != raw {
+				return fmt.Errorf("grok proxy ownership record changed during stop — refusing to remove replacement record")
+			}
 			return os.Remove(pidFile)
 		}
 		proxySleep(proxyPollInterval)
