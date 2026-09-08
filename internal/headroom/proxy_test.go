@@ -87,6 +87,7 @@ func TestEnsureProxyUpSkipsWhenRoutingDisabled(t *testing.T) {
 func TestEnsureProxyUpReturnsStartFailure(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
+	proxyLiveZProbe = func(time.Duration) bool { return false }
 	if err := util.SetProxyRoutingEnabled(true); err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +619,7 @@ func TestStartProxyIdentityFailureRollsBackDirectChild(t *testing.T) {
 				t.Fatalf("StartProxy error = %v", err)
 			}
 			if tt.name == "lookup error" && (!killed || !waited) {
-				t.Fatalf("rollback kill=%v wait=%v, want both for unavailable identity", killed, waited)
+				t.Fatalf("unverified direct child cleanup kill=%v wait=%v", killed, waited)
 			}
 			if tt.name == "mismatch" && (killed || waited) {
 				t.Fatalf("rollback kill=%v wait=%v, must not touch mismatched process", killed, waited)

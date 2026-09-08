@@ -509,10 +509,10 @@ func StartProxy() error {
 	pid := cmd.Process.Pid
 	identity, err := verifyIdentityWithRetry(pid, bin, args)
 	if err != nil {
-		if identity.Executable != "" {
-			return err
+		if identity.Executable == "" {
+			return cleanupUnverifiedChild(cmd.Process, fmt.Errorf("headroom proxy startup identity unavailable; refusing to signal pid %d: %w", pid, err))
 		}
-		return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, err)
+		return fmt.Errorf("headroom proxy startup identity unavailable; refusing to signal pid %d: %w", pid, err)
 	}
 	if err := proxyWrite(pidFile, proxyOwnership{PID: pid, Executable: identity.Executable, Args: identity.Args, Start: identity.Start}); err != nil {
 		return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy ownership record: %w", err))
@@ -531,6 +531,16 @@ func StartProxy() error {
 		proxySleep(proxyPollInterval)
 	}
 	return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy did not become ready within %s — see %s", proxyReadyTimeout, logFile))
+}
+
+func cleanupUnverifiedChild(proc *os.Process, cause error) error {
+	if err := proxyKill(proc); err != nil {
+		return fmt.Errorf("%w; cleanup kill for pid %d: %v", cause, proc.Pid, err)
+	}
+	if err := proxyWait(proc); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return fmt.Errorf("%w; cleanup wait for pid %d: %v", cause, proc.Pid, err)
+	}
+	return cause
 }
 
 func restoreProxyAfterAutostartRollback(wasRunning bool) error {

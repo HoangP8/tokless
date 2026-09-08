@@ -40,6 +40,26 @@ func TestIdentifyProcessRealDirectExecutable(t *testing.T) {
 	}
 }
 
+func TestCleanupUnverifiedChildKillsOnlyDirectChild(t *testing.T) {
+	oldKill, oldWait := proxyKill, proxyWait
+	t.Cleanup(func() { proxyKill, proxyWait = oldKill, oldWait })
+	proxyKill = killProcess
+	waited := false
+	proxyWait = func(*os.Process) error { waited = true; return nil }
+	cmd := exec.Command("/bin/sleep", "600")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	got := cleanupUnverifiedChild(cmd.Process, os.ErrInvalid)
+	if got == nil {
+		t.Fatal("cleanup returned nil")
+	}
+	if !waited {
+		t.Fatal("direct child was not waited")
+	}
+	_ = cmd.Wait()
+}
+
 func TestIdentifyProcessRealConsoleScript(t *testing.T) {
 	launcher := filepath.Join(t.TempDir(), "headroom")
 	python, err := exec.LookPath("python3")
