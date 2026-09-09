@@ -23,11 +23,6 @@ func antigravityEnvFile() string {
 	return filepath.Join(util.Home(), ".gemini", ".env")
 }
 
-// antigravityShellEnvFile is the single Unix login-env surface (same idea as copilot).
-func antigravityShellEnvFile() string {
-	return filepath.Join(util.Home(), ".zshenv")
-}
-
 func antigravityURL() string { return ProxyEndpointFor("antigravity") }
 
 // antigravityEnvValue returns the current value of key, preferring the tokless
@@ -79,12 +74,78 @@ func antigravityCanReplace(raw, key, want string) bool {
 	return v == "" || v == want
 }
 
-func antigravityShellBlock() string {
+// antigravityLegacyShellCleanupPaths covers older shell injection surfaces.
+func antigravityLegacyShellCleanupPaths() []string {
+	h := util.Home()
+	return []string{
+		filepath.Join(h, ".zshenv"),
+		filepath.Join(h, ".zprofile"),
+		filepath.Join(h, ".zshrc"),
+		filepath.Join(h, ".bash_profile"),
+		filepath.Join(h, ".bashrc"),
+		filepath.Join(h, ".profile"),
+		filepath.Join(h, ".config", "environment.d", "tokless-antigravity.conf"),
+	}
+}
+
+func antigravityRemoveShellExports() (removed bool) {
+	if util.IsWin {
+		return false
+	}
+	for _, file := range antigravityLegacyShellCleanupPaths() {
+		raw, ok := util.ReadFileSafe(file)
+		if !ok {
+			continue
+		}
+		if filepath.Base(file) == "tokless-antigravity.conf" {
+			want := antigravityProxyEnvKey + "=" + antigravityURL() + "\n" +
+				antigravityCloudCodeKey + "=" + antigravityURL() + "\n"
+			if raw == want && os.Remove(file) == nil {
+				removed = true
+			}
+			continue
+		}
+		if !strings.Contains(raw, antigravityShellFenceHead) {
+			continue
+		}
+		next := antigravityRemoveShellBlock(raw)
+		if next == raw {
+			continue
+		}
+		next = strings.TrimSuffix(next, "\n")
+		if strings.TrimSpace(next) == "" {
+			if util.WriteFile(file, "") == nil {
+				removed = true
+			}
+		} else if util.WriteFile(file, next+"\n") == nil {
+			removed = true
+		}
+	}
+	return removed
+}
+
+func antigravityRemoveShellBlock(raw string) string {
 	u := antigravityURL()
-	return antigravityShellFenceHead + "\n" +
-		"export " + antigravityProxyEnvKey + "=" + u + "\n" +
-		"export " + antigravityCloudCodeKey + "=" + u + "\n" +
-		antigravityShellFenceFoot + "\n"
+	lines := strings.Split(raw, "\n")
+	var out []string
+	inFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == antigravityShellFenceHead {
+			inFence = true
+			continue
+		}
+		if trimmed == antigravityShellFenceFoot {
+			inFence = false
+			continue
+		}
+		if inFence && (trimmed == "export "+antigravityProxyEnvKey+"="+u ||
+			trimmed == "export "+antigravityCloudCodeKey+"="+u) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func antigravityStripFence(raw string) string {
@@ -97,8 +158,27 @@ func antigravityStripShellBlock(raw string) string {
 
 func antigravityStripMarkedBlock(raw, head, foot string) string {
 	lines := strings.Split(raw, "\n")
-	var out []string
 	inFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == head {
+			if inFence {
+				return raw
+			}
+			inFence = true
+		} else if trimmed == foot {
+			if !inFence {
+				return raw
+			}
+			inFence = false
+		}
+	}
+	if inFence {
+		return raw
+	}
+
+	var out []string
+	inFence = false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == head {
@@ -115,41 +195,6 @@ func antigravityStripMarkedBlock(raw, head, foot string) string {
 		out = append(out, line)
 	}
 	return strings.Join(out, "\n")
-}
-
-func antigravityShellWired(raw string) bool {
-	u := antigravityURL()
-	inFence := false
-	hasProxy, hasCloud := false, false
-	for _, line := range strings.Split(raw, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == antigravityShellFenceHead {
-			inFence = true
-			continue
-		}
-		if trimmed == antigravityShellFenceFoot {
-			break
-		}
-		if !inFence {
-			continue
-		}
-		if trimmed == "export "+antigravityProxyEnvKey+"="+u {
-			hasProxy = true
-		}
-		if trimmed == "export "+antigravityCloudCodeKey+"="+u {
-			hasCloud = true
-		}
-	}
-	return hasProxy && hasCloud
-}
-
-func antigravityUpsertShellBlock(src, block string) string {
-	next := antigravityStripShellBlock(src)
-	sep := "\n"
-	if len(next) == 0 || strings.HasSuffix(next, "\n") {
-		sep = ""
-	}
-	return next + sep + "\n" + block
 }
 
 func antigravityWriteDotEnv() (changed bool, err error) {
@@ -172,102 +217,6 @@ func antigravityWriteDotEnv() (changed bool, err error) {
 	}
 	sb.WriteString(antigravityDotEnvBlock())
 	return true, util.WriteFile(file, sb.String())
-}
-
-// antigravityWriteShellExports puts exports in ~/.zshenv so new Unix shells
-// route agy without relying on ~/.gemini/.env alone.
-func antigravityWriteShellExports() (changed bool, err error) {
-	if util.IsWin {
-		return false, nil
-	}
-	file := antigravityShellEnvFile()
-	raw, _ := util.ReadFileSafe(file)
-	if !antigravityCanReplaceShell(raw, antigravityProxyEnvKey) ||
-		!antigravityCanReplaceShell(raw, antigravityCloudCodeKey) {
-		return false, nil
-	}
-	if antigravityShellWired(raw) {
-		return false, nil
-	}
-	next := antigravityUpsertShellBlock(raw, antigravityShellBlock())
-	if next == raw {
-		return false, nil
-	}
-	if err := util.WriteFile(file, next); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func antigravityShellEnvValue(raw, key string) string {
-	for _, line := range strings.Split(raw, "\n") {
-		trimmed := strings.TrimSpace(line)
-		trimmed = strings.TrimPrefix(trimmed, "export ")
-		name, value, ok := strings.Cut(trimmed, "=")
-		if ok && strings.TrimSpace(name) == key {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func antigravityCanReplaceShell(raw, key string) bool {
-	v := antigravityShellEnvValue(raw, key)
-	return v == "" || v == antigravityURL()
-}
-
-// antigravityLegacyShellCleanupPaths are older multi-rc inject sites; strip only.
-func antigravityLegacyShellCleanupPaths() []string {
-	h := util.Home()
-	return []string{
-		filepath.Join(h, ".zshenv"),
-		filepath.Join(h, ".zprofile"),
-		filepath.Join(h, ".zshrc"),
-		filepath.Join(h, ".bash_profile"),
-		filepath.Join(h, ".bashrc"),
-		filepath.Join(h, ".profile"),
-		filepath.Join(h, ".config", "environment.d", "tokless-antigravity.conf"),
-	}
-}
-
-func antigravityRemoveShellExports() (removed bool) {
-	if util.IsWin {
-		return false
-	}
-	for _, f := range antigravityLegacyShellCleanupPaths() {
-		src, ok := util.ReadFileSafe(f)
-		if !ok {
-			continue
-		}
-		if filepath.Base(f) == "tokless-antigravity.conf" {
-			want := antigravityProxyEnvKey + "=" + antigravityURL() + "\n" +
-				antigravityCloudCodeKey + "=" + antigravityURL() + "\n"
-			if src == want {
-				if os.Remove(f) == nil {
-					removed = true
-				}
-			}
-			continue
-		}
-		if !strings.Contains(src, antigravityShellFenceHead) {
-			continue
-		}
-		next := antigravityStripShellBlock(src)
-		if next == src {
-			continue
-		}
-		next = strings.TrimSuffix(next, "\n")
-		if strings.TrimSpace(next) == "" {
-			if util.WriteFile(f, "") == nil {
-				removed = true
-			}
-			continue
-		}
-		if util.WriteFile(f, next+"\n") == nil {
-			removed = true
-		}
-	}
-	return removed
 }
 
 func antigravityApplyProcessEnv() {
@@ -400,30 +349,16 @@ if ($changed) { Write-Output 'changed' }
 func ConfigureAntigravityProxy() (changed bool, file string) {
 	file = antigravityEnvFile()
 	raw, existed := util.ReadFileSafe(file)
-	shellRaw, _ := util.ReadFileSafe(antigravityShellEnvFile())
+	if !existed && util.Exists(file) {
+		return false, file
+	}
 	if !antigravityProcessEnvCompatible() || !antigravityWindowsUserEnvCompatible() ||
 		!antigravityCanReplace(raw, antigravityProxyEnvKey, antigravityURL()) ||
-		!antigravityCanReplace(raw, antigravityCloudCodeKey, antigravityURL()) ||
-		(!util.IsWin && (!antigravityCanReplaceShell(shellRaw, antigravityProxyEnvKey) ||
-			!antigravityCanReplaceShell(shellRaw, antigravityCloudCodeKey))) {
+		!antigravityCanReplace(raw, antigravityCloudCodeKey, antigravityURL()) {
 		return false, file
 	}
 	dotChanged, err := antigravityWriteDotEnv()
 	if err != nil {
-		return false, file
-	}
-	shellRawBefore := shellRaw
-	shellChanged, err := antigravityWriteShellExports()
-	if err != nil {
-		if existed {
-			if rollbackErr := util.WriteFile(file, raw); rollbackErr != nil {
-				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
-			}
-		} else {
-			if rollbackErr := os.Remove(file); rollbackErr != nil && !os.IsNotExist(rollbackErr) {
-				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
-			}
-		}
 		return false, file
 	}
 	winChanged, winOK := antigravityWriteWindowsUserEnv()
@@ -437,15 +372,10 @@ func ConfigureAntigravityProxy() (changed bool, file string) {
 				util.L.Err(fmt.Sprintf("antigravity proxy rollback failed: %v", rollbackErr))
 			}
 		}
-		if !util.IsWin && shellChanged {
-			if rollbackErr := util.WriteFile(antigravityShellEnvFile(), shellRawBefore); rollbackErr != nil {
-				util.L.Err(fmt.Sprintf("antigravity shell rollback failed: %v", rollbackErr))
-			}
-		}
 		return false, file
 	}
 	antigravityApplyProcessEnv()
-	return dotChanged || shellChanged || winChanged, file
+	return dotChanged || winChanged, file
 }
 
 // RemoveAntigravityProxy deletes tokless-owned proxy config when it still matches.
@@ -454,7 +384,7 @@ func RemoveAntigravityProxy() bool {
 	raw, ok := util.ReadFileSafe(file)
 	url := antigravityURL()
 	removed := false
-	if ok && antigravityEnvValue(raw, antigravityProxyEnvKey) == url {
+	if ok && antigravityEnvValue(raw, antigravityProxyEnvKey) == url && antigravityEnvValue(raw, antigravityCloudCodeKey) == url {
 		next := antigravityStripFence(raw)
 		if next != raw {
 			next = strings.TrimSuffix(next, "\n")
@@ -481,7 +411,8 @@ func AntigravityProxyWired() bool {
 	if !ok {
 		return false
 	}
-	return antigravityEnvValue(raw, antigravityProxyEnvKey) == antigravityURL()
+	return antigravityEnvValue(raw, antigravityProxyEnvKey) == antigravityURL() &&
+		antigravityEnvValue(raw, antigravityCloudCodeKey) == antigravityURL()
 }
 
 // AntigravityProxySessionReady is true when process env will route agy through headroom.

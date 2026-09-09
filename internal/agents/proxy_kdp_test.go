@@ -193,8 +193,8 @@ func TestKiloProxyConfigurators(t *testing.T) {
 			wantConfigCh: true,
 			wantWired:    true,
 			wantRemove:   true,
-			wantContains: []string{`"user-provider"`, `"http://u.example:1/v1"`, `"tokless-headroom"`},
-			wantRetained: []string{`"user-provider"`, `"http://u.example:1/v1"`},
+			wantContains: []string{`"user-provider"`, `"http://127.0.0.1:8787/v1"`},
+			wantRetained: []string{`"user-provider"`},
 			wantAbsent:   []string{proxyEndpoint},
 		},
 		{
@@ -329,6 +329,25 @@ func TestDroidProxyConfigurators(t *testing.T) {
 			wantWired:    false,
 			wantRemove:   false,
 			wantRetained: []string{`"http://user.example:9999/v1"`},
+		},
+		{
+			name:         "refuses same-endpoint entry with unknown fields",
+			seed:         `{"customModels":[{"model":"headroom","displayName":"Headroom Proxy","baseUrl":"http://127.0.0.1:8787/v1","provider":"generic-chat-completion-api","extraHeaders":{"x-user":"keep"}}]}`,
+			wantConfigCh: false,
+			wantWired:    false,
+			wantRemove:   false,
+			wantRetained: []string{`"x-user":"keep"`},
+		},
+		{
+			name: "refuses duplicate native model IDs",
+			seed: `{"customModels":[
+				{"model":"qwen","displayName":"One","baseUrl":"https://one.example/v1","provider":"generic-chat-completion-api","apiKey":"one"},
+				{"model":"qwen","displayName":"Two","baseUrl":"https://two.example/v1","provider":"generic-chat-completion-api","apiKey":"two"}
+			]}`,
+			wantConfigCh: false,
+			wantWired:    false,
+			wantRemove:   false,
+			wantRetained: []string{`"displayName":"One"`, `"displayName":"Two"`},
 		},
 		{
 			name:         "refuses non-array customModels field",

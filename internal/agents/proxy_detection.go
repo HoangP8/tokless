@@ -62,6 +62,7 @@ var proxyCapabilities = func() map[string]ProxyCapability {
 	for id, spec := range proxyAgentSpecs {
 		out[id] = ProxyCapability{ID: spec.ID, Protocol: spec.Protocol, WireKind: spec.WireKind}
 	}
+	out["grok"] = ProxyCapability{ID: "grok", Protocol: ProxyProtocolOpenAICompatible, WireKind: ProxyWireAdditiveProvider}
 	return out
 }()
 
@@ -315,14 +316,15 @@ func detectAntigravityProxy(cap ProxyCapability) ProxyDetection {
 		return proxyDetection(cap.ID, "env file unreadable", ProxyStateUnreadable)
 	}
 	value := antigravityEnvValue(raw, antigravityProxyEnvKey)
-	if value == "" {
+	cloud := antigravityEnvValue(raw, antigravityCloudCodeKey)
+	if value == "" && cloud == "" {
 		return proxyDetection(cap.ID, "documented endpoint not configured", ProxyStateUnconfigured)
 	}
-	if value == ProxyEndpointFor(cap.ID) {
+	if value == ProxyEndpointFor(cap.ID) && cloud == ProxyEndpointFor(cap.ID) {
 		if AntigravityProxySessionReady() {
 			return proxyDetection(cap.ID, "exact managed endpoint; session env routes agy CLI", ProxyStateManaged)
 		}
-		return proxyDetection(cap.ID, "exact managed endpoint; shell/user env wired (open a new shell if CLI still bypasses)", ProxyStateManaged)
+		return proxyDetection(cap.ID, "exact managed endpoint; open a new session to load env", ProxyStateManaged)
 	}
 	return proxyDetection(cap.ID, "documented endpoint differs", ProxyStateForeignBYOK)
 }

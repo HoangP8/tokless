@@ -2,6 +2,9 @@ package agents
 
 import (
 	"os"
+
+	"github.com/HoangP8/tokless/internal/core"
+	"github.com/HoangP8/tokless/internal/util"
 )
 
 // ProxyAgentSpec is static metadata plus wire-side function references for one
@@ -23,8 +26,7 @@ var proxyAgentSpecs = map[string]ProxyAgentSpec{
 	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
 	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
 	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
-	"grok":        {"grok", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureGrokProxy, RemoveGrokProxy, GrokProxyWired},
-	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCopilotProxy, RemoveCopilotProxy, CopilotProxyWired},
+	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired},
 	"cline":       {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
 	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
 	"antigravity": {"antigravity", ProxyProtocolGeminiNative, ProxyWireManagedRoute, ConfigureAntigravityProxy, RemoveAntigravityProxy, AntigravityProxyWired},
@@ -47,17 +49,37 @@ func ProxyAgentApplicable(id string) bool {
 		}
 		return false
 	}
-	return true
+	if id == "copilot" {
+		return CopilotProxyWired() || util.Which("copilot") != ""
+	}
+	if ProxyAgentWired(id) {
+		return true
+	}
+	agent := core.GetAgent(id)
+	return agent != nil && agent.Detect != nil && agent.Detect().Installed
+}
+
+// ProxyAgentUsesHeadroom reports whether tokless should actively route the
+// agent through the shared Headroom daemon. Grok owns its OAuth context in its
+// native CLI and must not share the generic OpenAI-compatible auth path.
+func ProxyAgentUsesHeadroom(id string) bool {
+	return id != "grok" && id != "cursor"
 }
 
 // ConfigureProxyAgent wires id to the headroom proxy. Returns true when the
 // resulting config matches exactly what tokless would inject.
 func ConfigureProxyAgent(id string) bool {
+	if id == "grok" {
+		return false
+	}
 	spec, ok := proxySpecFor(id)
 	if !ok || spec.Configure == nil {
 		return false
 	}
 	_, _ = spec.Configure()
+	if id == "copilot" {
+		return CopilotProxyWired()
+	}
 	if id == "opencode" {
 		return OpenCodeProxySatisfied()
 	}
@@ -67,15 +89,26 @@ func ConfigureProxyAgent(id string) bool {
 // RemoveProxyAgent unwires id only when its proxy config still matches what
 // tokless set.
 func RemoveProxyAgent(id string) bool {
+	removed, _ := RemoveProxyAgentChecked(id)
+	return removed
+}
+
+func RemoveProxyAgentChecked(id string) (bool, error) {
+	if id == "grok" {
+		return RemoveGrokProxyChecked()
+	}
 	spec, ok := proxySpecFor(id)
 	if !ok || spec.Remove == nil {
-		return false
+		return false, nil
 	}
-	return spec.Remove()
+	return spec.Remove(), nil
 }
 
 // ProxyAgentWired reports whether id's proxy config exactly matches tokless's.
 func ProxyAgentWired(id string) bool {
+	if id == "grok" {
+		return GrokProxyWired()
+	}
 	spec, ok := proxySpecFor(id)
 	if !ok || spec.Wired == nil {
 		return false

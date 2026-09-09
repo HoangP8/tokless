@@ -44,6 +44,25 @@ func TestParseJsoncStripsComments(t *testing.T) {
 	}
 }
 
+func TestParseJsoncAcceptsCommentsAfterValues(t *testing.T) {
+	om, err := ParseJsonc(`{
+		"mcpServers": {
+			"context-mode": {"command": "tokless"}, // keep user comments parseable
+		},
+		/* trailing file comment */
+	}`)
+	if err != nil {
+		t.Fatalf("expected valid JSONC, got: %v", err)
+	}
+	servers, ok := om.Get("mcpServers")
+	if !ok {
+		t.Fatal("expected mcpServers")
+	}
+	if _, ok := servers.(*OrderedMap); !ok {
+		t.Fatalf("mcpServers type = %T, want *OrderedMap", servers)
+	}
+}
+
 func TestOrderedMapPreservesOrder(t *testing.T) {
 	input := `{"z":1,"a":2,"m":3}`
 	om, err := ParseJsonc(input)

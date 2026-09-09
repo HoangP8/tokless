@@ -453,13 +453,19 @@ func codexPickBYOK(raw string) *openCodeBYOK {
 
 // codexDotEnvValue reads one KEY=value line from CODEX_HOME/.env.
 func codexDotEnvValue(key string) string {
+	value, _ := codexDotEnvValuePresent(key)
+	return value
+}
+
+func codexDotEnvValuePresent(key string) (string, bool) {
 	raw, _ := util.ReadFileSafe(codexDotEnvPath())
 	for _, line := range strings.Split(raw, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), key+"=") {
-			return strings.TrimSpace(line[len(key)+1:])
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, key+"=") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, key+"=")), true
 		}
 	}
-	return ""
+	return "", false
 }
 
 var (
@@ -522,10 +528,33 @@ func upsertCodexDotEnv(kv [][2]string, remove bool) bool {
 }
 
 func writeCodexByokDotEnv(b *openCodeBYOK) bool {
+	for _, kv := range [][2]string{
+		{codexByokKeyVar, b.APIKey},
+		{codexByokURLVar, stripV1Suffix(b.BaseURL)},
+	} {
+		if value, present := codexDotEnvValuePresent(kv[0]); present && value != kv[1] {
+			return false
+		}
+	}
 	return upsertCodexDotEnv([][2]string{
 		{codexByokKeyVar, b.APIKey},
 		{codexByokURLVar, stripV1Suffix(b.BaseURL)},
 	}, false)
+}
+
+func removeCodexByokDotEnv(b *openCodeBYOK) bool {
+	if b == nil {
+		return false
+	}
+	for _, kv := range [][2]string{
+		{codexByokKeyVar, b.APIKey},
+		{codexByokURLVar, stripV1Suffix(b.BaseURL)},
+	} {
+		if value, present := codexDotEnvValuePresent(kv[0]); present && value != kv[1] {
+			return false
+		}
+	}
+	return upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true)
 }
 
 type codexStash struct {
@@ -580,6 +609,9 @@ func ConfigureCodexProxy() (changed bool, file string) {
 	p := util.CodexPathsResolved()
 	_ = util.EnsureDir(p.Dir)
 	raw, ok := util.ReadFileSafe(p.Config)
+	if !ok && util.Exists(p.Config) {
+		return false, p.Config
+	}
 	if !ok {
 		raw = ""
 	}
@@ -659,6 +691,8 @@ func RemoveCodexProxy() bool {
 	if !codexProxyOwned(raw, endpoint) {
 		return false
 	}
+	byok := codexPickBYOK(raw)
+	byokProxy := strings.Contains(codexProviderBlock(raw), "env_http_headers")
 	next := raw
 	if codexMarkedCurrentProxy(next, endpoint) || codexMarkedLegacyBearerProxy(next, endpoint) {
 		if codexMarkedCurrentProxy(next, endpoint) {
@@ -701,7 +735,7 @@ func RemoveCodexProxy() bool {
 	if util.WriteFile(p.Config, next) != nil {
 		return false
 	}
-	if !upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true) {
+	if byokProxy && !removeCodexByokDotEnv(byok) {
 		_ = restoreCodexConfig(p.Config, raw, true)
 		return false
 	}

@@ -198,6 +198,14 @@ func restoreProxyRouteStash(agent, raw string, exists bool) error {
 	return nil
 }
 
+func restoreProxyRouteStashLogged(agent, raw string, exists bool) bool {
+	if err := restoreProxyRouteStash(agent, raw, exists); err != nil {
+		util.L.Err(fmt.Sprintf("%s proxy stash rollback failed: %v", agent, err))
+		return false
+	}
+	return true
+}
+
 // saveProxyRouteStash writes the stash state atomically.
 func saveProxyRouteStash(agent string, providers map[string]proxyRouteStashEntry) error {
 	if len(providers) == 0 {

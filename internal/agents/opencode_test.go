@@ -1,12 +1,14 @@
 package agents
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func TestConfigureOpenCodeMcpRefusesJSONCComments(t *testing.T) {
+func TestConfigureOpenCodeMcpAcceptsJSONCComments(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
@@ -22,14 +24,25 @@ func TestConfigureOpenCodeMcpRefusesJSONCComments(t *testing.T) {
 	if err := util.WriteFile(path, seed); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := ConfigureOpenCodeMcp("context-mode"); changed {
-		t.Fatal("must refuse MCP configuration change")
+	if changed, _ := ConfigureOpenCodeMcp("context-mode"); !changed {
+		t.Fatal("JSONC config should accept MCP configuration change")
 	}
 	got, ok := util.ReadFileSafe(path)
-	if !ok {
-		t.Fatal("OpenCode config missing")
+	if !ok || !strings.Contains(got, `"context-mode"`) {
+		t.Fatalf("context-mode MCP missing:\n%s", got)
 	}
-	if got != seed {
-		t.Fatalf("JSONC config changed:\n%s", got)
+}
+
+func TestConfigureOpenCodeProxyRefusesUnreadableConfig(t *testing.T) {
+	opencodeProxyTestHome(t)
+	path := util.OpenCodePathsResolved().Config
+	if err := util.EnsureDir(path); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); changed {
+		t.Fatal("unreadable OpenCode config must not be replaced")
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatalf("OpenCode config path changed: %v", err)
 	}
 }

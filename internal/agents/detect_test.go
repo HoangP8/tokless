@@ -109,6 +109,19 @@ func TestDetectCopilotChatExtensionWithoutCompletion(t *testing.T) {
 	}
 }
 
+func TestCopilotExtensionDoesNotEnableCLIProxy(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	restrictPath(t)
+	if err := os.MkdirAll(filepath.Join(home, ".vscode", "extensions", "github.copilot-chat-1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ProxyAgentApplicable("copilot") {
+		t.Fatal("Copilot Chat extension must not enable Copilot CLI proxy routing")
+	}
+}
+
 func TestVSCodeExtensionInstalledPathsAndExactMatch(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -319,22 +332,28 @@ func TestConfigureAntigravityMcpMergeAndRemove(t *testing.T) {
 		t.Fatalf("legacy config not preserved/cleaned:\n%s", rawLegacy)
 	}
 	rawLegacySettings, _ := os.ReadFile(p.Settings)
-	if strings.Contains(string(rawLegacySettings), `"codegraph"`) || strings.Contains(string(rawLegacySettings), `mcp(codegraph/*)`) {
-		t.Fatalf("legacy settings should not contain codegraph:\n%s", rawLegacySettings)
+	if !strings.Contains(string(rawLegacySettings), `"codegraph"`) || strings.Contains(string(rawLegacySettings), `mcp(codegraph/*)`) {
+		t.Fatalf("legacy settings not cleaned:\n%s", rawLegacySettings)
 	}
 	rawCliSettings, _ := os.ReadFile(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"))
 	if !strings.Contains(string(rawCliSettings), `mcp(codegraph/*)`) {
 		t.Fatalf("CLI settings should allow codegraph MCP:\n%s", rawCliSettings)
 	}
-
 	RemoveAntigravityMcp("codegraph")
 	if AntigravityMcpHas("codegraph") {
-		t.Fatal("codegraph should be removed")
+		t.Fatal("managed codegraph entry should be removed")
 	}
-	for _, f := range []string{p.McpConfig, p.McpConfigCLI, cliMcp, p.Settings} {
+	if err := os.WriteFile(p.McpConfig, []byte(`{"mcpServers":{"user-server":{"command":"keepme"},"codegraph":{"command":"foreign"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Settings, []byte(`{"mcpServers":{"codegraph":{"command":"foreign"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	RemoveAntigravityMcp("codegraph")
+	for _, f := range []string{p.McpConfig, p.Settings} {
 		raw, _ = os.ReadFile(f)
-		if strings.Contains(string(raw), `"codegraph"`) {
-			t.Fatalf("codegraph not removed from %s", f)
+		if !strings.Contains(string(raw), `"codegraph"`) {
+			t.Fatalf("foreign codegraph entry removed from %s", f)
 		}
 	}
 	raw, _ = os.ReadFile(p.McpConfig)

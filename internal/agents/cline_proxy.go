@@ -21,12 +21,53 @@ func clineProviderStateFile() string {
 func clineDesiredProvider() *util.OrderedMap {
 	env := util.NewOrderedMap()
 	env.Set("provider", clineProviderName)
-	env.Set("apiKey", os.Getenv("TOKLESS_OPENCODE_GO_KEY"))
+	env.Set("apiKey", proxyWireKey())
 	env.Set("model", "deepseek-v4-flash")
 	env.Set("baseUrl", ProxyEndpointFor("cline"))
 	m := util.NewOrderedMap()
 	m.Set("settings", env)
 	return m
+}
+
+func clineRoutedProvider(existing *util.OrderedMap) (*util.OrderedMap, bool) {
+	settingsValue, ok := existing.Get("settings")
+	if !ok {
+		return nil, false
+	}
+	settings, ok := settingsValue.(*util.OrderedMap)
+	if !ok {
+		return nil, false
+	}
+	baseValue, ok := settings.Get("baseUrl")
+	base, baseOK := baseValue.(string)
+	if !ok || !baseOK || !isAbsoluteHTTP(base) || sameProxyBase(base, ProxyEndpointFor("cline")) {
+		return nil, false
+	}
+	cloned, err := util.ParseJsonc(util.StringifyJSON(existing))
+	if err != nil {
+		return nil, false
+	}
+	routedValue, ok := cloned.Get("settings")
+	if !ok {
+		return nil, false
+	}
+	routed, ok := routedValue.(*util.OrderedMap)
+	if !ok {
+		return nil, false
+	}
+	headers := util.NewOrderedMap()
+	if value, exists := routed.Get("headers"); exists {
+		var headersOK bool
+		headers, headersOK = value.(*util.OrderedMap)
+		if !headersOK {
+			return nil, false
+		}
+	}
+	headers.Set(headroomBaseURLHeader, normalizedHeadroomUpstream(base, "openai-completions"))
+	routed.Set("provider", clineProviderName)
+	routed.Set("baseUrl", ProxyEndpointFor("cline"))
+	routed.Set("headers", headers)
+	return cloned, true
 }
 
 func clineProviderConfig(raw string) (*util.OrderedMap, *util.OrderedMap, error) {
@@ -66,20 +107,42 @@ func clineManagedValues(v any) bool {
 	if !ok {
 		return false
 	}
-	for key, want := range map[string]any{"provider": clineProviderName, "model": "deepseek-v4-flash", "baseUrl": ProxyEndpointFor("cline")} {
+	for key, want := range map[string]any{"provider": clineProviderName, "baseUrl": ProxyEndpointFor("cline")} {
 		have, present := settings.Get(key)
 		if !present || !jsonValueEqual(have, want) {
 			return false
 		}
 	}
-	return true
+	if model, present := settings.Get("model"); !present || model == "" {
+		return false
+	}
+	if headers, present := settings.Get("headers"); present {
+		h, ok := headers.(*util.OrderedMap)
+		if !ok {
+			return false
+		}
+		if value, exists := h.Get(headroomBaseURLHeader); exists {
+			upstream, ok := value.(string)
+			return ok && upstream != ""
+		}
+	}
+	return jsonValueEqual(settingsValue(settings, "model"), "deepseek-v4-flash")
+}
+
+func settingsValue(settings *util.OrderedMap, key string) any {
+	v, _ := settings.Get(key)
+	return v
 }
 
 func ConfigureClineProxy() (bool, string) {
 	file := clineProvidersFile()
 	raw, exists := util.ReadFileSafe(file)
+	if !exists && util.Exists(file) {
+		return false, file
+	}
 	statePath := clineProviderStateFile()
 	stateRaw, stateExists := util.ReadFileSafe(statePath)
+	stateCreated := false
 	cfg, providers, err := clineProviderConfig(raw)
 	if err != nil {
 		return false, file
@@ -88,22 +151,49 @@ func ConfigureClineProxy() (bool, string) {
 	changed := false
 	stateContent := ""
 	if existing, ok := providers.Get(clineProviderName); ok {
-		if !clineManagedValues(existing) {
+		existingMap, existingOK := existing.(*util.OrderedMap)
+		if !existingOK {
 			return false, file
+		}
+		var routed *util.OrderedMap
+		if clineManagedValues(existing) {
+			if !stateExists {
+				return false, file
+			}
+			routed = existingMap
+		} else {
+			var routedOK bool
+			routed, routedOK = clineRoutedProvider(existingMap)
+			if !routedOK {
+				return false, file
+			}
 		}
 		if !stateExists {
+			state := util.NewOrderedMap()
+			state.Set("provider", existing)
+			if v, ok := cfg.Get("lastUsedProvider"); ok {
+				state.Set("lastUsedProvider", v)
+			} else {
+				state.Set("lastUsedProvider", nil)
+			}
+			stateContent = util.StringifyJSON(state)
+			if err := clineWriteFileGuarded(statePath, stateContent, stateRaw, stateExists); err != nil {
+				return false, file
+			}
+			stateExists = true
+			stateCreated = true
+			changed = true
+		}
+		if stateRaw, ok := util.ReadFileSafe(statePath); !ok || !clineStateMatchesRoute(stateRaw, existing, routed) {
 			return false, file
 		}
-		if _, _, _, err := clineStateReadRaw(); err != nil {
-			return false, file
+		if !jsonValueEqual(existing, routed) {
+			providers.Set(clineProviderName, routed)
+			changed = true
 		}
 	} else {
 		state := util.NewOrderedMap()
-		if existing, ok := providers.Get(clineProviderName); ok {
-			state.Set("provider", existing)
-		} else {
-			state.Set("provider", nil)
-		}
+		state.Set("provider", nil)
 		if v, ok := cfg.Get("lastUsedProvider"); ok {
 			state.Set("lastUsedProvider", v)
 		} else {
@@ -113,6 +203,7 @@ func ConfigureClineProxy() (bool, string) {
 		if err := clineWriteFileGuarded(statePath, stateContent, stateRaw, stateExists); err != nil {
 			return false, file
 		}
+		stateCreated = true
 		providers.Set(clineProviderName, desired)
 		changed = true
 	}
@@ -124,7 +215,7 @@ func ConfigureClineProxy() (bool, string) {
 		return false, file
 	}
 	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, exists); err != nil {
-		if !stateExists {
+		if stateCreated {
 			if current, ok := util.ReadFileSafe(statePath); ok && current == stateContent {
 				_ = os.Remove(statePath)
 			}
@@ -132,6 +223,40 @@ func ConfigureClineProxy() (bool, string) {
 		return false, file
 	}
 	return true, file
+}
+
+func clineStateMatchesRoute(raw string, original, current any) bool {
+	state, err := util.ParseJsonc(raw)
+	if err != nil {
+		return false
+	}
+	originalValue, exists := state.Get("provider")
+	if !exists || originalValue == nil {
+		return clineManagedValues(current)
+	}
+	originalMap, ok := originalValue.(*util.OrderedMap)
+	if !ok || !jsonValueEqual(originalMap, original) {
+		return false
+	}
+	routed, ok := clineRoutedProvider(originalMap)
+	return ok && jsonValueEqual(routed, current)
+}
+
+func clineStateOwnsCurrent(raw string, current any) bool {
+	state, err := util.ParseJsonc(raw)
+	if err != nil {
+		return false
+	}
+	originalValue, exists := state.Get("provider")
+	if !exists || originalValue == nil {
+		return clineManagedValues(current)
+	}
+	original, ok := originalValue.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	routed, ok := clineRoutedProvider(original)
+	return ok && jsonValueEqual(routed, current)
 }
 
 func RemoveClineProxy() bool {
@@ -149,6 +274,9 @@ func RemoveClineProxy() bool {
 		return false
 	}
 	if stateRaw, stateOK := util.ReadFileSafe(clineProviderStateFile()); stateOK {
+		if !clineStateOwnsCurrent(stateRaw, existing) {
+			return false
+		}
 		state, err := util.ParseJsonc(stateRaw)
 		if err != nil {
 			return false

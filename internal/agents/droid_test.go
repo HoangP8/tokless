@@ -17,6 +17,18 @@ func setTestHome(t *testing.T) {
 	t.Cleanup(func() { util.SetHomeOverride("") })
 }
 
+func TestDroidModelRouteRejectsNilHeaders(t *testing.T) {
+	model := util.NewOrderedMap()
+	model.Set("provider", droidProxyProviderKind)
+	model.Set("model", "user-model")
+	model.Set("baseUrl", "https://provider.example/v1")
+	model.Set("apiKey", "user-key")
+	model.Set("extraHeaders", (*util.OrderedMap)(nil))
+	if _, _, _, ok := droidModelRoute(model); ok {
+		t.Fatal("nil extraHeaders must be rejected")
+	}
+}
+
 // --- MCP management ---
 
 func TestConfigureDroidMcp_WritesEntry(t *testing.T) {

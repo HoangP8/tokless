@@ -134,9 +134,15 @@ func InstallAntigravityContextModeHook() {
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
 	if ok {
+		if util.HasJSONCComments(raw) {
+			return
+		}
 		cfg = util.TryParseJsonc(raw)
 	}
 	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return
+		}
 		cfg = util.NewOrderedMap()
 	}
 
@@ -257,7 +263,7 @@ func antigravityLegacyRewriteScript() string {
 }
 
 func toklessCommand(args ...string) string {
-	return util.PersistedToklessCommand(util.ToklessAbs(), args...)
+	return util.PersistedToklessCommand(util.ToklessPersistedAbs(), args...)
 }
 
 func toklessManagedCommand(command string, args ...string) bool {
@@ -291,9 +297,15 @@ func InstallAntigravityRtkHook() {
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
 	if ok {
+		if util.HasJSONCComments(raw) {
+			return
+		}
 		cfg = util.TryParseJsonc(raw)
 	}
 	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return
+		}
 		cfg = util.NewOrderedMap()
 	}
 
@@ -539,9 +551,15 @@ func InstallAntigravityCodegraphIndexHook() {
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
 	if ok {
+		if util.HasJSONCComments(raw) {
+			return
+		}
 		cfg = util.TryParseJsonc(raw)
 	}
 	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return
+		}
 		cfg = util.NewOrderedMap()
 	}
 
@@ -578,12 +596,25 @@ func InstallAntigravityCodegraphIndexHook() {
 func SetAntigravityCompactToolOutput(enabled bool) {
 	for _, f := range antigravitySettingsFiles() {
 		_ = util.EnsureDir(filepath.Dir(f))
-		raw, _ := util.ReadFileSafe(f)
+		raw, exists := util.ReadFileSafe(f)
+		if util.HasJSONCComments(raw) {
+			continue
+		}
 		cfg := util.TryParseJsonc(raw)
 		if cfg == nil {
+			if exists && strings.TrimSpace(raw) != "" {
+				continue
+			}
 			cfg = util.NewOrderedMap()
 		}
-		ui := getOrCreateMap(cfg, "ui")
+		ui, ok := mapChild(cfg, "ui")
+		if !ok {
+			if _, exists := cfg.Get("ui"); exists {
+				continue
+			}
+			ui = util.NewOrderedMap()
+			cfg.Set("ui", ui)
+		}
 		ui.Set("compactToolOutput", enabled)
 		if next := util.StringifyJSON(cfg); next != raw {
 			_ = util.WriteFile(f, next)
@@ -599,17 +630,32 @@ func AllowAntigravityEntry(entry string) {
 	}
 	for _, f := range files {
 		_ = util.EnsureDir(filepath.Dir(f))
-		raw, _ := util.ReadFileSafe(f)
+		raw, exists := util.ReadFileSafe(f)
+		if util.HasJSONCComments(raw) {
+			continue
+		}
 		cfg := util.TryParseJsonc(raw)
 		if cfg == nil {
+			if exists && strings.TrimSpace(raw) != "" {
+				continue
+			}
 			cfg = util.NewOrderedMap()
 		}
-		perms := getOrCreateMap(cfg, "permissions")
+		perms, ok := mapChild(cfg, "permissions")
+		if !ok {
+			if _, exists := cfg.Get("permissions"); exists {
+				continue
+			}
+			perms = util.NewOrderedMap()
+			cfg.Set("permissions", perms)
+		}
 		var allow []any
 		if v, ok := perms.Get("allow"); ok {
-			if arr, ok := v.([]any); ok {
-				allow = arr
+			arr, ok := v.([]any)
+			if !ok {
+				continue
 			}
+			allow = arr
 		}
 		has := false
 		for _, e := range allow {
@@ -682,7 +728,6 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-		RemoveAntigravityCodegraphToolDefs()
 	} else {
 		spawn = util.McpSpawnFor(toolID)
 	}
@@ -698,13 +743,28 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 			}
 			cfg = util.NewOrderedMap()
 		}
-		servers := getOrCreateMap(cfg, "mcpServers")
+		servers, ok := mapChild(cfg, "mcpServers")
+		if !ok {
+			if _, exists := cfg.Get("mcpServers"); exists {
+				allConfigured = false
+				continue
+			}
+			servers = util.NewOrderedMap()
+			cfg.Set("mcpServers", servers)
+		}
 		entry := util.NewOrderedMap()
 		entry.Set("command", spawn.Command)
 		if len(spawn.Args) > 0 {
 			entry.Set("args", spawn.Args)
 		}
 		entry.Set("trust", true)
+		if existing, ok := servers.Get(toolID); ok {
+			if !jsonEqual(existing, entry) {
+				allConfigured = false
+				continue
+			}
+			continue
+		}
 		servers.Set(toolID, entry)
 		if next := util.StringifyJSON(cfg); next != raw {
 			if err := util.WriteFile(f, next); err != nil {
@@ -717,9 +777,14 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		}
 	}
 	if allConfigured {
+		if toolID == "codegraph" {
+			RemoveAntigravityCodegraphToolDefs()
+		}
 		removeAntigravityMcpFromFiles(toolID, antigravityLegacyMcpFiles())
 	}
-	AllowAntigravityEntry("mcp(" + toolID + "/*)")
+	if allConfigured {
+		AllowAntigravityEntry("mcp(" + toolID + "/*)")
+	}
 	return changed, file
 }
 
@@ -928,13 +993,16 @@ func removeAntigravityMcpFromFiles(toolID string, files []string) {
 		if !ok {
 			continue
 		}
+		if util.HasJSONCComments(raw) {
+			continue
+		}
 		cfg := util.TryParseJsonc(raw)
 		if cfg == nil {
 			continue
 		}
 		if s, ok := cfg.Get("mcpServers"); ok {
 			if sm, ok := s.(*util.OrderedMap); ok {
-				if _, has := sm.Get(toolID); has {
+				if existing, has := sm.Get(toolID); has && antigravityMcpManaged(toolID, existing) {
 					sm.Delete(toolID)
 					_ = util.WriteFile(f, util.StringifyJSON(cfg))
 				}
@@ -965,4 +1033,19 @@ func removeAntigravityMcpFromFiles(toolID string, files []string) {
 			}
 		}
 	}
+}
+
+func antigravityMcpManaged(toolID string, existing any) bool {
+	em, ok := existing.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	command, _ := em.Get("command")
+	args, _ := em.Get("args")
+	trust, _ := em.Get("trust")
+	spawn := util.McpSpawnFor(toolID)
+	if toolID == "codegraph" {
+		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+	}
+	return command == spawn.Command && argsEq(args, spawn.Args) && trust == true
 }

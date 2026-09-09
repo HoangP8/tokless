@@ -110,9 +110,19 @@ func ConfigureOmpMcp(toolID string) (changed bool, file string) {
 	raw, _ := util.ReadFileSafe(f)
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return false, f
+		}
 		cfg = util.NewOrderedMap()
 	}
-	servers := getOrCreateMap(cfg, "mcpServers")
+	servers, ok := mapChild(cfg, "mcpServers")
+	if !ok {
+		if _, exists := cfg.Get("mcpServers"); exists {
+			return false, f
+		}
+		servers = util.NewOrderedMap()
+		cfg.Set("mcpServers", servers)
+	}
 	entry := ompMcpEntry(toolID)
 	if existing, ok := servers.Get(toolID); ok {
 		if ompMcpEqual(existing, entry) || !ompMcpManaged(toolID, existing) {
@@ -121,7 +131,9 @@ func ConfigureOmpMcp(toolID string) (changed bool, file string) {
 	}
 	servers.Set(toolID, entry)
 	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(f, next)
+		if err := util.WriteFile(f, next); err != nil {
+			return false, f
+		}
 		return true, f
 	}
 	return false, f
@@ -256,8 +268,7 @@ func RemoveOmpMcp(toolID string) bool {
 		return false
 	}
 	servers.Delete(toolID)
-	_ = util.WriteFile(ompMcpFile(), util.StringifyJSON(cfg))
-	return true
+	return util.WriteFile(ompMcpFile(), util.StringifyJSON(cfg)) == nil
 }
 
 func OmpMcpHas(toolID string) bool {
@@ -315,7 +326,7 @@ const ompRoleModel = "deepseek-v4-flash"
 func ompManagedHeadroomFields() map[string]string {
 	return map[string]string{
 		"baseUrl": ProxyEndpointFor("opencode"),
-		"apiKey":  "TOKLESS_OPENCODE_GO_KEY",
+		"apiKey":  proxyWireKey(),
 		"api":     "openai-completions",
 	}
 }
@@ -377,7 +388,7 @@ func configureOmpProxyLocked() (changed bool, file string) {
 					return err
 				}
 				if err := ompWriteFile(p, nativeRaw); err != nil {
-					_ = restoreProxyRouteStash("omp", stashRaw, stashExists)
+					restoreProxyRouteStashLogged("omp", stashRaw, stashExists)
 					return err
 				}
 			}

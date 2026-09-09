@@ -14,18 +14,28 @@ import (
 func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
 	_ = util.EnsureDir(p.Dir)
-	raw, _ := util.ReadFileSafe(p.Config)
-	if util.HasJSONCComments(raw) {
+	raw, exists := util.ReadFileSafe(p.Config)
+	if !exists && util.Exists(p.Config) {
 		return false, p.Config
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return false, p.Config
+		}
 		cfg = util.NewOrderedMap()
 	}
 	if _, ok := cfg.Get("$schema"); !ok {
 		cfg.Set("$schema", "https://opencode.ai/config.json")
 	}
-	mcp := getOrCreateMap(cfg, "mcp")
+	mcp, ok := mapChild(cfg, "mcp")
+	if !ok {
+		if _, exists := cfg.Get("mcp"); exists {
+			return false, p.Config
+		}
+		mcp = util.NewOrderedMap()
+		cfg.Set("mcp", mcp)
+	}
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
@@ -46,6 +56,7 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 				return false, p.Config
 			}
 		}
+		return false, p.Config
 	}
 	mcp.Set(toolID, desired)
 	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
@@ -56,7 +67,10 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 
 func ensureOpenCodeEnabledProvider(path, provider string) (changed, ok bool) {
 	raw, exists := util.ReadFileSafe(path)
-	if !exists || util.HasJSONCComments(raw) {
+	if !exists && util.Exists(path) {
+		return false, false
+	}
+	if !exists {
 		return false, true
 	}
 	cfg := util.TryParseJsonc(raw)
@@ -89,9 +103,6 @@ func RemoveOpenCodeMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	if util.HasJSONCComments(raw) {
-		return false
-	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		return false
@@ -104,7 +115,19 @@ func RemoveOpenCodeMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := mcp.Get(toolID); !ok {
+	existing, ok := mcp.Get(toolID)
+	if !ok {
+		return false
+	}
+	spawn := util.McpSpawnFor(toolID)
+	if toolID == "codegraph" {
+		spawn = util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+	}
+	desired := util.NewOrderedMap()
+	desired.Set("type", "local")
+	desired.Set("command", toAnySlice(append([]string{spawn.Command}, spawn.Args...)))
+	desired.Set("enabled", true)
+	if !jsonEqual(existing, desired) {
 		return false
 	}
 	mcp.Delete(toolID)
@@ -151,9 +174,11 @@ func openCodeProxySpecs() []ProviderSpec {
 }
 
 func ConfigureOpenCodeProxy() (changed bool, file string) {
-	legacyChanged := unwireOpenCodeBYOK()
 	pluginChanged, file := configureOpenCodeTransportPlugin()
-	return legacyChanged || pluginChanged, file
+	if !pluginChanged && !openCodeTransportPluginWired() {
+		return false, file
+	}
+	return unwireOpenCodeBYOK() || pluginChanged, file
 }
 
 func RemoveOpenCodeProxy() bool {
@@ -207,16 +232,30 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 	if !util.Exists(openCodeTransportPluginPath()) {
 		return false, file
 	}
-	raw, _ := util.ReadFileSafe(file)
+	raw, exists := util.ReadFileSafe(file)
+	if !exists && util.Exists(file) {
+		return false, file
+	}
 	retrieveStateRaw, retrieveStateExists := util.ReadFileSafe(openCodeRetrieveStatePath())
 	if util.HasJSONCComments(raw) {
 		return false, file
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return false, file
+		}
 		cfg = util.NewOrderedMap()
 	}
-	tools := getOrCreateMap(cfg, "tools")
+	tools, ok := mapChild(cfg, "tools")
+	if !ok {
+		if _, exists := cfg.Get("tools"); exists {
+			_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
+			return false, file
+		}
+		tools = util.NewOrderedMap()
+		cfg.Set("tools", tools)
+	}
 	if value, ok := tools.Get("headroom_retrieve"); !ok || value != false {
 		var previous any
 		if value, ok := tools.Get("headroom_retrieve"); ok {

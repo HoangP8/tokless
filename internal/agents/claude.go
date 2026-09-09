@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -14,14 +15,28 @@ import (
 func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	p := util.ClaudeCodePaths()
 	_ = util.EnsureDir(p.Dir)
-	AllowClaudeMcpTool(toolID)
-	AllowClaudeMcpToolProjectLocal(toolID)
-	raw, _ := util.ReadFileSafe(p.GlobalJSON)
+	raw, exists := util.ReadFileSafe(p.GlobalJSON)
+	if !exists && util.Exists(p.GlobalJSON) {
+		return false, p.GlobalJSON
+	}
+	if util.HasJSONCComments(raw) {
+		return false, p.GlobalJSON
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return false, p.GlobalJSON
+		}
 		cfg = util.NewOrderedMap()
 	}
-	servers := getOrCreateMap(cfg, "mcpServers")
+	servers, ok := mapChild(cfg, "mcpServers")
+	if !ok {
+		if _, exists := cfg.Get("mcpServers"); exists {
+			return false, p.GlobalJSON
+		}
+		servers = util.NewOrderedMap()
+		cfg.Set("mcpServers", servers)
+	}
 
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
@@ -35,11 +50,18 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	desired.Set("args", toAnySlice(spawn.Args))
 	if existing, ok := servers.Get(toolID); ok {
 		if claudeMcpEqual(existing, desired) {
+			AllowClaudeMcpTool(toolID)
+			AllowClaudeMcpToolProjectLocal(toolID)
 			return false, p.GlobalJSON
 		}
+		return false, p.GlobalJSON
 	}
 	servers.Set(toolID, desired)
-	_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
+	if err := util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg)); err != nil {
+		return false, p.GlobalJSON
+	}
+	AllowClaudeMcpTool(toolID)
+	AllowClaudeMcpToolProjectLocal(toolID)
 	return true, p.GlobalJSON
 }
 
@@ -81,21 +103,39 @@ func allowClaudeProjectLocalEntries(entries ...string) {
 	_ = util.EnsureDir(dir)
 	settingsFile := filepath.Join(dir, "settings.local.json")
 
-	raw, _ := util.ReadFileSafe(settingsFile)
+	raw, exists := util.ReadFileSafe(settingsFile)
+	if !exists && util.Exists(settingsFile) {
+		return
+	}
+	if util.HasJSONCComments(raw) {
+		return
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return
+		}
 		cfg = util.NewOrderedMap()
 	}
-	perms := getOrCreateMap(cfg, "permissions")
+	perms, ok := mapChild(cfg, "permissions")
+	if !ok {
+		if _, exists := cfg.Get("permissions"); exists {
+			return
+		}
+		perms = util.NewOrderedMap()
+		cfg.Set("permissions", perms)
+	}
 	var allow []any
 	seen := map[string]bool{}
 	if v, ok := perms.Get("allow"); ok {
-		if a, ok := v.([]any); ok {
-			allow = a
-			for _, x := range allow {
-				if s, ok := x.(string); ok {
-					seen[s] = true
-				}
+		a, ok := v.([]any)
+		if !ok {
+			return
+		}
+		allow = a
+		for _, x := range allow {
+			if s, ok := x.(string); ok {
+				seen[s] = true
 			}
 		}
 	}
@@ -126,17 +166,35 @@ func allowClaudeProjectLocalEntries(entries ...string) {
 // AllowClaudeMcpTool auto-approves managed MCP tools.
 func AllowClaudeMcpTool(toolID string) {
 	p := util.ClaudeCodePaths()
-	raw, _ := util.ReadFileSafe(p.Settings)
+	raw, exists := util.ReadFileSafe(p.Settings)
+	if !exists && util.Exists(p.Settings) {
+		return
+	}
+	if util.HasJSONCComments(raw) {
+		return
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return
+		}
 		cfg = util.NewOrderedMap()
 	}
-	perms := getOrCreateMap(cfg, "permissions")
+	perms, ok := mapChild(cfg, "permissions")
+	if !ok {
+		if _, exists := cfg.Get("permissions"); exists {
+			return
+		}
+		perms = util.NewOrderedMap()
+		cfg.Set("permissions", perms)
+	}
 	var allow []any
 	if v, ok := perms.Get("allow"); ok {
-		if a, ok := v.([]any); ok {
-			allow = a
+		a, ok := v.([]any)
+		if !ok {
+			return
 		}
+		allow = a
 	}
 	allow = removeClaudeContextModeWildcard(allow)
 	seen := make(map[string]bool, len(allow))
@@ -174,6 +232,9 @@ func removeClaudeContextModeWildcard(entries []any) []any {
 func DisallowClaudeMcpTool(toolID string) {
 	p := util.ClaudeCodePaths()
 	raw, ok := util.ReadFileSafe(p.Settings)
+	if !ok && util.Exists(p.Settings) {
+		return
+	}
 	if util.HasJSONCComments(raw) {
 		return
 	}
@@ -233,17 +294,35 @@ func AllowClaudeBashPatternProjectLocal(pattern string) {
 	_ = util.EnsureDir(dir)
 	settingsFile := filepath.Join(dir, "settings.local.json")
 
-	raw, _ := util.ReadFileSafe(settingsFile)
+	raw, exists := util.ReadFileSafe(settingsFile)
+	if !exists && util.Exists(settingsFile) {
+		return
+	}
+	if util.HasJSONCComments(raw) {
+		return
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return
+		}
 		cfg = util.NewOrderedMap()
 	}
-	perms := getOrCreateMap(cfg, "permissions")
+	perms, ok := mapChild(cfg, "permissions")
+	if !ok {
+		if _, exists := cfg.Get("permissions"); exists {
+			return
+		}
+		perms = util.NewOrderedMap()
+		cfg.Set("permissions", perms)
+	}
 	var allow []any
 	if v, ok := perms.Get("allow"); ok {
-		if a, ok := v.([]any); ok {
-			allow = a
+		a, ok := v.([]any)
+		if !ok {
+			return
 		}
+		allow = a
 	}
 	for _, x := range allow {
 		if s, ok := x.(string); ok && s == pattern {
@@ -259,7 +338,13 @@ func AllowClaudeBashPatternProjectLocal(pattern string) {
 // AllowClaudeBashPattern adds a Bash(specifier) entry to permissions.allow.
 func AllowClaudeBashPattern(pattern string) {
 	p := util.ClaudeCodePaths()
-	raw, _ := util.ReadFileSafe(p.Settings)
+	raw, exists := util.ReadFileSafe(p.Settings)
+	if !exists && util.Exists(p.Settings) {
+		return
+	}
+	if util.HasJSONCComments(raw) {
+		return
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		cfg = util.NewOrderedMap()
@@ -329,10 +414,24 @@ func RemoveClaudeMcp(toolID string) bool {
 	p := util.ClaudeCodePaths()
 	removed := false
 	if raw, ok := util.ReadFileSafe(p.GlobalJSON); ok {
+		if util.HasJSONCComments(raw) {
+			return removed
+		}
 		if cfg := util.TryParseJsonc(raw); cfg != nil {
 			if servers, ok := cfg.Get("mcpServers"); ok {
 				if sm, ok := servers.(*util.OrderedMap); ok {
-					if _, has := sm.Get(toolID); has {
+					if existing, has := sm.Get(toolID); has {
+						spawn := util.McpSpawnFor(toolID)
+						if toolID == "codegraph" {
+							spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+						}
+						desired := util.NewOrderedMap()
+						desired.Set("type", "stdio")
+						desired.Set("command", spawn.Command)
+						desired.Set("args", toAnySlice(spawn.Args))
+						if !claudeMcpEqual(existing, desired) {
+							return removed
+						}
 						sm.Delete(toolID)
 						_ = util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg))
 						removed = true
@@ -453,6 +552,9 @@ func removeClaudeProxyLocked() bool {
 	p := util.ClaudeCodePaths()
 	raw, ok := util.ReadFileSafe(p.Settings)
 	if !ok {
+		if util.Exists(p.Settings) {
+			return false
+		}
 		return false
 	}
 	if util.HasJSONCComments(raw) {

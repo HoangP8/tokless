@@ -478,6 +478,102 @@ var kilo = &core.AgentManifest{
 
 const kiloProxyProvider = "tokless-headroom"
 
+func kiloProviderRoute(provider *util.OrderedMap) (baseKey, base string, options, headers *util.OrderedMap, ok bool) {
+	value, exists := provider.Get("options")
+	if !exists {
+		return "", "", nil, nil, false
+	}
+	options, ok = value.(*util.OrderedMap)
+	if !ok {
+		return "", "", nil, nil, false
+	}
+	for _, key := range []string{"baseURL", "baseUrl"} {
+		if value, exists := options.Get(key); exists {
+			base, ok = value.(string)
+			if ok && strings.TrimSpace(base) != "" {
+				baseKey = key
+				break
+			}
+		}
+	}
+	if baseKey == "" || !isAbsoluteHTTP(base) {
+		return "", "", nil, nil, false
+	}
+	if value, exists := options.Get("headers"); exists {
+		headers, ok = value.(*util.OrderedMap)
+		if !ok {
+			return "", "", nil, nil, false
+		}
+	} else {
+		headers = util.NewOrderedMap()
+	}
+	return baseKey, base, options, headers, true
+}
+
+func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool) {
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		return false, false
+	}
+	routed := map[string]bool{}
+	changed, found := false, false
+	for _, id := range providers.Keys() {
+		if id == kiloProxyProvider {
+			continue
+		}
+		value, exists := providers.Get(id)
+		provider, ok := value.(*util.OrderedMap)
+		if !exists || !ok {
+			continue
+		}
+		baseKey, base, options, headers, ok := kiloProviderRoute(provider)
+		if !ok {
+			continue
+		}
+		upstream := normalizedHeadroomUpstream(base, "openai-completions")
+		endpoint := ProxyEndpointFor("kilo")
+		if current, exists := headers.Get(headroomBaseURLHeader); exists {
+			currentString, currentOK := current.(string)
+			if !currentOK || (currentString != upstream && !sameProxyBase(base, endpoint)) {
+				continue
+			}
+		}
+		found = true
+		if sameProxyBase(base, endpoint) {
+			current, exists := headers.Get(headroomBaseURLHeader)
+			if !exists || current != upstream {
+				continue
+			}
+			routed[id] = true
+			continue
+		}
+		hadHeader, header := false, ""
+		if current, exists := headers.Get(headroomBaseURLHeader); exists {
+			currentString, currentOK := current.(string)
+			if !currentOK {
+				continue
+			}
+			hadHeader, header = true, currentString
+		}
+		stash[id] = proxyRouteStashEntry{File: util.KiloPathsResolved().Config, Provider: id, BaseURL: base, Upstream: upstream, BaseKey: baseKey, HadHeader: hadHeader, Header: header}
+		routed[id] = true
+		options.Set(baseKey, endpoint)
+		if _, exists := options.Get("headers"); !exists {
+			options.Set("headers", headers)
+		}
+		headers.Set(headroomBaseURLHeader, upstream)
+		changed = true
+	}
+	for id := range stash {
+		if !routed[id] {
+			if _, exists := providers.Get(id); !exists {
+				delete(stash, id)
+			}
+		}
+	}
+	return changed, found
+}
+
 // kiloProxyProviderEntry builds the opencode-style provider entry injected
 // into provider.<id>.
 func kiloProxyProviderEntry(endpoint string) *util.OrderedMap {
@@ -506,45 +602,156 @@ func kiloProxyProviderEntry(endpoint string) *util.OrderedMap {
 // ConfigureKiloProxy injects provider.tokless-headroom into kilo.jsonc,
 // pointing at the OpenAI-compatible headroom daemon endpoint.
 func ConfigureKiloProxy() (changed bool, file string) {
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureKiloProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("kilo proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureKiloProxyLocked() (changed bool, file string) {
 	p := util.KiloPathsResolved()
+	file = p.Config
+	if !proxyRouteStashValid("kilo") {
+		return false, file
+	}
 	_ = util.EnsureDir(p.Dir)
-	raw, ok := util.ReadFileSafe(p.Config)
+	raw, exists := util.ReadFileSafe(p.Config)
+	if !exists && util.Exists(p.Config) {
+		return false, file
+	}
 	if util.HasJSONCComments(raw) {
-		return false, p.Config
+		return false, file
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
-		if ok {
-			return false, p.Config
+		if exists {
+			return false, file
 		}
 		cfg = util.NewOrderedMap()
 	}
 	providers, ok := mapChild(cfg, "provider")
 	if !ok {
 		if _, present := cfg.Get("provider"); present {
-			return false, p.Config
+			return false, file
 		}
 		providers = util.NewOrderedMap()
 		cfg.Set("provider", providers)
 	}
+	stash := loadProxyRouteStashLocked("kilo")
+	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("kilo"))
+	prevStashLen := len(stash)
+	if nativeChanged, nativeFound := kiloNativeRoutes(cfg, stash); nativeFound {
+		if saveProxyRouteStash("kilo", stash) != nil {
+			return false, file
+		}
+		if !nativeChanged {
+			return false, file
+		}
+		if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
+			restoreProxyRouteStashLogged("kilo", stashRaw, stashExists)
+			return false, file
+		}
+		return true, file
+	} else if prevStashLen > 0 {
+		if saveProxyRouteStash("kilo", stash) != nil {
+			return false, file
+		}
+		return false, file
+	}
 	desired := kiloProxyProviderEntry(ProxyEndpointFor("kilo"))
 	if existing, ok := providers.Get(kiloProxyProvider); ok {
 		if jsonEqual(existing, desired) {
-			return false, p.Config
+			return false, file
 		}
-		return false, p.Config
+		return false, file
 	}
 	providers.Set(kiloProxyProvider, desired)
 	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
-		return false, p.Config
+		return false, file
 	}
-	return true, p.Config
+	return true, file
 }
 
 // RemoveKiloProxy deletes provider.tokless-headroom only while its value still
 // equals what tokless injected.
 func RemoveKiloProxy() bool {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeKiloProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("kilo proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeKiloProxyLocked() bool {
+	if !proxyRouteStashValid("kilo") {
+		return false
+	}
 	p := util.KiloPathsResolved()
+	stash := loadProxyRouteStashLocked("kilo")
+	if len(stash) > 0 {
+		raw, ok := util.ReadFileSafe(p.Config)
+		if !ok || util.HasJSONCComments(raw) {
+			return false
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			return false
+		}
+		providers, ok := mapChild(cfg, "provider")
+		if !ok {
+			return false
+		}
+		remaining := map[string]proxyRouteStashEntry{}
+		original := raw
+		changed := false
+		for id, entry := range stash {
+			value, exists := providers.Get(id)
+			provider, providerOK := value.(*util.OrderedMap)
+			if !exists || !providerOK {
+				remaining[id] = entry
+				continue
+			}
+			baseKey, base, _, headers, routeOK := kiloProviderRoute(provider)
+			if !routeOK || !sameProxyBase(base, ProxyEndpointFor("kilo")) {
+				remaining[id] = entry
+				continue
+			}
+			value, exists = headers.Get(headroomBaseURLHeader)
+			if !exists || value != entry.Upstream {
+				remaining[id] = entry
+				continue
+			}
+			providerOptions, _ := provider.Get("options")
+			options, _ := providerOptions.(*util.OrderedMap)
+			options.Set(baseKey, entry.BaseURL)
+			if entry.HadHeader {
+				headers.Set(headroomBaseURLHeader, entry.Header)
+			} else {
+				headers.Delete(headroomBaseURLHeader)
+			}
+			if headers.Len() == 0 {
+				options.Delete("headers")
+			}
+			changed = true
+		}
+		if !changed || util.WriteFile(p.Config, util.StringifyJSON(cfg)) != nil {
+			return false
+		}
+		if err := saveProxyRouteStash("kilo", remaining); err != nil {
+			if restoreErr := util.WriteFile(p.Config, original); restoreErr != nil {
+				util.L.Err("kilo proxy rollback failed: " + restoreErr.Error())
+			}
+			util.L.Err("kilo proxy stash update failed: " + err.Error())
+			return false
+		}
+		return true
+	}
 	raw, ok := util.ReadFileSafe(p.Config)
 	if !ok {
 		return false
@@ -581,6 +788,25 @@ func KiloProxyWired() bool {
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		return false
+	}
+	if stash := loadProxyRouteStash("kilo"); len(stash) > 0 {
+		providers, ok := mapChild(cfg, "provider")
+		if !ok {
+			return false
+		}
+		for id, entry := range stash {
+			value, exists := providers.Get(id)
+			provider, providerOK := value.(*util.OrderedMap)
+			if !exists || !providerOK {
+				return false
+			}
+			_, base, _, headers, routeOK := kiloProviderRoute(provider)
+			upstream, headerOK := headers.Get(headroomBaseURLHeader)
+			if !routeOK || !sameProxyBase(base, ProxyEndpointFor("kilo")) || !headerOK || upstream != entry.Upstream {
+				return false
+			}
+		}
+		return true
 	}
 	providers, ok := mapChild(cfg, "provider")
 	if !ok {

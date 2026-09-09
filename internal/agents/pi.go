@@ -413,11 +413,24 @@ func ConfigurePiMcp(toolID string) (changed bool, file string) {
 	f := piMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
+	if util.HasJSONCComments(raw) {
+		return false, f
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return false, f
+		}
 		cfg = util.NewOrderedMap()
 	}
-	servers := getOrCreateMap(cfg, "mcpServers")
+	servers, ok := mapChild(cfg, "mcpServers")
+	if !ok {
+		if _, exists := cfg.Get("mcpServers"); exists {
+			return false, f
+		}
+		servers = util.NewOrderedMap()
+		cfg.Set("mcpServers", servers)
+	}
 
 	entry := util.NewOrderedMap()
 	entry.Set("command", spawn.Command)
@@ -437,11 +450,14 @@ func ConfigurePiMcp(toolID string) (changed bool, file string) {
 				return false, f
 			}
 		}
+		return false, f
 	}
 	servers.Set(toolID, entry)
 	next := util.StringifyJSON(cfg)
 	if next != raw {
-		_ = util.WriteFile(f, next)
+		if err := util.WriteFile(f, next); err != nil {
+			return false, f
+		}
 		return true, f
 	}
 	return false, f
@@ -464,12 +480,24 @@ func RemovePiMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := sm.Get(toolID); !ok {
+	existing, ok := sm.Get(toolID)
+	if !ok {
+		return false
+	}
+	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
+	em, ok := existing.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	ec, _ := em.Get("command")
+	ea, _ := em.Get("args")
+	el, _ := em.Get("lifecycle")
+	ed, _ := em.Get("directTools")
+	if ec != spawn.Command || !argsEq(ea, spawn.Args) || el != "lazy" || ed != true {
 		return false
 	}
 	sm.Delete(toolID)
-	_ = util.WriteFile(piMcpFile(), util.StringifyJSON(cfg))
-	return true
+	return util.WriteFile(piMcpFile(), util.StringifyJSON(cfg)) == nil
 }
 
 func PiMcpHas(toolID string) bool {
@@ -653,6 +681,9 @@ func configurePiProxyLocked() (changed bool, file string) {
 	}
 	_ = util.EnsureDir(piAgentDir())
 	raw, ok := util.ReadFileSafe(f)
+	if !ok && util.Exists(f) {
+		return false, f
+	}
 	if util.HasJSONCComments(raw) {
 		return false, f
 	}
@@ -685,7 +716,7 @@ func configurePiProxyLocked() (changed bool, file string) {
 			return false, f
 		}
 		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
-			_ = restoreProxyRouteStash("pi", stashRaw, stashExists)
+			restoreProxyRouteStashLogged("pi", stashRaw, stashExists)
 			return false, f
 		}
 		return true, f

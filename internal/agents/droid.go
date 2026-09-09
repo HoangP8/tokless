@@ -95,14 +95,21 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 	f := droidMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
-	if util.HasJSONCComments(raw) {
-		return false, f
-	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if strings.TrimSpace(raw) != "" {
+			return false, f
+		}
 		cfg = util.NewOrderedMap()
 	}
-	servers := getOrCreateMap(cfg, "mcpServers")
+	servers, ok := mapChild(cfg, "mcpServers")
+	if !ok {
+		if _, exists := cfg.Get("mcpServers"); exists {
+			return false, f
+		}
+		servers = util.NewOrderedMap()
+		cfg.Set("mcpServers", servers)
+	}
 
 	entry := util.NewOrderedMap()
 	entry.Set("command", spawn.Command)
@@ -122,6 +129,7 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 				return false, f
 			}
 		}
+		return false, f
 	}
 
 	servers.Set(toolID, entry)
@@ -168,9 +176,6 @@ func RemoveDroidMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	if util.HasJSONCComments(raw) {
-		return false
-	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		return false
@@ -183,7 +188,20 @@ func RemoveDroidMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	if _, ok := sm.Get(toolID); !ok {
+	existing, ok := sm.Get(toolID)
+	if !ok {
+		return false
+	}
+	spawn := util.McpSpawnFor(toolID)
+	if toolID == "codegraph" {
+		spawn = util.WrapAutoIndex("droid", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+	}
+	if em, ok := existing.(*util.OrderedMap); !ok || func() bool {
+		command, _ := em.Get("command")
+		args, _ := em.Get("args")
+		tools, _ := em.Get("enabledTools")
+		return command == spawn.Command && argsEq(args, spawn.Args) && enabledToolsEq(tools, droidEnabledTools[toolID])
+	}() == false {
 		return false
 	}
 	sm.Delete(toolID)
@@ -471,6 +489,133 @@ const (
 	droidProxyProviderKind = "generic-chat-completion-api"
 )
 
+func droidModelRoute(model *util.OrderedMap) (id, base string, headers *util.OrderedMap, ok bool) {
+	provider, _ := model.Get("provider")
+	if provider != droidProxyProviderKind {
+		return "", "", nil, false
+	}
+	value, exists := model.Get("model")
+	if !exists {
+		return "", "", nil, false
+	}
+	id, ok = value.(string)
+	if !ok || id == "" || id == proxyWireModel() {
+		return "", "", nil, false
+	}
+	value, exists = model.Get("baseUrl")
+	if !exists {
+		return "", "", nil, false
+	}
+	base, ok = value.(string)
+	if !ok || !isAbsoluteHTTP(base) || strings.TrimSpace(base) == "" {
+		return "", "", nil, false
+	}
+	key, _ := model.Get("apiKey")
+	if key, ok := key.(string); !ok || strings.TrimSpace(key) == "" {
+		return "", "", nil, false
+	}
+	if value, exists := model.Get("extraHeaders"); exists {
+		headers, ok = value.(*util.OrderedMap)
+		if !ok || headers == nil {
+			return "", "", nil, false
+		}
+	} else {
+		headers = util.NewOrderedMap()
+	}
+	return id, base, headers, true
+}
+
+func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool) {
+	value, ok := cfg.Get("customModels")
+	if !ok {
+		return false, false
+	}
+	models, ok := value.([]any)
+	if !ok {
+		return false, false
+	}
+	routed := map[string]bool{}
+	changed, found := false, false
+	endpoint := ProxyEndpointFor("droid")
+	seenIDs := map[string]bool{}
+	for _, value := range models {
+		model, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		id, _, _, ok := droidModelRoute(model)
+		if !ok {
+			continue
+		}
+		if seenIDs[id] {
+			return false, true
+		}
+		seenIDs[id] = true
+	}
+	for _, value := range models {
+		model, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		id, base, headers, ok := droidModelRoute(model)
+		if !ok {
+			continue
+		}
+		upstream := normalizedHeadroomUpstream(base, "openai-completions")
+		if current, exists := headers.Get(headroomBaseURLHeader); exists {
+			currentString, currentOK := current.(string)
+			if !currentOK || (currentString != upstream && !sameProxyBase(base, endpoint)) {
+				continue
+			}
+		}
+		found = true
+		if sameProxyBase(base, endpoint) {
+			current, exists := headers.Get(headroomBaseURLHeader)
+			if !exists || current != upstream {
+				continue
+			}
+			routed[id] = true
+			continue
+		}
+		hadHeader, header := false, ""
+		if current, exists := headers.Get(headroomBaseURLHeader); exists {
+			currentString, currentOK := current.(string)
+			if !currentOK {
+				continue
+			}
+			hadHeader, header = true, currentString
+		}
+		stash[id] = proxyRouteStashEntry{File: droidSettingsFile(), Provider: id, BaseURL: base, Upstream: upstream, HadHeader: hadHeader, Header: header}
+		routed[id] = true
+		model.Set("baseUrl", endpoint)
+		if _, exists := model.Get("extraHeaders"); !exists {
+			model.Set("extraHeaders", headers)
+		}
+		headers.Set(headroomBaseURLHeader, upstream)
+		changed = true
+	}
+	for id := range stash {
+		if !routed[id] {
+			stillPresent := false
+			for _, value := range models {
+				model, ok := value.(*util.OrderedMap)
+				if !ok {
+					continue
+				}
+				modelID, _ := model.Get("model")
+				if modelID == id {
+					stillPresent = true
+					break
+				}
+			}
+			if !stillPresent {
+				delete(stash, id)
+			}
+		}
+	}
+	return changed, found
+}
+
 func droidSettingsFile() string { return filepath.Join(droidDir(), "settings.json") }
 
 // droidProxyEntry builds the customModels entry pointing at the headroom daemon.
@@ -489,18 +634,57 @@ func droidProxyEntry(endpoint string) *util.OrderedMap {
 // ConfigureDroidProxy appends the headroom entry to customModels in
 // settings.json, pointing at the OpenAI-compatible headroom daemon endpoint.
 func ConfigureDroidProxy() (changed bool, file string) {
+	file = droidSettingsFile()
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureDroidProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("droid proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureDroidProxyLocked() (changed bool, file string) {
 	f := droidSettingsFile()
+	file = f
+	if !proxyRouteStashValid("droid") {
+		return false, file
+	}
 	_ = util.EnsureDir(droidDir())
-	raw, ok := util.ReadFileSafe(f)
+	raw, exists := util.ReadFileSafe(f)
+	if !exists && util.Exists(f) {
+		return false, file
+	}
 	if util.HasJSONCComments(raw) {
-		return false, f
+		return false, file
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
-		if ok {
-			return false, f
+		if exists {
+			return false, file
 		}
 		cfg = util.NewOrderedMap()
+	}
+	stash := loadProxyRouteStashLocked("droid")
+	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("droid"))
+	prevStashLen := len(stash)
+	if nativeChanged, nativeFound := droidNativeRoutes(cfg, stash); nativeFound {
+		if saveProxyRouteStash("droid", stash) != nil {
+			return false, file
+		}
+		if !nativeChanged {
+			return false, file
+		}
+		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+			restoreProxyRouteStashLogged("droid", stashRaw, stashExists)
+			return false, file
+		}
+		return true, file
+	} else if prevStashLen > 0 {
+		if saveProxyRouteStash("droid", stash) != nil {
+			return false, file
+		}
+		return false, file
 	}
 	endpoint := ProxyEndpointFor("droid")
 	desired := droidProxyEntry(endpoint)
@@ -512,7 +696,7 @@ func ConfigureDroidProxy() (changed bool, file string) {
 		}
 		models = arr
 	}
-	for i, existing := range models {
+	for _, existing := range models {
 		em, isMap := existing.(*util.OrderedMap)
 		if !isMap {
 			continue
@@ -527,12 +711,9 @@ func ConfigureDroidProxy() (changed bool, file string) {
 			if baseURL != endpoint {
 				return false, f
 			}
-			models[i] = desired
-			cfg.Set("customModels", models)
-			if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
-				return false, f
-			}
-			return true, f
+			// Matching identity is not ownership proof. Refuse to replace a
+			// same-endpoint entry that contains fields Tokless did not create.
+			return false, f
 		}
 	}
 	cfg.Set("customModels", append(models, desired))
@@ -545,7 +726,90 @@ func ConfigureDroidProxy() (changed bool, file string) {
 // RemoveDroidProxy drops any customModels entry pointing at our endpoint,
 // keeping every other entry.
 func RemoveDroidProxy() bool {
+	removed := false
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeDroidProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("droid proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeDroidProxyLocked() bool {
+	if !proxyRouteStashValid("droid") {
+		return false
+	}
 	f := droidSettingsFile()
+	stash := loadProxyRouteStashLocked("droid")
+	if len(stash) > 0 {
+		raw, ok := util.ReadFileSafe(f)
+		if !ok || util.HasJSONCComments(raw) {
+			return false
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			return false
+		}
+		value, ok := cfg.Get("customModels")
+		models, modelsOK := value.([]any)
+		if !ok || !modelsOK {
+			return false
+		}
+		remaining := map[string]proxyRouteStashEntry{}
+		original := raw
+		changed := false
+		for _, value := range models {
+			model, ok := value.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			id, base, headers, entryOK := droidModelRoute(model)
+			if !entryOK {
+				modelID, _ := model.Get("model")
+				if modelID, ok := modelID.(string); ok {
+					if entry, exists := stash[modelID]; exists {
+						remaining[modelID] = entry
+					}
+				}
+				continue
+			}
+			entry, exists := stash[id]
+			if !exists {
+				continue
+			}
+			if !sameProxyBase(base, ProxyEndpointFor("droid")) {
+				remaining[id] = entry
+				continue
+			}
+			value, exists := headers.Get(headroomBaseURLHeader)
+			if !exists || value != entry.Upstream {
+				remaining[id] = entry
+				continue
+			}
+			model.Set("baseUrl", entry.BaseURL)
+			if entry.HadHeader {
+				headers.Set(headroomBaseURLHeader, entry.Header)
+			} else {
+				headers.Delete(headroomBaseURLHeader)
+			}
+			if headers.Len() == 0 {
+				model.Delete("extraHeaders")
+			}
+			changed = true
+		}
+		if !changed || util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
+			return false
+		}
+		if err := saveProxyRouteStash("droid", remaining); err != nil {
+			if restoreErr := util.WriteFile(f, original); restoreErr != nil {
+				util.L.Err("droid proxy rollback failed: " + restoreErr.Error())
+			}
+			util.L.Err("droid proxy stash update failed: " + err.Error())
+			return false
+		}
+		return true
+	}
 	raw, ok := util.ReadFileSafe(f)
 	if !ok {
 		return false
@@ -601,6 +865,36 @@ func DroidProxyWired() bool {
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		return false
+	}
+	if stash := loadProxyRouteStash("droid"); len(stash) > 0 {
+		value, ok := cfg.Get("customModels")
+		models, modelsOK := value.([]any)
+		if !ok || !modelsOK {
+			return false
+		}
+		for id, entry := range stash {
+			found := false
+			for _, value := range models {
+				model, modelOK := value.(*util.OrderedMap)
+				if !modelOK {
+					continue
+				}
+				modelID, _ := model.Get("model")
+				if modelID != id {
+					continue
+				}
+				_, base, headers, routeOK := droidModelRoute(model)
+				upstream, headerOK := headers.Get(headroomBaseURLHeader)
+				if routeOK && sameProxyBase(base, ProxyEndpointFor("droid")) && headerOK && upstream == entry.Upstream {
+					found = true
+				}
+				break
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
 	}
 	v, ok := cfg.Get("customModels")
 	if !ok {

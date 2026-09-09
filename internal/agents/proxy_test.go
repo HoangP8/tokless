@@ -13,6 +13,60 @@ import (
 
 const proxyTestURL = "http://127.0.0.1:8787"
 
+func TestProxyAgentUsesHeadroomKeepsGrokNative(t *testing.T) {
+	if ProxyAgentUsesHeadroom("grok") {
+		t.Fatal("grok must keep native OAuth routing")
+	}
+	if ProxyAgentUsesHeadroom("cursor") {
+		t.Fatal("cursor must remain manual-only")
+	}
+	if !ProxyAgentUsesHeadroom("opencode") {
+		t.Fatal("OpenCode must retain Headroom routing")
+	}
+}
+
+func TestConfigureProxyAgentRejectsGrok(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("GROK_HOME", "")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	path := filepath.Join(home, ".grok", "config.toml")
+	raw := "[models]\ndefault = \"grok-4.6\"\n\n[model_providers.demo]\nbase_url = \"https://api.example.test/v1\"\n"
+	if err := util.WriteFile(path, raw); err != nil {
+		t.Fatal(err)
+	}
+	if ConfigureProxyAgent("grok") {
+		t.Fatal("grok must not use generic Headroom wiring")
+	}
+	got, ok := util.ReadFileSafe(path)
+	if !ok || got != raw {
+		t.Fatal("grok config changed")
+	}
+}
+
+func TestProxyAgentApplicableRejectsAbsentClients(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("OPENCODE_CONFIG", "")
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("KILO_CONFIG_DIR", "")
+	t.Setenv("CLINE_DIR", "")
+	t.Setenv("CLINE_DATA_DIR", "")
+	t.Setenv("GROK_HOME", "")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	Register()
+
+	for _, id := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "cline", "copilot", "grok"} {
+		if ProxyAgentApplicable(id) {
+			t.Errorf("%s reported applicable without client or managed config", id)
+		}
+	}
+}
+
 func pinToklessProxyEnv(t *testing.T) {
 	t.Setenv("TOKLESS_PROXY_PROVIDER", "")
 	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "")
@@ -166,6 +220,52 @@ func TestClaudeProxyRefusesUnparseableConfig(t *testing.T) {
 	}
 }
 
+func TestClaudeProxyRefusesJSONCConfig(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := "{\n  // user comment\n  \"env\": {}\n}\n"
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); changed {
+		t.Fatal("JSONC settings must not be rewritten")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if raw != seed {
+		t.Fatalf("JSONC settings changed:\n%s", raw)
+	}
+}
+
+func TestClaudeMcpRefusesJSONCConfig(t *testing.T) {
+	claudeProxyTestHome(t)
+	path := util.ClaudeCodePaths().GlobalJSON
+	seed := "{\n  // user comment\n  \"mcpServers\": {}\n}\n"
+	if err := util.WriteFile(path, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeMcp("context-mode"); changed {
+		t.Fatal("JSONC MCP config must not be rewritten")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if raw != seed {
+		t.Fatalf("JSONC MCP config changed:\n%s", raw)
+	}
+}
+
+func TestConfigureCodexProxyRefusesUnreadableConfig(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); changed {
+		t.Fatal("unreadable Codex config must not be replaced")
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		t.Fatalf("Codex config path changed: %v", err)
+	}
+}
+
 func TestDetectProxyReadOnlyStates(t *testing.T) {
 	claudeProxyTestHome(t)
 	settings := util.ClaudeCodePaths().Settings
@@ -235,9 +335,68 @@ func TestDetectProxyConservativeStates(t *testing.T) {
 	}
 }
 
+func clineProxyTestHome(t *testing.T) {
+	t.Helper()
+	pinToklessProxyEnv(t)
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("CLINE_DIR", "")
+	t.Setenv("CLINE_DATA_DIR", "")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+}
+
+func TestClineProxyLifecycle(t *testing.T) {
+	clineProxyTestHome(t)
+	file := clineProvidersFile()
+	seed := `{"version":1,"lastUsedProvider":"openai-compatible","providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","apiKey":"user-key","model":"user-model","baseUrl":"https://api.user.test/v1","headers":{"x-user":"keep"}},"tokenSource":"manual"}}}`
+	if err := util.WriteFile(file, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClineProxy(); !changed || !ClineProxyWired() {
+		t.Fatalf("configure: changed=%v wired=%v", changed, ClineProxyWired())
+	}
+	raw, _ := util.ReadFileSafe(file)
+	for _, want := range []string{`"apiKey": "user-key"`, `"model": "user-model"`, `"x-user": "keep"`, `"baseUrl": "http://127.0.0.1:8787/v1"`, `"x-headroom-base-url": "https://api.user.test"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("routed Cline config missing %s: %s", want, raw)
+		}
+	}
+	if changed, _ := ConfigureClineProxy(); changed {
+		t.Fatal("second configure should be a no-op")
+	}
+	if !RemoveClineProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(file)
+	got, err := util.ParseJsonc(raw)
+	want, wantErr := util.ParseJsonc(seed)
+	if err != nil || wantErr != nil || !jsonValueEqual(got, want) {
+		t.Fatalf("Cline config not restored:\n%s", raw)
+	}
+	if RemoveClineProxy() {
+		t.Fatal("second remove should be a no-op")
+	}
+}
+
+func TestClineProxyRefusesForeignReservedProvider(t *testing.T) {
+	clineProxyTestHome(t)
+	file := clineProvidersFile()
+	seed := `{"providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","model":"user-model","baseUrl":"not-a-url"}}}}`
+	if err := util.WriteFile(file, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClineProxy(); changed || ClineProxyWired() {
+		t.Fatal("invalid foreign Cline provider was adopted")
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if raw != seed {
+		t.Fatal("foreign Cline provider changed")
+	}
+}
+
 func TestDetectOmpMalformedIsUnknown(t *testing.T) {
 	ompProxyTestHome(t)
-	if err := util.WriteFile(ompModelsFile(), "providers:\n  headroom:\n    baseUrl: [\n    apiKey: TOKLESS_OPENCODE_GO_KEY\n    api: openai-completions\n    discovery:\n      type: openai-models-list\n"); err != nil {
+	if err := util.WriteFile(ompModelsFile(), "providers:\n  headroom:\n    baseUrl: [\n    apiKey: tokless\n    api: openai-completions\n    discovery:\n      type: openai-models-list\n"); err != nil {
 		t.Fatal(err)
 	}
 	got := DetectProxy("omp")
@@ -257,7 +416,7 @@ func TestDetectOmpManagedEndpointTextRemainsUnknown(t *testing.T) {
 	raw := `providers:
   headroom:
     baseUrl: http://127.0.0.1:8787/v1
-    apiKey: TOKLESS_OPENCODE_GO_KEY
+    apiKey: tokless
     api: openai-completions
     discovery:
       type: openai-models-list
@@ -624,6 +783,30 @@ func TestCodexProxyRefusesUserEditedManagedKeys(t *testing.T) {
 	}
 }
 
+func TestCodexProxyPreservesEditedByokEnv(t *testing.T) {
+	codexProxyTestHome(t)
+	path := filepath.Join(util.CodexPathsResolved().Dir, ".env")
+	original := "TOKLESS_CODEX_API_KEY=user-key\nTOKLESS_HEADROOM_BASE_URL=https://user.example\nKEEP=1\n"
+	if err := util.WriteFile(path, original); err != nil {
+		t.Fatal(err)
+	}
+	byok := &openCodeBYOK{APIKey: "tokless-key", BaseURL: "https://provider.example/v1"}
+	if writeCodexByokDotEnv(byok) {
+		t.Fatal("edited Codex BYOK env was overwritten")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if raw != original {
+		t.Fatalf("edited Codex BYOK env changed:\n%s", raw)
+	}
+	if removeCodexByokDotEnv(byok) {
+		t.Fatal("edited Codex BYOK env was removed")
+	}
+	raw, _ = util.ReadFileSafe(path)
+	if raw != original {
+		t.Fatalf("edited Codex BYOK env changed during removal:\n%s", raw)
+	}
+}
+
 func TestConfigureCodexProxyRotatesManagedBearer(t *testing.T) {
 	codexProxyTestHome(t)
 	path := util.CodexPathsResolved().Config
@@ -731,7 +914,7 @@ models:
 providers:
   headroom:
     baseUrl: http://127.0.0.1:8787/v1
-    apiKey: TOKLESS_OPENCODE_GO_KEY
+    apiKey: tokless
     api: openai-completions
     discovery:
       type: openai-models-list
@@ -751,7 +934,7 @@ func TestOmpProxyScenarios(t *testing.T) {
 		t.Fatal("expected wired after configure")
 	}
 	modelRaw := readProxyTestFile(t, models)
-	for _, want := range []string{"  headroom:", "    baseUrl: http://127.0.0.1:8787/v1", "    apiKey: TOKLESS_OPENCODE_GO_KEY", "    api: openai-completions", "    discovery:", "      type: openai-models-list", "claude-sonnet"} {
+	for _, want := range []string{"  headroom:", "    baseUrl: http://127.0.0.1:8787/v1", "    apiKey: tokless", "    api: openai-completions", "    discovery:", "      type: openai-models-list", "claude-sonnet"} {
 		if !strings.Contains(modelRaw, want) {
 			t.Fatalf("models.yml missing %q:\n%s", want, modelRaw)
 		}
@@ -820,6 +1003,54 @@ func TestPiProxyPreservesNativeProvider(t *testing.T) {
 	}
 }
 
+func TestKiloProxyPreservesNativeProvider(t *testing.T) {
+	kiloProxyTestHome(t)
+	raw := `{"provider":{"qwen":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","headers":{"x-user":"keep"}},"models":{"deepseek":{"name":"Deepseek"}}}}}`
+	if err := util.WriteFile(util.KiloPathsResolved().Config, raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureKiloProxy(); !changed || !KiloProxyWired() {
+		t.Fatal("native Kilo provider not wired")
+	}
+	got, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseURL\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://dashscope.aliyuncs.com/compatible-mode\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Kilo route missing %q:\n%s", want, got)
+		}
+	}
+	if !RemoveKiloProxy() || KiloProxyWired() {
+		t.Fatal("native Kilo route not removed")
+	}
+	got, _ = util.ReadFileSafe(util.KiloPathsResolved().Config)
+	if got != util.StringifyJSON(util.TryParseJsonc(raw)) {
+		t.Fatalf("Kilo provider not restored:\n%s", got)
+	}
+}
+
+func TestDroidProxyPreservesNativeProvider(t *testing.T) {
+	droidProxyTestHome(t)
+	raw := `{"customModels":[{"model":"qwen","displayName":"Qwen","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","provider":"generic-chat-completion-api","extraHeaders":{"x-user":"keep"}}]}`
+	if err := util.WriteFile(droidSettingsFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureDroidProxy(); !changed || !DroidProxyWired() {
+		t.Fatal("native Droid provider not wired")
+	}
+	got, _ := util.ReadFileSafe(droidSettingsFile())
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseUrl\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://dashscope.aliyuncs.com/compatible-mode\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Droid route missing %q:\n%s", want, got)
+		}
+	}
+	if !RemoveDroidProxy() || DroidProxyWired() {
+		t.Fatal("native Droid route not removed")
+	}
+	got, _ = util.ReadFileSafe(droidSettingsFile())
+	if got != util.StringifyJSON(util.TryParseJsonc(raw)) {
+		t.Fatalf("Droid provider not restored:\n%s", got)
+	}
+}
+
 func TestOmpProxyPreservesNativeProviderAndRole(t *testing.T) {
 	ompProxyTestHome(t)
 	models := `providers:
@@ -885,7 +1116,7 @@ models:
 	if !ok {
 		t.Fatal("models.yml missing")
 	}
-	if !strings.Contains(got, "  headroom:\n    name: Headroom\n    apiKey: TOKLESS_OPENCODE_GO_KEY") {
+	if !strings.Contains(got, "  headroom:\n    name: Headroom\n    apiKey: tokless") {
 		t.Fatalf("headroom provider not updated:\n%s", got)
 	}
 	if strings.Contains(got, "    baseUrl: "+proxyTestURL+"\nmodels:") {
@@ -901,7 +1132,7 @@ func TestOmpProxyRemoveChainsModelTransforms(t *testing.T) {
 	raw := `providers:
   headroom:
     baseUrl: ` + proxyTestURL + `/v1
-    apiKey: TOKLESS_OPENCODE_GO_KEY
+    apiKey: tokless
     api: openai-completions
     discovery:
       type: openai-models-list
@@ -1147,6 +1378,11 @@ func TestAntigravityProxyLifecycle(t *testing.T) {
 	if changed, _ := ConfigureAntigravityProxy(); changed {
 		t.Fatal("second configure should be a no-op")
 	}
+	startup := filepath.Join(util.Home(), ".zshenv")
+	legacy := antigravityShellFenceHead + "\nexport " + antigravityProxyEnvKey + "=" + proxyTestURL + "\n# user shell setting\nexport " + antigravityCloudCodeKey + "=" + proxyTestURL + "\n" + antigravityShellFenceFoot + "\n"
+	if err := util.WriteFile(startup, legacy); err != nil {
+		t.Fatal(err)
+	}
 	raw, ok := util.ReadFileSafe(envFile)
 	if !ok || !strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:8787") {
 		t.Fatalf("env file missing proxy line:\n%s", raw)
@@ -1162,6 +1398,16 @@ func TestAntigravityProxyLifecycle(t *testing.T) {
 	}
 	if RemoveAntigravityProxy() {
 		t.Fatal("second remove should be a no-op")
+	}
+	if raw, ok := util.ReadFileSafe(startup); !ok || !strings.Contains(raw, "# user shell setting") || strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL") || strings.Contains(raw, "CLOUD_CODE_URL") {
+		t.Fatalf("legacy shell cleanup changed wrong content: %q", raw)
+	}
+}
+
+func TestAntigravityStripFenceRefusesUnterminatedBlock(t *testing.T) {
+	seed := "# user before\n" + antigravityProxyFenceHead + "\nGOOGLE_GEMINI_BASE_URL=" + proxyTestURL + "\n# user after\n"
+	if got := antigravityStripFence(seed); got != seed {
+		t.Fatalf("unterminated fence changed user data:\n%s", got)
 	}
 }
 
@@ -1226,8 +1472,8 @@ func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	t.Setenv(antigravityProxyEnvKey, "")
 	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged {
 		t.Fatalf("managed = %+v", got)
-	} else if !strings.Contains(got.Detail, "shell/user env wired") {
-		t.Fatalf("managed detail should note shell/user env: %+v", got)
+	} else if !strings.Contains(got.Detail, "open a new session") {
+		t.Fatalf("managed detail should note session env: %+v", got)
 	}
 	t.Setenv(antigravityCloudCodeKey, "http://127.0.0.1:8787")
 	t.Setenv(antigravityProxyEnvKey, "http://127.0.0.1:8787")
@@ -1235,7 +1481,7 @@ func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 		!strings.Contains(got.Detail, "session env routes") {
 		t.Fatalf("managed with env = %+v", got)
 	}
-	if err := util.WriteFile(envFile, "GOOGLE_GEMINI_BASE_URL=http://user.example\n"); err != nil {
+	if err := util.WriteFile(envFile, "GOOGLE_GEMINI_BASE_URL=http://user.example\nCLOUD_CODE_URL=http://user.example\n"); err != nil {
 		t.Fatal(err)
 	}
 	if got := DetectProxy("antigravity"); got.State != ProxyStateForeignBYOK {
@@ -1426,6 +1672,20 @@ func TestSaveProxyRouteStashAtomicNoTempLeftover(t *testing.T) {
 	}
 	if _, err := os.Stat(proxyRouteStashPath("omp") + ".tmp"); !os.IsNotExist(err) {
 		t.Fatal("temp stash file must not survive successful write")
+	}
+}
+
+func TestSaveProxyRouteStashReplacesExistingFile(t *testing.T) {
+	ompProxyTestHome(t)
+	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{"old": {Provider: "old"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{"new": {Provider: "new"}}); err != nil {
+		t.Fatal(err)
+	}
+	stash := loadProxyRouteStashLocked("omp")
+	if _, ok := stash["old"]; ok || stash["new"].Provider != "new" {
+		t.Fatalf("replaced stash = %+v", stash)
 	}
 }
 
@@ -2028,13 +2288,13 @@ func TestClaudeTakeoverJournalsCompleteStateBeforeSettingsWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	checked := false
-	util.SetWriteFileOverride(func(path, _ string) error {
+	util.SetWriteFileOverride(func(path, content string) error {
 		if path == settings {
 			entry, ok := loadClaudeBYOKStash()
 			checked = ok && len(entry.Managed) > 0 && entry.BaseKey == "original-key"
 			return os.ErrPermission
 		}
-		return nil
+		return os.WriteFile(path, []byte(content), 0o600)
 	})
 	defer util.SetWriteFileOverride(nil)
 	if changed, _ := ConfigureClaudeProxy(); changed {
