@@ -55,6 +55,9 @@ func TestConfigureOpenCodeProxyUsesTransportPlugin(t *testing.T) {
 			t.Fatalf("upstream changed: %s", providerRaw)
 		}
 	}
+	if strings.Contains(providerRaw, "127.0.0.1:8787") || strings.Contains(providerRaw, headroomBaseURLHeader) {
+		t.Fatalf("provider config must remain transport-independent: %s", providerRaw)
+	}
 	raw, _ := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
 	parsedCfg := util.TryParseJsonc(raw)
 	if parsedCfg == nil {
@@ -276,15 +279,15 @@ func TestWireUnwireRoundTripNoCrossWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed, routes := wireOpenCodeBYOK()
-	if !changed || len(routes) != 3 {
+	if changed || len(routes) != 3 {
 		t.Fatalf("wire changed=%v routes=%d", changed, len(routes))
 	}
 	raw, _ := util.ReadFileSafe(path)
-	if strings.Count(raw, `"baseURL": "http://127.0.0.1:8787/v1"`) != 3 {
-		t.Fatalf("not all wired:\n%s", raw)
+	if strings.Count(raw, `"baseURL": "https://api.provider-`) != 3 {
+		t.Fatalf("provider routes changed:\n%s", raw)
 	}
-	if !unwireOpenCodeBYOK() {
-		t.Fatal("unwire no change")
+	if unwireOpenCodeBYOK() {
+		t.Fatal("unwire changed transport-only config")
 	}
 	raw, _ = util.ReadFileSafe(path)
 	for _, host := range []string{"provider-a.test", "provider-b.test", "provider-c.test"} {
@@ -295,16 +298,13 @@ func TestWireUnwireRoundTripNoCrossWire(t *testing.T) {
 	if strings.Contains(raw, "127.0.0.1:8787") {
 		t.Fatalf("proxy left after unwire:\n%s", raw)
 	}
-	// second wire/unwire must stay stable
-	if _, routes = wireOpenCodeBYOK(); len(routes) != 3 {
+	// repeated configure must stay stable
+	if changed, routes = wireOpenCodeBYOK(); changed || len(routes) != 3 {
 		t.Fatalf("rewire routes=%d", len(routes))
-	}
-	if !unwireOpenCodeBYOK() {
-		t.Fatal("second unwire failed")
 	}
 	raw2, _ := util.ReadFileSafe(path)
 	if raw2 != raw {
-		t.Fatalf("second round-trip drifted\n--- first ---\n%s\n--- second ---\n%s", raw, raw2)
+		t.Fatalf("second configure drifted\n--- first ---\n%s\n--- second ---\n%s", raw, raw2)
 	}
 }
 
@@ -315,17 +315,19 @@ func TestUnwireOpenCodeBYOKDoesNotOverwriteUserEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "config.json")
-	if err := util.WriteFile(path, `{"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"key-a"},"models":{}}}}`); err != nil {
+	providerConfig := `{"provider":{"prov-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.provider-a.test/v1","apiKey":"key-a"},"models":{}}}}`
+	if err := util.WriteFile(path, providerConfig); err != nil {
 		t.Fatal(err)
 	}
-	if changed, _ := wireOpenCodeBYOK(); !changed {
-		t.Fatal("wire no change")
+	if changed, routes := wireOpenCodeBYOK(); changed || len(routes) != 1 {
+		t.Fatalf("transport-only wire changed=%v routes=%d", changed, len(routes))
 	}
-	if err := util.WriteFile(path, `{"provider":{"prov-a":{"options":{"baseURL":"https://user-edited.example/v1"}}}}`); err != nil {
+	userEdited := "{\"provider\":{\"prov-a\":{\"options\":{\"baseURL\":\"https://user-edited.example/v1\"}}}}"
+	if err := util.WriteFile(path, userEdited); err != nil {
 		t.Fatal(err)
 	}
 	if unwireOpenCodeBYOK() {
-		t.Fatal("unwire should ignore user-edited provider")
+		t.Fatal("transport-only unwire changed provider")
 	}
 	raw, _ := util.ReadFileSafe(path)
 	if !strings.Contains(raw, "https://user-edited.example/v1") {
@@ -356,5 +358,143 @@ func TestWireOpenCodeBYOKRefusesMalformedStash(t *testing.T) {
 	raw, _ := util.ReadFileSafe(path)
 	if raw != original {
 		t.Fatalf("provider config mutated: %s", raw)
+	}
+}
+
+func TestWireOpenCodeBYOKRollsBackPartialFailure(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	first := "{\"provider\":{\"first\":{\"options\":{\"baseURL\":\"https://first.example/v1\",\"apiKey\":\"key\"}}}}"
+	second := "{\"provider\":{\"second\":{\"options\":{\"baseURL\":\"https://second.example/v1\",\"apiKey\":\"key\",\"headers\":[]}}}}"
+	firstPath := filepath.Join(dir, "config.json")
+	secondPath := filepath.Join(dir, "opencode.json")
+	if err := util.WriteFile(firstPath, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(secondPath, second); err != nil {
+		t.Fatal(err)
+	}
+	if changed, routes := wireOpenCodeBYOK(); changed || len(routes) != 2 {
+		t.Fatalf("transport-only wire changed=%v routes=%d", changed, len(routes))
+	}
+	raw, _ := util.ReadFileSafe(firstPath)
+	if raw != first {
+		t.Fatalf("first provider config changed: %s", raw)
+	}
+	raw, _ = util.ReadFileSafe(secondPath)
+	if raw != second {
+		t.Fatalf("second provider config changed: %s", raw)
+	}
+}
+
+func TestRemoveOpenCodeProxyRefusesMalformedRetrieveStash(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(path, "{\"plugin\":[[\""+openCodeTransportPluginURL()+"\",{\"proxyUrl\":\"http://127.0.0.1:8787\"}]],\"tools\":{\"headroom_retrieve\":false}}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFileMode(openCodeRetrieveStatePath(), "{", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if RemoveOpenCodeProxy() {
+		t.Fatal("malformed retrieve stash was ignored")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, openCodeTransportPluginURL()) {
+		t.Fatal("plugin removed despite malformed stash")
+	}
+}
+
+func TestRemoveOpenCodeProxyRefusesMalformedBYOKStash(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(path, "{\"plugin\":[[\""+openCodeTransportPluginURL()+"\",{\"proxyUrl\":\"http://127.0.0.1:8787\"}]],\"tools\":{\"headroom_retrieve\":false}}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFileMode(byokStashPath(), "{", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if RemoveOpenCodeProxy() {
+		t.Fatal("malformed BYOK stash was ignored")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, openCodeTransportPluginURL()) {
+		t.Fatal("plugin removed despite malformed BYOK stash")
+	}
+}
+
+func TestRemoveOpenCodeProxyUnwiresStalePluginAfterPortChange(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(path, `{"plugin":["file://user-plugin.js"],"theme":"dark"}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("configure reported no change")
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9999")
+	if openCodeTransportPluginWired() {
+		t.Fatal("stale plugin URL must not count as wired")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, openCodeTransportPluginURL()) {
+		t.Fatal("expected leftover tokless plugin before remove")
+	}
+	if !RemoveOpenCodeProxy() {
+		t.Fatal("stale tokless plugin must unwire")
+	}
+	raw, _ = util.ReadFileSafe(path)
+	if strings.Contains(raw, openCodeTransportPluginURL()) {
+		t.Fatalf("stale plugin left behind:\n%s", raw)
+	}
+	if !strings.Contains(raw, "file://user-plugin.js") || !strings.Contains(raw, `"theme": "dark"`) {
+		t.Fatalf("user config lost:\n%s", raw)
+	}
+	if OpenCodeProxyWired() {
+		t.Fatal("expected unwired after stale remove")
+	}
+	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
+		t.Fatal("retrieve stash not cleared")
+	}
+}
+
+func TestConfigureOpenCodeProxyRollsBackPluginWhenBYOKFails(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := util.OpenCodePathsResolved().Config
+	original := "{\"tools\":{\"headroom_retrieve\":true}}"
+	if err := util.WriteFile(path, original); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFileMode(byokStashPath(), "{", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); changed {
+		t.Fatal("configure reported success")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if raw != original {
+		t.Fatalf("plugin config not rolled back: %s", raw)
+	}
+	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
+		t.Fatal("retrieve stash not rolled back")
 	}
 }

@@ -107,6 +107,22 @@ func clearGrokStash() error {
 
 var reGrokProviderHeader = regexp.MustCompile(`(?m)^\[model_providers\.("[^"]+"|'[^']+'|[A-Za-z0-9_-]+)\][ \t]*(?:#.*)?$`)
 
+var reGrokModelHeader = regexp.MustCompile(`(?m)^\[model\.(["']?[^\]]+?["']?)\][ \t]*(?:#.*)?$`)
+
+func grokTargetTable(id string) string {
+	if strings.HasPrefix(id, "model:") {
+		return "model." + strings.TrimPrefix(id, "model:")
+	}
+	return "model_providers." + id
+}
+
+func grokTargetID(id string) string {
+	if strings.HasPrefix(id, "model:") {
+		return strings.TrimPrefix(id, "model:")
+	}
+	return id
+}
+
 // grokLocalBYOK lists user-declared provider ids that carry an absolute http(s)
 // base_url distinct from the proxy plus an api_key.
 func grokLocalBYOK(raw string) []string {
@@ -114,10 +130,21 @@ func grokLocalBYOK(raw string) []string {
 	var ids []string
 	for _, m := range reGrokProviderHeader.FindAllStringSubmatch(raw, -1) {
 		id := m[1]
-		table := "model_providers." + id
+		table := grokTargetTable(id)
 		base := util.TomlBlockField(raw, table, "base_url")
 		key := util.TomlBlockField(raw, table, "api_key")
 		if base == "" || key == "" || !isAbsoluteHTTP(base) || sameProxyBase(base, endpoint) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	for _, m := range reGrokModelHeader.FindAllStringSubmatch(raw, -1) {
+		id := "model:" + strings.Trim(m[1], "\"'")
+		table := grokTargetTable(id)
+		base := util.TomlBlockField(raw, table, "base_url")
+		key := util.TomlBlockField(raw, table, "api_key")
+		envKey := util.TomlBlockField(raw, table, "env_key")
+		if base == "" || (key == "" && envKey == "") || !isAbsoluteHTTP(base) || sameProxyBase(base, endpoint) {
 			continue
 		}
 		ids = append(ids, id)
@@ -178,7 +205,7 @@ func grokSwapBaseURL(raw, table, to string) string {
 }
 
 func grokBaseURLLine(raw, id string) string {
-	body, ok := grokParentBody(raw, "model_providers."+id)
+	body, ok := grokParentBody(raw, grokTargetTable(id))
 	if !ok {
 		return ""
 	}
@@ -187,9 +214,9 @@ func grokBaseURLLine(raw, id string) string {
 
 func grokRestoreBaseURL(raw, id, line, fallback string) string {
 	if line == "" {
-		return grokSwapBaseURL(raw, "model_providers."+id, fallback)
+		return grokSwapBaseURL(raw, grokTargetTable(id), fallback)
 	}
-	return grokEditParent(raw, "model_providers."+id, func(body string) string {
+	return grokEditParent(raw, grokTargetTable(id), func(body string) string {
 		return reGrokBaseURLFull.ReplaceAllString(body, line)
 	})
 }
@@ -244,7 +271,7 @@ func grokSetHeaderValue(raw, id, origin string) string {
 		return raw
 	}
 	entry := headroomBaseURLHeader + ` = ` + util.TomlQuoted(origin)
-	table := "model_providers." + id
+	table := grokTargetTable(id)
 
 	withInline := grokEditParent(raw, table, func(b string) string {
 		sp, ok := grokFindInline(b)
@@ -467,6 +494,12 @@ func grokOAuthApplicable(raw string) bool {
 		return false
 	}
 	modelTable := "model." + defaultModel
+	base := util.TomlBlockField(raw, modelTable, "base_url")
+	apiKey := util.TomlBlockField(raw, modelTable, "api_key")
+	envKey := util.TomlBlockField(raw, modelTable, "env_key")
+	if isAbsoluteHTTP(base) && (apiKey != "" || envKey != "") {
+		return false
+	}
 	provider := util.TomlBlockField(raw, modelTable, "model_provider")
 	return provider == "" || !util.HasBlock(raw, "model_providers."+provider)
 }
@@ -540,7 +573,7 @@ func grokRemoveOAuthHeader(raw string, stash grokStashFile) (string, bool) {
 // grokRemoveHeaderValue strips our header key back out, collapsing emptied
 // inline tables or child tables.
 func grokRemoveHeaderValue(raw, id string) string {
-	table := "model_providers." + id
+	table := grokTargetTable(id)
 
 	withInline := grokEditParent(raw, table, func(b string) string {
 		sp, ok := grokFindInline(b)
@@ -589,7 +622,7 @@ func grokRemoveHeaderValue(raw, id string) string {
 // grokChildSection returns the [start,end) span of an [id.extra_headers]
 // child table.
 func grokChildSection(raw, id string) (int, int, bool) {
-	return grokChildSectionFor(raw, "model_providers."+id)
+	return grokChildSectionFor(raw, grokTargetTable(id))
 }
 
 func grokChildSectionFor(raw, parent string) (int, int, bool) {
@@ -651,7 +684,7 @@ func grokTrimComment(line string) string {
 // grokExistingHeader returns the current x-headroom-base-url value for a
 // provider block ("" when absent).
 func grokExistingHeader(raw, id string) (string, bool) {
-	if body, ok := grokParentBody(raw, "model_providers."+id); ok {
+	if body, ok := grokParentBody(raw, grokTargetTable(id)); ok {
 		if sp, found := grokFindInline(body); found {
 			if m := reGrokHeaderKVValue.FindStringSubmatch(body[sp.open+1 : sp.close]); m != nil {
 				if m[1] != "" {
@@ -677,7 +710,7 @@ func grokExistingHeader(raw, id string) (string, bool) {
 }
 
 func grokExistingHeaderRaw(raw, id string) (string, bool) {
-	if body, ok := grokParentBody(raw, "model_providers."+id); ok {
+	if body, ok := grokParentBody(raw, grokTargetTable(id)); ok {
 		if sp, found := grokFindInline(body); found {
 			if header := reGrokHeaderKV.FindString(body[sp.open+1 : sp.close]); header != "" {
 				return header, false
@@ -696,7 +729,7 @@ func grokExistingHeaderRaw(raw, id string) (string, bool) {
 
 func grokRestoreHeaderRaw(raw, id, header string, child bool) string {
 	if !child {
-		return grokEditParent(raw, "model_providers."+id, func(body string) string {
+		return grokEditParent(raw, grokTargetTable(id), func(body string) string {
 			sp, ok := grokFindInline(body)
 			if !ok {
 				return body
@@ -724,7 +757,7 @@ func grokRestoreHeaderRaw(raw, id, header string, child bool) string {
 }
 
 func grokExistingPathRaw(raw, id string) (string, bool) {
-	if body, ok := grokParentBody(raw, "model_providers."+id); ok {
+	if body, ok := grokParentBody(raw, grokTargetTable(id)); ok {
 		if sp, found := grokFindInline(body); found {
 			if header := reGrokPathKV.FindString(body[sp.open+1 : sp.close]); header != "" {
 				return header, false
@@ -747,7 +780,7 @@ func grokSetOriginalPath(raw, id string) string {
 		return raw
 	}
 	entry := `x-headroom-original-path = ` + util.TomlQuoted(path)
-	table := "model_providers." + id
+	table := grokTargetTable(id)
 
 	withInline := grokEditParent(raw, table, func(b string) string {
 		sp, ok := grokFindInline(b)
@@ -796,7 +829,7 @@ func grokSetOriginalPath(raw, id string) string {
 }
 
 func grokExistingPath(raw, id string) (string, bool) {
-	if body, ok := grokParentBody(raw, "model_providers."+id); ok {
+	if body, ok := grokParentBody(raw, grokTargetTable(id)); ok {
 		if sp, found := grokFindInline(body); found {
 			if m := reGrokPathKVValue.FindStringSubmatch(body[sp.open+1 : sp.close]); m != nil {
 				if m[1] != "" {
@@ -824,7 +857,7 @@ func grokExistingPath(raw, id string) (string, bool) {
 func grokRestoreOriginalPath(raw, id, pathRaw string, child bool) string {
 	if pathRaw != "" {
 		if !child {
-			return grokEditParent(raw, "model_providers."+id, func(body string) string {
+			return grokEditParent(raw, grokTargetTable(id), func(body string) string {
 				sp, ok := grokFindInline(body)
 				if !ok {
 					return body
@@ -854,7 +887,7 @@ func grokRestoreOriginalPath(raw, id, pathRaw string, child bool) string {
 }
 
 func grokRemoveOriginalPath(raw, id string) string {
-	table := "model_providers." + id
+	table := grokTargetTable(id)
 	withInline := grokEditParent(raw, table, func(b string) string {
 		sp, ok := grokFindInline(b)
 		if !ok {
@@ -1010,7 +1043,7 @@ func configureGrokProxyLocked() (bool, string, error) {
 		}
 	}
 	for _, id := range ids {
-		table := "model_providers." + id
+		table := grokTargetTable(id)
 		current := util.TomlBlockField(raw, table, "base_url")
 		if sameProxyBase(current, grokProxyEndpoint()) {
 			if s, ok := stash[id]; ok && s.BaseURL != "" {
@@ -1132,7 +1165,7 @@ func removeGrokProxyLocked() (bool, error) {
 	removed := false
 	stash := stashFile.Providers
 	for id, s := range stash {
-		table := "model_providers." + id
+		table := grokTargetTable(id)
 		current := util.TomlBlockField(raw, table, "base_url")
 		if s.BaseURL == "" || !util.HasBlock(raw, table) || !sameProxyBase(current, grokProxyEndpoint()) {
 			continue
@@ -1206,7 +1239,7 @@ func GrokProxyWired() bool {
 		s := stash[id]
 		upstream, upstreamOK := grokExistingHeader(raw, id)
 		path, pathOK := grokExistingPath(raw, id)
-		if sameProxyBase(util.TomlBlockField(raw, "model_providers."+id, "base_url"), grokProxyEndpoint()) &&
+		if sameProxyBase(util.TomlBlockField(raw, grokTargetTable(id), "base_url"), grokProxyEndpoint()) &&
 			s.BaseURL != "" && upstreamOK && upstream == s.BaseURL && pathOK && path == "/chat/completions" {
 			return true
 		}
@@ -1249,8 +1282,8 @@ func detectGrokProxy(cap ProxyCapability) ProxyDetection {
 	stash := loadGrokStash()
 	routed := 0
 	for id := range stash {
-		if util.HasBlock(raw, "model_providers."+id) &&
-			sameProxyBase(util.TomlBlockField(raw, "model_providers."+id, "base_url"), grokProxyEndpoint()) {
+		if util.HasBlock(raw, grokTargetTable(id)) &&
+			sameProxyBase(util.TomlBlockField(raw, grokTargetTable(id), "base_url"), grokProxyEndpoint()) {
 			routed++
 		}
 	}

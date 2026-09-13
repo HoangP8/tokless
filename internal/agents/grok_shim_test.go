@@ -70,6 +70,13 @@ func TestInstallGrokShimIdempotent(t *testing.T) {
 	}
 }
 
+func TestRenderGrokShimPreservesExplicitModelsBaseURL(t *testing.T) {
+	rendered := renderGrokShim()
+	if !strings.Contains(rendered, `[ -z "${GROK_MODELS_BASE_URL:-}" ]`) {
+		t.Fatalf("shim must preserve explicit BYOK endpoint:\n%s", rendered)
+	}
+}
+
 func TestInstallGrokShimAdoptsUpgradedBinary(t *testing.T) {
 	seedGrokBinary(t)
 	if _, err := InstallGrokShim(); err != nil {

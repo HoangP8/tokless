@@ -174,16 +174,76 @@ func openCodeProxySpecs() []ProviderSpec {
 }
 
 func ConfigureOpenCodeProxy() (changed bool, file string) {
+	file = util.OpenCodePathsResolved().Config
+	configRaw, configExists := util.ReadFileSafe(file)
+	retrieveRaw, retrieveExists := util.ReadFileSafe(openCodeRetrieveStatePath())
 	pluginChanged, file := configureOpenCodeTransportPlugin()
 	if !pluginChanged && !openCodeTransportPluginWired() {
 		return false, file
 	}
-	return unwireOpenCodeBYOK() || pluginChanged, file
+	byokChanged, _, ok := wireOpenCodeBYOKChecked()
+	if !ok {
+		if err := restoreCodexConfig(file, configRaw, configExists); err != nil {
+			return false, file
+		}
+		if err := restoreOpenCodeRetrieveState(retrieveRaw, retrieveExists); err != nil {
+			return false, file
+		}
+		return false, file
+	}
+	return byokChanged || pluginChanged, file
 }
 
 func RemoveOpenCodeProxy() bool {
+	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
+		if _, ok := loadOpenCodeRetrieveState(); !ok {
+			return false
+		}
+	}
+	if !byokStashValid() {
+		return false
+	}
+	byokRemoved := false
+	stashed := loadBYOKStash()
+	pluginWired := openCodeTransportPluginWired()
+	configPath := util.OpenCodePathsResolved().Config
+	configRaw, configExists := util.ReadFileSafe(configPath)
+	retrieveRaw, retrieveExists := util.ReadFileSafe(openCodeRetrieveStatePath())
+	byokStashRaw, byokStashExists := util.ReadFileSafe(byokStashPath())
+	providerFiles := map[string]string{}
+	for _, route := range stashed {
+		if raw, ok := util.ReadFileSafe(route.File); ok {
+			providerFiles[route.File] = raw
+		}
+	}
+	if len(stashed) > 0 {
+		if !unwireOpenCodeBYOK() {
+			return false
+		}
+		byokRemoved = true
+	}
 	pluginRemoved := removeOpenCodeTransportPlugin()
-	byokRemoved := unwireOpenCodeBYOK()
+	if pluginWired && !pluginRemoved {
+		rollbackOK := true
+		for path, raw := range providerFiles {
+			if util.WriteFile(path, raw) != nil {
+				rollbackOK = false
+			}
+		}
+		if restoreCodexConfig(byokStashPath(), byokStashRaw, byokStashExists) != nil {
+			rollbackOK = false
+		}
+		if restoreCodexConfig(configPath, configRaw, configExists) != nil {
+			rollbackOK = false
+		}
+		if restoreOpenCodeRetrieveState(retrieveRaw, retrieveExists) != nil {
+			rollbackOK = false
+		}
+		if !rollbackOK {
+			return false
+		}
+		return false
+	}
 	return pluginRemoved || byokRemoved
 }
 
@@ -197,7 +257,13 @@ func OpenCodeProxySatisfied() bool {
 
 func openCodeTransportPluginPath() string {
 	p := util.HeadroomPathsResolved()
-	return filepath.Join(p.Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
+	root := filepath.Join(p.Tools, "headroom-ai")
+	if util.IsWin {
+		root = filepath.Join(root, "Lib", "site-packages")
+	} else {
+		root = filepath.Join(root, "lib", "python3.13", "site-packages")
+	}
+	return filepath.Join(root, "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
 }
 
 func openCodeTransportPluginURL() string {
@@ -210,15 +276,20 @@ func openCodeTransportPluginEntry() []any {
 	return []any{openCodeTransportPluginURL(), options}
 }
 
-func isOpenCodeTransportPluginEntry(v any) bool {
+func isOpenCodeTransportPluginPathEntry(v any) bool {
 	entry, ok := v.([]any)
 	if !ok || len(entry) != 2 {
 		return false
 	}
 	path, _ := entry[0].(string)
-	if path != openCodeTransportPluginURL() {
+	return path == openCodeTransportPluginURL()
+}
+
+func isOpenCodeTransportPluginEntry(v any) bool {
+	if !isOpenCodeTransportPluginPathEntry(v) {
 		return false
 	}
+	entry := v.([]any)
 	options, ok := entry[1].(*util.OrderedMap)
 	if !ok {
 		return false
@@ -274,19 +345,29 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 			_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
 			return false, file
 		}
+		next := make([]any, 0, len(entries)+1)
+		managed := false
 		for _, entry := range entries {
-			if isOpenCodeTransportPluginEntry(entry) {
-				if changed {
-					if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
-						_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
-						return false, file
-					}
-				}
-				return changed, file
+			if !isOpenCodeTransportPluginPathEntry(entry) {
+				next = append(next, entry)
+				continue
 			}
+			if managed {
+				changed = true
+				continue
+			}
+			current := isOpenCodeTransportPluginEntry(entry)
+			if !current {
+				changed = true
+			}
+			next = append(next, openCodeTransportPluginEntry())
+			managed = true
 		}
-		cfg.Set("plugin", append(entries, openCodeTransportPluginEntry()))
-		changed = true
+		if !managed {
+			next = append(next, openCodeTransportPluginEntry())
+			changed = true
+		}
+		cfg.Set("plugin", next)
 	} else {
 		cfg.Set("plugin", []any{openCodeTransportPluginEntry()})
 		changed = true
@@ -322,7 +403,7 @@ func removeOpenCodeTransportPlugin() bool {
 	next := make([]any, 0, len(entries))
 	removed := false
 	for _, entry := range entries {
-		if isOpenCodeTransportPluginEntry(entry) {
+		if isOpenCodeTransportPluginPathEntry(entry) {
 			removed = true
 			continue
 		}
@@ -330,6 +411,11 @@ func removeOpenCodeTransportPlugin() bool {
 	}
 	if !removed {
 		return false
+	}
+	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
+		if _, ok := loadOpenCodeRetrieveState(); !ok {
+			return false
+		}
 	}
 	if value, ok := loadOpenCodeRetrieveState(); ok {
 		if value == nil {
@@ -353,7 +439,10 @@ func removeOpenCodeTransportPlugin() bool {
 	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
 		return false
 	}
-	_ = clearOpenCodeRetrieveState()
+	if err := clearOpenCodeRetrieveState(); err != nil {
+		_ = util.WriteFile(file, raw)
+		return false
+	}
 	return true
 }
 

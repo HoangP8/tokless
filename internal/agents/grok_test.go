@@ -112,6 +112,40 @@ func TestConfigureGrokProxyRewritesUserProviderInPlace(t *testing.T) {
 	}
 }
 
+func TestGrokLocalBYOKOnlyFindsModelProviders(t *testing.T) {
+	raw := `[model.gpt-5-6-luna]
+model = "gpt-5.6-luna"
+base_url = "https://api.qwencoder.cloud/api/v1"
+api_key = "qwen-key"
+
+[model_providers.qwen]
+base_url = "https://provider.example/v1"
+api_key = "provider-key"
+`
+	ids := grokLocalBYOK(raw)
+	if len(ids) != 2 || ids[0] != "qwen" || ids[1] != "model:gpt-5-6-luna" {
+		t.Fatalf("grokLocalBYOK = %#v, want provider and official model targets", ids)
+	}
+}
+
+func TestGrokLocalBYOKFindsOfficialModelConfig(t *testing.T) {
+	raw := `[models]
+default = "gpt-5-6-luna"
+
+[model.gpt-5-6-luna]
+model = "gpt-5.6-luna"
+base_url = "https://api.qwencoder.cloud/api/v1"
+api_key = "qwen-key"
+`
+	ids := grokLocalBYOK(raw)
+	if len(ids) != 1 || ids[0] != "model:gpt-5-6-luna" {
+		t.Fatalf("grokLocalBYOK = %#v, want official model target", ids)
+	}
+	if grokOAuthApplicable(raw) {
+		t.Fatal("official direct BYOK model must not use OAuth routing")
+	}
+}
+
 func TestConfigureGrokProxyRollsBackStashOnConfigWriteFailure(t *testing.T) {
 	grokSeedConfig(t, grokUserConfig)
 	configBefore, _ := util.ReadFileSafe(grokConfigFile())

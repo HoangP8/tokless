@@ -38,6 +38,7 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 		base, key, file, npm string
 	}
 	got := map[string]*acc{}
+	duplicates := map[string]bool{}
 	order := []string{}
 
 	for _, path := range openCodeConfigFiles() {
@@ -71,6 +72,8 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 				a = &acc{}
 				got[id] = a
 				order = append(order, id)
+			} else if (base != "" && a.base != "" && base != a.base) || (key != "" && a.key != "" && key != a.key) {
+				duplicates[id] = true
 			}
 			if key != "" {
 				a.key = key
@@ -91,6 +94,9 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 	stashed := loadBYOKStash()
 	var out []openCodeBYOK
 	for _, id := range order {
+		if duplicates[id] {
+			continue
+		}
 		a := got[id]
 		if a.base == "" {
 			if s, ok := stashed[id]; ok && s.BaseURL != "" {
@@ -176,10 +182,13 @@ func SyncOpenCodeBYOKRoutes() int {
 	return 0
 }
 
-// wireOpenCodeBYOK points every discovered BYOK provider at Headroom while
-// retaining its original upstream in Headroom's supported per-request header.
+// wireOpenCodeBYOK migrates providers from the retired static URL rewrite.
 func wireOpenCodeBYOK() (changed bool, _ []openCodeBYOK) {
-	var byoks []openCodeBYOK
+	changed, byoks, _ := wireOpenCodeBYOKChecked()
+	return changed, byoks
+}
+
+func wireOpenCodeBYOKChecked() (changed bool, byoks []openCodeBYOK, success bool) {
 	err := withProxyRouteStashLock(func() error {
 		var ok bool
 		changed, byoks, ok = wireOpenCodeBYOKLocked()
@@ -189,44 +198,30 @@ func wireOpenCodeBYOK() (changed bool, _ []openCodeBYOK) {
 		return nil
 	})
 	if err != nil {
-		return false, nil
+		return false, nil, false
 	}
-	return changed, byoks
+	return changed, byoks, true
 }
 
 func wireOpenCodeBYOKLocked() (changed bool, byoks []openCodeBYOK, ok bool) {
-	proxyBase := ProxyEndpointFor("opencode")
-	if proxyBase == "" {
-		return false, nil, true
-	}
 	if !byokStashValid() {
+		return false, nil, false
+	}
+	legacyChanged, ok := unwireOpenCodeBYOKLocked()
+	if !ok {
 		return false, nil, false
 	}
 	byoks = DiscoverOpenCodeBYOK()
 	if len(byoks) == 0 {
-		_ = clearBYOKStash()
-		return false, nil, true
-	}
-	newStash := map[string]byokStashEntry{}
-	originals := map[string]string{}
-	for _, b := range byoks {
-		if _, exists := originals[b.File]; !exists {
-			if raw, ok := util.ReadFileSafe(b.File); ok {
-				originals[b.File] = raw
-			}
+		if openCodeHasOrphanedProxyRoute() {
+			return false, nil, false
 		}
-		newStash[b.ID] = byokStashEntry{File: b.File, BaseURL: b.BaseURL}
-		if setOpenCodeProviderRoute(b.File, b.ID, proxyBase, b.BaseURL) {
-			changed = true
-		}
+		return legacyChanged, nil, true
 	}
-	if err := saveBYOKStash(newStash); err != nil {
-		for path, raw := range originals {
-			_ = util.WriteFile(path, raw)
-		}
-		return false, nil, true
+	if openCodeHasOrphanedProxyRoute() {
+		return false, nil, false
 	}
-	return changed, byoks, true
+	return legacyChanged, byoks, true
 }
 
 // unwireOpenCodeBYOK restores original baseURLs from stash.
@@ -269,25 +264,55 @@ func unwireOpenCodeBYOKLocked() (removed bool, ok bool) {
 		if setOpenCodeProviderRoute(s.File, id, s.BaseURL, "") {
 			removed = true
 		} else {
-			remaining[id] = s
+			return false, restoreOpenCodeProviderFiles(originals)
 		}
 	}
 	if len(remaining) == 0 {
 		if err := clearBYOKStash(); err != nil {
-			for path, raw := range originals {
-				_ = util.WriteFile(path, raw)
-			}
-			return false, true
+			return false, restoreOpenCodeProviderFiles(originals)
 		}
 	} else {
 		if err := saveBYOKStash(remaining); err != nil {
-			for path, raw := range originals {
-				_ = util.WriteFile(path, raw)
-			}
-			return false, true
+			return false, restoreOpenCodeProviderFiles(originals)
 		}
 	}
 	return removed, true
+}
+
+func restoreOpenCodeProviderFiles(originals map[string]string) bool {
+	ok := true
+	for path, raw := range originals {
+		if util.WriteFile(path, raw) != nil {
+			ok = false
+		}
+	}
+	return ok
+}
+
+func openCodeProviderRouteMatches(raw, id, proxyBase, upstream string) bool {
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "provider")
+	if !ok {
+		return false
+	}
+	block, ok := providers.Get(id)
+	if !ok {
+		return false
+	}
+	provider, ok := block.(*util.OrderedMap)
+	if !ok || rawProviderBaseURL(provider) != proxyBase {
+		return false
+	}
+	options, ok := mapChild(provider, "options")
+	if !ok {
+		return false
+	}
+	headers, _ := mapChild(options, "headers")
+	value, hasUpstream := headers.Get(headroomBaseURLHeader)
+	return upstream == "" && !hasUpstream || hasUpstream && value == upstream
 }
 
 const headroomBaseURLHeader = "x-headroom-base-url"
@@ -384,6 +409,37 @@ func openCodeBYOKWired() bool {
 		base = rawProviderBaseURL(m)
 		if sameProxyBase(base, proxyBase) {
 			return true
+		}
+	}
+	return false
+}
+
+// openCodeHasOrphanedProxyRoute detects a provider left on Headroom without a
+// verified legacy stash.
+func openCodeHasOrphanedProxyRoute() bool {
+	proxyBase := ProxyEndpointFor("opencode")
+	for _, path := range openCodeConfigFiles() {
+		raw, ok := util.ReadFileSafe(path)
+		if !ok || util.HasJSONCComments(raw) {
+			continue
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			continue
+		}
+		providers, ok := mapChild(cfg, "provider")
+		if !ok {
+			continue
+		}
+		for _, id := range providers.Keys() {
+			block, ok := providers.Get(id)
+			if !ok {
+				continue
+			}
+			provider, ok := block.(*util.OrderedMap)
+			if ok && sameProxyBase(rawProviderBaseURL(provider), proxyBase) {
+				return true
+			}
 		}
 	}
 	return false
@@ -605,7 +661,7 @@ func replaceBaseURLInBlock(block, oldURL, newURL string) (string, int) {
 	return block, 0
 }
 
-// --- stash: original baseURL per provider id (no secrets) ---
+// --- legacy stash: original baseURL per provider id (no secrets) ---
 
 type byokStashEntry struct {
 	File    string `json:"file"`
