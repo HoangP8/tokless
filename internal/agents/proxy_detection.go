@@ -305,26 +305,36 @@ func detectManualEnv(cap ProxyCapability, key, endpoint string) ProxyDetection {
 	return proxyDetection(cap.ID, "documented environment endpoint differs", ProxyStateForeignBYOK)
 }
 
-// detectAntigravityProxy reads GOOGLE_GEMINI_BASE_URL from ~/.gemini/.env
+// detectAntigravityProxy validates the managed CLI launcher and IDE endpoint.
 func detectAntigravityProxy(cap ProxyCapability) ProxyDetection {
 	path := antigravityEnvFile()
 	raw, err := readProxyConfig(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return proxyDetection(cap.ID, "env file absent", ProxyStateAbsent)
+			return proxyDetection(cap.ID, "automatic route not configured", ProxyStateAbsent)
 		}
 		return proxyDetection(cap.ID, "env file unreadable", ProxyStateUnreadable)
 	}
 	value := antigravityEnvValue(raw, antigravityProxyEnvKey)
 	cloud := antigravityEnvValue(raw, antigravityCloudCodeKey)
 	if value == "" && cloud == "" {
-		return proxyDetection(cap.ID, "documented endpoint not configured", ProxyStateUnconfigured)
+		return proxyDetection(cap.ID, "automatic route not configured", ProxyStateUnconfigured)
 	}
 	if value == ProxyEndpointFor(cap.ID) && cloud == ProxyEndpointFor(cap.ID) {
-		if AntigravityProxySessionReady() {
-			return proxyDetection(cap.ID, "exact managed endpoint; session env routes agy CLI", ProxyStateManaged)
+		if AntigravityProxyWired() {
+			surfaces := "CLI launcher"
+			if antigravityIDEApplicable() {
+				surfaces += " and IDE setting"
+			}
+			return proxyDetection(cap.ID, "managed "+surfaces, ProxyStateManaged)
 		}
-		return proxyDetection(cap.ID, "exact managed endpoint; open a new session to load env", ProxyStateManaged)
+		if !antigravityShimCompatible() {
+			return proxyDetection(cap.ID, "existing agy launcher is not Tokless-owned", ProxyStateConflict)
+		}
+		if !antigravityIDECompatible() {
+			return proxyDetection(cap.ID, "IDE endpoint differs or settings are not safely editable", ProxyStateForeignBYOK)
+		}
+		return proxyDetection(cap.ID, "automatic route incomplete", ProxyStateUnconfigured)
 	}
 	return proxyDetection(cap.ID, "documented endpoint differs", ProxyStateForeignBYOK)
 }

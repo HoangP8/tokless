@@ -81,7 +81,7 @@ func TestProxyWireModelAndKeyEnvOverride(t *testing.T) {
 	}
 }
 
-func TestConfigureOpenCodeProxyBYOKOnlyNoHeadroomInject(t *testing.T) {
+func TestConfigureOpenCodeProxyRoutesBYOKThroughHeadroom(t *testing.T) {
 	opencodeProxyTestHome(t)
 	cfgPath := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
 	if err := util.EnsureDir(filepath.Dir(cfgPath)); err != nil {
@@ -102,8 +102,14 @@ func TestConfigureOpenCodeProxyBYOKOnlyNoHeadroomInject(t *testing.T) {
 		t.Fatal("configure was not idempotent")
 	}
 	raw, _ := util.ReadFileSafe(gatePath)
-	if strings.Contains(raw, `"headroom"`) || !strings.Contains(raw, `"baseURL":"https://api.provider-a.test/v1"`) {
-		t.Fatalf("provider config changed: %s", raw)
+	if !strings.Contains(raw, `https://api.provider-a.test/v1`) {
+		t.Fatalf("provider upstream missing: %s", raw)
+	}
+	if strings.Contains(raw, `127.0.0.1:8787`) {
+		t.Fatalf("provider proxy URL present: %s", raw)
+	}
+	if strings.Contains(raw, `x-headroom-base-url`) {
+		t.Fatalf("provider route header present: %s", raw)
 	}
 	raw, _ = util.ReadFileSafe(cfgPath)
 	if !strings.Contains(raw, `"plugin"`) || !strings.Contains(raw, `"proxyUrl": "http://127.0.0.1:8787"`) {

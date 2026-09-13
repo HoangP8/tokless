@@ -76,6 +76,22 @@ func pinToklessProxyEnv(t *testing.T) {
 	t.Setenv("TOKLESS_PROXY_KEY", "")
 }
 
+func mixedProxyTestHome(t *testing.T) {
+	t.Helper()
+	pinToklessProxyEnv(t)
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("KILO_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("CLINE_DIR", "")
+	t.Setenv("CLINE_DATA_DIR", "")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+}
+
 func claudeProxyTestHome(t *testing.T) {
 	t.Helper()
 	pinToklessProxyEnv(t)
@@ -111,6 +127,79 @@ func TestClaudeProxyLifecycle(t *testing.T) {
 	}
 	if RemoveClaudeProxy() {
 		t.Fatal("second remove should be a no-op")
+	}
+}
+
+func TestClaudeProxyRemovesLeftoverOwnedAfterPortChange(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected configure to write")
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9999")
+	if ClaudeProxyWired() {
+		t.Fatal("stale 8787 must not count as wired")
+	}
+	if !RemoveClaudeProxy() {
+		t.Fatal("stash-owned leftover must unwire")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if strings.Contains(raw, "ANTHROPIC_BASE_URL") {
+		t.Fatalf("native leftover not restored:\n%s", raw)
+	}
+	if ClaudeProxyWired() {
+		t.Fatal("expected unwired after leftover remove")
+	}
+	if _, ok := loadClaudeBYOKStash(); ok {
+		t.Fatal("stash should be cleared")
+	}
+}
+
+func TestClaudeProxyRestoresBYOKLeftoverOwnedAfterPortChange(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-byok",
+    "ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api",
+    "ANTHROPIC_CUSTOM_HEADERS": "X-Keep: yes"
+  }
+}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClaudeProxy(); !changed {
+		t.Fatal("expected takeover to write")
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9999")
+	if !RemoveClaudeProxy() {
+		t.Fatal("stash-owned BYOK leftover must restore")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api"`) ||
+		!strings.Contains(raw, `"X-Keep: yes"`) || strings.Contains(raw, "x-headroom-base-url") ||
+		!strings.Contains(raw, `"ANTHROPIC_API_KEY": "sk-byok"`) || strings.Contains(raw, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("BYOK leftover restore wrong:\n%s", raw)
+	}
+	if _, ok := loadClaudeBYOKStash(); ok {
+		t.Fatal("stash should be cleared")
+	}
+}
+
+func TestClaudeProxyRefusesUnownedLoopbackAfterPortChange(t *testing.T) {
+	claudeProxyTestHome(t)
+	settings := util.ClaudeCodePaths().Settings
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8787","OTHER":"keep"}}`
+	if err := util.WriteFile(settings, seed); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "9999")
+	if RemoveClaudeProxy() {
+		t.Fatal("must not delete user-owned loopback")
+	}
+	raw, _ := util.ReadFileSafe(settings)
+	if raw != seed {
+		t.Fatalf("user config changed:\n%s", raw)
 	}
 }
 
@@ -394,6 +483,42 @@ func TestClineProxyRefusesForeignReservedProvider(t *testing.T) {
 	}
 }
 
+func TestClineProxyPreservesSelectedNativeProvider(t *testing.T) {
+	clineProxyTestHome(t)
+	file := clineProvidersFile()
+	seed := `{"lastUsedProvider":"cline","providers":{"cline":{"settings":{"provider":"cline","model":"x-ai/grok-4.3"}}}}`
+	if err := util.WriteFile(file, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClineProxy(); changed || ClineProxyWired() {
+		t.Fatal("proxy configure switched selected native Cline provider")
+	}
+	raw, _ := util.ReadFileSafe(file)
+	if raw != seed {
+		t.Fatalf("native Cline config changed: %s", raw)
+	}
+}
+
+func TestClineProxyRefusesMalformedSelectedProvider(t *testing.T) {
+	for _, selected := range []string{`[]`, `{}`, `42`, `null`} {
+		t.Run(selected, func(t *testing.T) {
+			clineProxyTestHome(t)
+			file := clineProvidersFile()
+			seed := `{"lastUsedProvider":` + selected + `,"providers":{}}`
+			if err := util.WriteFile(file, seed); err != nil {
+				t.Fatal(err)
+			}
+			if changed, _ := ConfigureClineProxy(); changed {
+				t.Fatal("malformed selected provider was adopted")
+			}
+			raw, _ := util.ReadFileSafe(file)
+			if raw != seed {
+				t.Fatalf("malformed Cline config changed: %s", raw)
+			}
+		})
+	}
+}
+
 func TestDetectOmpMalformedIsUnknown(t *testing.T) {
 	ompProxyTestHome(t)
 	if err := util.WriteFile(ompModelsFile(), "providers:\n  headroom:\n    baseUrl: [\n    apiKey: tokless\n    api: openai-completions\n    discovery:\n      type: openai-models-list\n"); err != nil {
@@ -626,6 +751,157 @@ func TestConfigureCodexProxyUsesChatGPTOAuthWhenLoggedIn(t *testing.T) {
 	}
 }
 
+func TestCodexProxyRefreshesBYOKDiscovery(t *testing.T) {
+	codexProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.WriteFile(filepath.Join(dir, "config.json"), `{"provider":{"first":{"options":{"baseURL":"https://first.example/v1","apiKey":"first-key"}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := byokProvidersCached(); len(got) != 1 || got[0].ID != "first" {
+		t.Fatalf("initial BYOK discovery = %+v", got)
+	}
+	if err := util.WriteFile(filepath.Join(dir, "config.json"), `{"provider":{"second":{"options":{"baseURL":"https://second.example/v1","apiKey":"second-key"}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	got := byokProvidersCached()
+	if len(got) != 1 || got[0].ID != "second" {
+		t.Fatalf("stale BYOK discovery = %+v", got)
+	}
+}
+
+func TestConfigureCodexProxyRoutesSelectedNativeBYOKProvider(t *testing.T) {
+	codexProxyTestHome(t)
+	t.Setenv("QWENCODER_API_KEY", "test-key")
+	path := util.CodexPathsResolved().Config
+	seed := `model_provider = "qwencoder"
+
+[model_providers.qwencoder]
+name = "Qwen"
+base_url = "https://dashscope.example/v1"
+env_key = "QWENCODER_API_KEY"
+wire_api = "responses"
+`
+	if err := util.WriteFile(path, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); !changed || !CodexProxyWired() {
+		t.Fatalf("Codex native BYOK configure: changed=%v wired=%v", changed, CodexProxyWired())
+	}
+	raw, _ := util.ReadFileSafe(path)
+	for _, want := range []string{
+		`model_provider = "headroom"`,
+		`wire_api = "responses"`,
+		`env_key = "TOKLESS_CODEX_API_KEY"`,
+		`x-headroom-base-url = "TOKLESS_HEADROOM_BASE_URL"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("Codex routed config missing %q:\n%s", want, raw)
+		}
+	}
+	dotEnv, _ := util.ReadFileSafe(codexDotEnvPath())
+	if !strings.Contains(dotEnv, "TOKLESS_HEADROOM_BASE_URL=https://dashscope.example\n") || !strings.Contains(dotEnv, "TOKLESS_CODEX_API_KEY=test-key\n") {
+		t.Fatalf("Codex BYOK routing env missing: %s", dotEnv)
+	}
+	if !RemoveCodexProxy() {
+		t.Fatal("Codex native BYOK restore failed")
+	}
+	raw, _ = util.ReadFileSafe(path)
+	for _, want := range []string{
+		`model_provider = "qwencoder"`,
+		`[model_providers.qwencoder]`,
+		`base_url = "https://dashscope.example/v1"`,
+		`env_key = "QWENCODER_API_KEY"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("Codex native BYOK config not restored, missing %q:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(raw, codexMarkerStart) || strings.Contains(raw, `[model_providers.headroom]`) {
+		t.Fatalf("Codex managed route survived restore:\n%s", raw)
+	}
+}
+
+func TestConfigureCodexProxyPreservesTakeoverStashOnRepeat(t *testing.T) {
+	codexProxyTestHome(t)
+	t.Setenv("QWENCODER_API_KEY", "test-key")
+	path := util.CodexPathsResolved().Config
+	seed := `model_provider = "qwencoder"
+
+[model_providers.qwencoder]
+base_url = "https://dashscope.example/v1"
+env_key = "QWENCODER_API_KEY"
+`
+	if err := util.WriteFile(path, seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); !changed {
+		t.Fatal("first configure failed")
+	}
+	if changed, _ := ConfigureCodexProxy(); changed {
+		t.Fatal("second configure was not idempotent")
+	}
+	if !RemoveCodexProxy() {
+		t.Fatal("remove failed")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, `model_provider = "qwencoder"`) {
+		t.Fatalf("original provider selection lost: %s", raw)
+	}
+}
+
+func TestConfigureCodexProxyRoutesQuotedNativeBYOKProvider(t *testing.T) {
+	codexProxyTestHome(t)
+	t.Setenv("QWEN_API_KEY", "test-key")
+	path := util.CodexPathsResolved().Config
+	seed := `"model_provider" = 'qwen.cloud'
+
+[model_providers."qwen.cloud"]
+name = "Qwen"
+base_url = "https://dashscope.example/v1"
+env_key = "QWEN_API_KEY"
+wire_api = "responses"
+`
+	if err := util.WriteFile(path, seed); err != nil {
+		t.Fatal(err)
+	}
+	if !codexTOMLWellFormed(seed) {
+		t.Fatal("valid quoted Codex config rejected")
+	}
+	if got := discoverCodexBYOK(); len(got) != 1 || got[0].ID != "qwen.cloud" {
+		t.Fatalf("quoted Codex provider not discovered: %+v", got)
+	}
+	if changed, _ := ConfigureCodexProxy(); !changed || !CodexProxyWired() {
+		t.Fatalf("quoted Codex configure: changed=%v wired=%v", changed, CodexProxyWired())
+	}
+	if !RemoveCodexProxy() {
+		t.Fatal("quoted Codex remove failed")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	for _, want := range []string{`"model_provider" = 'qwen.cloud'`, `[model_providers."qwen.cloud"]`, `base_url = "https://dashscope.example/v1"`, `env_key = "QWEN_API_KEY"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("quoted Codex config not restored, missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestDiscoverCodexBYOKDecodesLiteralProviderID(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	seed := `model_provider = 'foo''bar'
+
+[model_providers.'foo''bar']
+base_url = "https://provider.example/v1"
+api_key = "key"
+`
+	if err := util.WriteFile(path, seed); err != nil {
+		t.Fatal(err)
+	}
+	got := discoverCodexBYOK()
+	if len(got) != 1 || got[0].ID != "foo'bar" || codexRootValue(seed, "model_provider") != "foo'bar" {
+		t.Fatalf("literal provider ID not decoded: %+v", got)
+	}
+}
+
 func TestCodexProxyRefusesSimilarForeignProvider(t *testing.T) {
 	codexProxyTestHome(t)
 	path := util.CodexPathsResolved().Config
@@ -807,6 +1083,33 @@ func TestCodexProxyPreservesEditedByokEnv(t *testing.T) {
 	}
 }
 
+func TestCodexProxyPreservesByokEnvEditedAfterConfigure(t *testing.T) {
+	codexProxyTestHome(t)
+	t.Setenv("PROVIDER_KEY", "provider-key")
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(path, `model_provider = "provider"
+
+[model_providers.provider]
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_KEY"
+`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureCodexProxy(); !changed {
+		t.Fatal("configure failed")
+	}
+	if err := util.WriteFile(codexDotEnvPath(), "TOKLESS_CODEX_API_KEY=user-key\nTOKLESS_HEADROOM_BASE_URL=https://provider.example\n"); err != nil {
+		t.Fatal(err)
+	}
+	if RemoveCodexProxy() {
+		t.Fatal("remove deleted user-edited env")
+	}
+	raw, _ := util.ReadFileSafe(codexDotEnvPath())
+	if !strings.Contains(raw, "TOKLESS_CODEX_API_KEY=user-key") {
+		t.Fatalf("user-edited env lost: %s", raw)
+	}
+}
+
 func TestConfigureCodexProxyRotatesManagedBearer(t *testing.T) {
 	codexProxyTestHome(t)
 	path := util.CodexPathsResolved().Config
@@ -854,7 +1157,7 @@ func opencodeProxyTestHome(t *testing.T) {
 func TestOpenCodeProxyScenarios(t *testing.T) {
 	byokSeed := `{"$schema": "https://opencode.ai/config.json", "theme": "dark", "provider": {"prov-a": {"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": "https://api.provider-a.test/v1", "apiKey": "prov-a-key"}, "models": {"m1": {"name": "M1"}}}}}`
 	cases := []proxyScenario{
-		{name: "wire installs transport plugin without rewriting BYOK", seed: byokSeed,
+		{name: "wire installs transport plugin and routes BYOK", seed: byokSeed,
 			wantChange: true, wantWired: true, wantContains: []string{
 				`"prov-a"`,
 				`"baseURL": "https://api.provider-a.test/v1"`,
@@ -1366,6 +1669,7 @@ func runProxyScenarios(t *testing.T, cases []proxyScenario,
 
 func TestAntigravityProxyLifecycle(t *testing.T) {
 	setTestHome(t)
+	seedAntigravityBinary(t)
 	envFile := antigravityEnvFile()
 
 	changed, file := ConfigureAntigravityProxy()
@@ -1413,6 +1717,7 @@ func TestAntigravityStripFenceRefusesUnterminatedBlock(t *testing.T) {
 
 func TestAntigravityProxyPreservesForeignEnv(t *testing.T) {
 	setTestHome(t)
+	seedAntigravityBinary(t)
 	envFile := antigravityEnvFile()
 	seed := "# user env\nGOOGLE_API_KEY=secret\n"
 	if err := util.WriteFile(envFile, seed); err != nil {
@@ -1458,6 +1763,7 @@ func TestAntigravityProxyDoesNotOverwriteForeignRoutes(t *testing.T) {
 
 func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	setTestHome(t)
+	seedAntigravityBinary(t)
 	t.Setenv(antigravityCloudCodeKey, "")
 	t.Setenv(antigravityProxyEnvKey, "")
 	envFile := antigravityEnvFile()
@@ -1467,18 +1773,18 @@ func TestDetectAntigravityManagedAndForeign(t *testing.T) {
 	if _, _ = ConfigureAntigravityProxy(); !AntigravityProxyWired() {
 		t.Fatal("expected wired")
 	}
-	// Configure sets process env; clear to assert file-only managed detail.
+	// Configure sets process env; launcher ownership is sufficient after clearing it.
 	t.Setenv(antigravityCloudCodeKey, "")
 	t.Setenv(antigravityProxyEnvKey, "")
 	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged {
 		t.Fatalf("managed = %+v", got)
-	} else if !strings.Contains(got.Detail, "open a new session") {
-		t.Fatalf("managed detail should note session env: %+v", got)
+	} else if !strings.Contains(got.Detail, "CLI launcher") {
+		t.Fatalf("managed detail should note launcher: %+v", got)
 	}
 	t.Setenv(antigravityCloudCodeKey, "http://127.0.0.1:8787")
 	t.Setenv(antigravityProxyEnvKey, "http://127.0.0.1:8787")
 	if got := DetectProxy("antigravity"); got.State != ProxyStateManaged ||
-		!strings.Contains(got.Detail, "session env routes") {
+		!strings.Contains(got.Detail, "CLI launcher") {
 		t.Fatalf("managed with env = %+v", got)
 	}
 	if err := util.WriteFile(envFile, "GOOGLE_GEMINI_BASE_URL=http://user.example\nCLOUD_CODE_URL=http://user.example\n"); err != nil {
@@ -2393,5 +2699,67 @@ func TestMalformedPIDLock(t *testing.T) {
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("expected old lock to be removed; remaining: %v", err)
+	}
+}
+
+func TestMixedProviderProxyKeepsDistinctUpstreams(t *testing.T) {
+	mixedProxyTestHome(t)
+	t.Setenv("OPENAI_TARGET_API_URL", "stale-openai")
+	t.Setenv("ANTHROPIC_TARGET_API_URL", "stale-anthropic")
+
+	if err := util.EnsureDir(util.CodexPathsResolved().Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(clineProvidersFile(), `{"version":1,"lastUsedProvider":"openai-compatible","providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","apiKey":"user-key","model":"user-model","baseUrl":"https://api.user.test/v1"},"tokenSource":"manual"}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(piModelsFile(), `{"providers":{"qwen":{"api":"openai-completions","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","models":[{"id":"deepseek-v4-flash"}]}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(util.KiloPathsResolved().Config, `{"provider":{"qwen":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://kilo.example/v1","apiKey":"kilo-key"},"models":{"m":{"name":"M"}}}}}`); err != nil {
+		t.Fatal(err)
+	}
+
+	if changed, _ := ConfigureClaudeProxy(); !changed || !ClaudeProxyWired() {
+		t.Fatalf("claude first-party: changed=%v wired=%v", changed, ClaudeProxyWired())
+	}
+	if changed, _ := ConfigureCodexProxy(); !changed || !CodexProxyWired() {
+		t.Fatalf("codex oauth: changed=%v wired=%v", changed, CodexProxyWired())
+	}
+	if changed, _ := ConfigureClineProxy(); !changed || !ClineProxyWired() {
+		t.Fatalf("cline byok: changed=%v wired=%v", changed, ClineProxyWired())
+	}
+	if changed, _ := ConfigurePiProxy(); !changed || !PiProxyWired() {
+		t.Fatalf("pi byok: changed=%v wired=%v", changed, PiProxyWired())
+	}
+	if changed, _ := ConfigureKiloProxy(); !changed || !KiloProxyWired() {
+		t.Fatalf("kilo byok: changed=%v wired=%v", changed, KiloProxyWired())
+	}
+
+	claudeRaw, _ := util.ReadFileSafe(util.ClaudeCodePaths().Settings)
+	if !strings.Contains(claudeRaw, `"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`) || strings.Contains(claudeRaw, headroomBaseURLHeader) {
+		t.Fatalf("claude first-party must omit %s:\n%s", headroomBaseURLHeader, claudeRaw)
+	}
+	codexRaw, _ := util.ReadFileSafe(util.CodexPathsResolved().Config)
+	if !strings.Contains(codexRaw, `requires_openai_auth = true`) || strings.Contains(codexRaw, "env_http_headers") || strings.Contains(codexRaw, headroomBaseURLHeader) {
+		t.Fatalf("codex oauth must omit %s:\n%s", headroomBaseURLHeader, codexRaw)
+	}
+	clineRaw, _ := util.ReadFileSafe(clineProvidersFile())
+	if !strings.Contains(clineRaw, `"x-headroom-base-url": "https://api.user.test"`) {
+		t.Fatalf("cline header missing:\n%s", clineRaw)
+	}
+	piRaw, _ := util.ReadFileSafe(piModelsFile())
+	if !strings.Contains(piRaw, `"x-headroom-base-url": "https://dashscope.aliyuncs.com/compatible-mode"`) {
+		t.Fatalf("pi header missing:\n%s", piRaw)
+	}
+	kiloRaw, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
+	if !strings.Contains(kiloRaw, `"x-headroom-base-url": "https://kilo.example"`) {
+		t.Fatalf("kilo header missing:\n%s", kiloRaw)
+	}
+	if os.Getenv("OPENAI_TARGET_API_URL") != "stale-openai" || os.Getenv("ANTHROPIC_TARGET_API_URL") != "stale-anthropic" {
+		t.Fatalf("process-wide targets mutated: openai=%q anthropic=%q", os.Getenv("OPENAI_TARGET_API_URL"), os.Getenv("ANTHROPIC_TARGET_API_URL"))
 	}
 }
