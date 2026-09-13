@@ -37,6 +37,13 @@ func TestTomlArrayFormat(t *testing.T) {
 	}
 }
 
+func TestTomlSingleQuotedValueUnescapesQuotes(t *testing.T) {
+	got := parseScalarFields("value = 'it''s # literal'\n").Fields["value"]
+	if got != "it's # literal" {
+		t.Fatalf("single-quoted value = %#v, want %q", got, "it's # literal")
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

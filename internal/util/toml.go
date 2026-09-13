@@ -202,7 +202,7 @@ func parseScalarFields(blockText string) *TomlBlock {
 				b.Set(key, v)
 			}
 		case strings.HasPrefix(raw, `'`) && strings.HasSuffix(raw, `'`):
-			b.Set(key, raw[1:len(raw)-1])
+			b.Set(key, strings.ReplaceAll(raw[1:len(raw)-1], "''", "'"))
 		}
 	}
 	return b
@@ -291,7 +291,7 @@ func TomlBlockField(src, header, key string) string {
 // SetTomlTopKey sets/replaces a root-level string key, placed before any [section].
 func SetTomlTopKey(src, key, value string) string {
 	line := key + ` = "` + tomlEscapeStr(value) + `"`
-	re := regexp.MustCompile(`(?m)^` + escapeRe(key) + `\s*=.*$`)
+	re := regexp.MustCompile(`(?m)^[ \t]*(?:` + escapeRe(key) + `|"` + escapeRe(key) + `"|'` + escapeRe(key) + `')[ \t]*=.*$`)
 	if re.MatchString(src) {
 		return re.ReplaceAllString(src, line)
 	}
@@ -303,7 +303,7 @@ func SetTomlTopKey(src, key, value string) string {
 
 // GetTomlTopKey reads a root-level string key's value ("" if absent).
 func GetTomlTopKey(src, key string) string {
-	re := regexp.MustCompile(`(?m)^` + escapeRe(key) + `\s*=\s*"([^"]*)"`)
+	re := regexp.MustCompile(`(?m)^[ \t]*(?:` + escapeRe(key) + `|"` + escapeRe(key) + `"|'` + escapeRe(key) + `')[ \t]*=[ \t]*"([^"]*)"`)
 	m := re.FindStringSubmatch(src)
 	if m == nil {
 		return ""
@@ -313,6 +313,6 @@ func GetTomlTopKey(src, key string) string {
 
 // RemoveTomlTopKey deletes a root-level string key line. No-op if absent.
 func RemoveTomlTopKey(src, key string) string {
-	re := regexp.MustCompile(`(?m)^` + escapeRe(key) + `\s*=.*\n?`)
+	re := regexp.MustCompile(`(?m)^[ \t]*(?:` + escapeRe(key) + `|"` + escapeRe(key) + `"|'` + escapeRe(key) + `')[ \t]*=.*\n?`)
 	return re.ReplaceAllString(src, "")
 }
