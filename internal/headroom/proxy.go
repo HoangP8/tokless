@@ -140,17 +140,20 @@ func proxyPortFromRuntime() int {
 	return ProxyPort()
 }
 
+const headroomUpstreamResolveTimeout = "8"
+
 func proxyDaemonEnv() []string {
 	blocked := map[string]bool{
-		"TOKLESS_PROXY_PROVIDER":         true,
-		"TOKLESS_HEADROOM_PROXY_PORT":    true,
-		"TOKLESS_HEADROOM_ANTHROPIC_URL": true,
-		"TOKLESS_HEADROOM_OPENAI_URL":    true,
-		"TOKLESS_HEADROOM_GEMINI_URL":    true,
-		"TOKLESS_HEADROOM_CLOUDCODE_URL": true,
-		"OPENAI_TARGET_API_URL":          true,
-		"ANTHROPIC_TARGET_API_URL":       true,
-		"GROK_MODELS_BASE_URL":           true,
+		"TOKLESS_PROXY_PROVIDER":              true,
+		"TOKLESS_HEADROOM_PROXY_PORT":         true,
+		"TOKLESS_HEADROOM_ANTHROPIC_URL":      true,
+		"TOKLESS_HEADROOM_OPENAI_URL":         true,
+		"TOKLESS_HEADROOM_GEMINI_URL":         true,
+		"TOKLESS_HEADROOM_CLOUDCODE_URL":      true,
+		"OPENAI_TARGET_API_URL":               true,
+		"ANTHROPIC_TARGET_API_URL":            true,
+		"GROK_MODELS_BASE_URL":                true,
+		"HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S": true,
 	}
 	env := os.Environ()
 	out := env[:0]
@@ -160,7 +163,11 @@ func proxyDaemonEnv() []string {
 			out = append(out, value)
 		}
 	}
-	return out
+	timeout := strings.TrimSpace(os.Getenv("HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S"))
+	if timeout == "" {
+		timeout = headroomUpstreamResolveTimeout
+	}
+	return append(out, "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S="+timeout)
 }
 
 func ResolveHeadroomBin() string {
@@ -449,6 +456,16 @@ func StartProxy() error {
 	}
 	defer release()
 	cleanupLegacyRouteState()
+	if applyCloudCodePatch() {
+		if err := stopProxySupervisorForPatch(); err != nil {
+			return fmt.Errorf("stop proxy supervisor for patch: %w", err)
+		}
+		if proxyOwnedProcessLive() || ProxyRunning() {
+			if err := stopHeadroomDaemonForHandoff(); err != nil {
+				return fmt.Errorf("restart proxy after patch: %w", err)
+			}
+		}
+	}
 	port := ProxyPort()
 	args := proxyArgs(port)
 	pidFile, _ := proxyFiles()

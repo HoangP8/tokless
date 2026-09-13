@@ -81,14 +81,20 @@ func TestRunProxyForegroundPersistsRuntimeBeforeExec(t *testing.T) {
 			}
 		}
 		foundPath := false
+		foundTimeout := false
 		for _, value := range env {
 			if value == "PATH=keep-path" {
 				foundPath = true
-				break
+			}
+			if value == "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S="+headroomUpstreamResolveTimeout {
+				foundTimeout = true
 			}
 		}
 		if !foundPath {
 			t.Fatal("PATH missing from Headroom environment")
+		}
+		if !foundTimeout {
+			t.Fatal("HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S missing from Headroom environment")
 		}
 		return errors.New("stop test exec")
 	}

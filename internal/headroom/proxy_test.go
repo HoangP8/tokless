@@ -984,6 +984,38 @@ func TestStartProxyRefusesLiveUnownedProxy(t *testing.T) {
 	}
 }
 
+func TestProxyDaemonEnvSetsResolveTimeout(t *testing.T) {
+	t.Setenv("HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S", "")
+	got := proxyDaemonEnv()
+	found := ""
+	for _, value := range got {
+		if strings.HasPrefix(value, "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S=") {
+			if found != "" {
+				t.Fatalf("duplicate resolve timeout: %q and %q", found, value)
+			}
+			found = value
+		}
+	}
+	if found != "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S="+headroomUpstreamResolveTimeout {
+		t.Fatalf("resolve timeout = %q, want %q", found, "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S="+headroomUpstreamResolveTimeout)
+	}
+
+	t.Setenv("HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S", "12")
+	got = proxyDaemonEnv()
+	found = ""
+	for _, value := range got {
+		if strings.HasPrefix(value, "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S=") {
+			if found != "" {
+				t.Fatalf("duplicate resolve timeout: %q and %q", found, value)
+			}
+			found = value
+		}
+	}
+	if found != "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S=12" {
+		t.Fatalf("resolve timeout override = %q, want HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S=12", found)
+	}
+}
+
 func TestProxyPortIgnoresInvalidEnv(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)

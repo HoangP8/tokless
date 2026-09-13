@@ -19,6 +19,13 @@ var stopProxyAutostartUnit = func() error {
 	return exec.Command("systemctl", "--user", "stop", proxyAutostartUnit).Run()
 }
 
+func stopProxySupervisorForPatch() error {
+	if !ProxyAutostartConfigured() {
+		return nil
+	}
+	return stopProxyAutostartUnit()
+}
+
 func proxyAutostartUnitPath() string {
 	cfg := os.Getenv("XDG_CONFIG_HOME")
 	if cfg == "" || !filepath.IsAbs(cfg) {

@@ -4,6 +4,8 @@ package headroom
 
 import "fmt"
 
+func stopProxySupervisorForPatch() error { return nil }
+
 func EnableProxyAutostart() error {
 	return fmt.Errorf("%w: unsupported on this OS; keeping proxy running for this session", ErrProxyAutostartUnavailable)
 }

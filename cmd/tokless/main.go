@@ -190,7 +190,7 @@ func run() int {
 	ensureProcessPath()
 	if len(os.Args) >= 2 && os.Args[1] == "__proxy-ensure" {
 		if !util.ProxyRoutingEnabled() {
-			return 0
+			return 1
 		}
 		if err := headroompkg.StartProxy(); err != nil {
 			util.L.Err(err.Error())

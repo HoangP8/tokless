@@ -38,6 +38,16 @@ func proxyStopRequested() (bool, error) {
 	return err == nil, err
 }
 
+func stopProxySupervisorForPatch() error {
+	if !ProxyAutostartConfigured() {
+		return nil
+	}
+	if err := requestProxyStop(); err != nil {
+		return err
+	}
+	return endProxyAutostartTask()
+}
+
 func RunProxyWatchdog() error {
 	if !util.ProxyRoutingEnabled() {
 		return nil

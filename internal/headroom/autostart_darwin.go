@@ -195,6 +195,13 @@ func launchctlServiceEnabled() (bool, error) {
 	return !strings.Contains(string(out), needle), nil
 }
 
+func stopProxySupervisorForPatch() error {
+	if !ProxyAutostartConfigured() {
+		return nil
+	}
+	return bootoutProxyAgent()
+}
+
 func domain() string {
 	return "gui/" + macCurrentUID()
 }
