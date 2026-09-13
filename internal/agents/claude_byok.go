@@ -204,7 +204,7 @@ func claudeRestoreBYOK(_ *util.OrderedMap, _ *util.OrderedMap) bool {
 		if !ok {
 			return false
 		}
-		if v, ok := env.Get(claudeProxyEnvKey); !ok || v != ProxyEndpointFor("claude") {
+		if v, ok := env.Get(claudeProxyEnvKey); !ok || !claudeOwnedEnvURL(v, entry) {
 			return false
 		}
 		env.Delete(claudeProxyEnvKey)
@@ -224,7 +224,7 @@ func claudeRestoreBYOK(_ *util.OrderedMap, _ *util.OrderedMap) bool {
 	if !ok {
 		return false
 	}
-	if v, ok := env.Get(claudeProxyEnvKey); !ok || v != ProxyEndpointFor("claude") {
+	if v, ok := env.Get(claudeProxyEnvKey); !ok || !claudeOwnedEnvURL(v, entry) {
 		return false
 	}
 	lines, _ := claudeCustomHeadersLines(env)
@@ -261,6 +261,24 @@ func claudeRestoreBYOK(_ *util.OrderedMap, _ *util.OrderedMap) bool {
 		return false
 	}
 	return true
+}
+
+func claudeOwnedLeftover(s string, entry proxyRouteStashEntry, current string) bool {
+	if entry.ManagedNative && sameProxyBase(s, entry.BaseURL) {
+		return true
+	}
+	return len(entry.Original) > 0 && len(entry.Managed) > 0 && current == string(entry.Managed)
+}
+
+func claudeOwnedEnvURL(v any, entry proxyRouteStashEntry) bool {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return false
+	}
+	if sameProxyBase(s, ProxyEndpointFor("claude")) {
+		return true
+	}
+	return entry.ManagedNative && sameProxyBase(s, entry.BaseURL)
 }
 
 func cloneProxyRouteStash(src map[string]proxyRouteStashEntry) map[string]proxyRouteStashEntry {

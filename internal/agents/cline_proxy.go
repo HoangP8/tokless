@@ -147,6 +147,12 @@ func ConfigureClineProxy() (bool, string) {
 	if err != nil {
 		return false, file
 	}
+	if selected, ok := cfg.Get("lastUsedProvider"); ok {
+		selectedName, isString := selected.(string)
+		if !isString || selectedName != clineProviderName {
+			return false, file
+		}
+	}
 	desired := clineDesiredProvider()
 	changed := false
 	stateContent := ""

@@ -573,13 +573,17 @@ func removeClaudeProxyLocked() bool {
 		return false
 	}
 	s, ok := v.(string)
-	if !ok || s != url {
+	if !ok || s == "" {
 		return false
 	}
-	if _, stashed := loadClaudeBYOKStashLocked(); stashed {
-		return claudeRestoreBYOK(cfg, env)
+	entry, stashed := loadClaudeBYOKStashLocked()
+	if !stashed {
+		return false
 	}
-	return false
+	if s != url && !claudeOwnedLeftover(s, entry, raw) {
+		return false
+	}
+	return claudeRestoreBYOK(cfg, env)
 }
 
 // ClaudeProxyWired reports whether ANTHROPIC_BASE_URL is set to url.

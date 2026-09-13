@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -156,8 +155,8 @@ func stripCodexRootProviderAssignments(raw string) string {
 	var out strings.Builder
 	inRoot := true
 	reHeader := regexp.MustCompile(`^[ \t]*(?:\[\[[^\]\r\n]+\]\]|\[[^\]\r\n]+\])[ \t]*(?:#.*)?$`)
-	reModel := regexp.MustCompile(`^[ \t]*model_provider[ \t]*=`)
-	reURL := regexp.MustCompile(`^[ \t]*openai_base_url[ \t]*=`)
+	reModel := regexp.MustCompile(`^[ \t]*(?:model_provider|"model_provider"|'model_provider')[ \t]*=`)
+	reURL := regexp.MustCompile(`^[ \t]*(?:openai_base_url|"openai_base_url"|'openai_base_url')[ \t]*=`)
 	for _, line := range lines {
 		noNL := strings.TrimRight(line, "\r\n")
 		if inRoot && reHeader.MatchString(noNL) {
@@ -172,13 +171,28 @@ func stripCodexRootProviderAssignments(raw string) string {
 }
 
 func codexRootValue(raw, key string) string {
-	re := regexp.MustCompile(`^[ \t]*` + regexp.QuoteMeta(key) + `[ \t]*=[ \t]*"([^"]*)"`)
+	re := regexp.MustCompile(`^[ \t]*(?:` + regexp.QuoteMeta(key) + `|"` + regexp.QuoteMeta(key) + `"|'` + regexp.QuoteMeta(key) + `')[ \t]*=[ \t]*(?:"([^"]*)"|'((?:[^']|'')*)')`)
 	for _, line := range strings.Split(raw, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "[") {
 			break
 		}
 		if m := re.FindStringSubmatch(line); m != nil {
-			return m[1]
+			if m[1] != "" {
+				return m[1]
+			}
+			return strings.ReplaceAll(m[2], "''", "'")
+		}
+	}
+	return ""
+}
+
+func codexRootAssignmentLine(raw, key string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			break
+		}
+		if regexp.MustCompile(`^[ \t]*(?:` + regexp.QuoteMeta(key) + `|"` + regexp.QuoteMeta(key) + `"|'` + regexp.QuoteMeta(key) + `')[ \t]*=`).MatchString(line) {
+			return line
 		}
 	}
 	return ""
@@ -407,14 +421,19 @@ func codexTakeoverTarget(raw string) *openCodeBYOK {
 }
 
 func codexNamedProviderBaseURL(raw, id string) string {
-	re := regexp.MustCompile(`(?s)\[model_providers\.` + regexp.QuoteMeta(id) + `\](.*?)(?:\n\[|\z)`)
-	m := re.FindStringSubmatch(raw)
-	if m == nil {
-		return ""
-	}
-	mm := regexp.MustCompile(`(?m)^\s*base_url\s*=\s*"([^"]*)"`)
-	if v := mm.FindStringSubmatch(m[1]); v != nil {
-		return v[1]
+	for _, headerID := range []string{id, strconv.Quote(id), "'" + strings.ReplaceAll(id, "'", "''") + "'"} {
+		re := regexp.MustCompile(`(?m)^\[model_providers\.` + regexp.QuoteMeta(headerID) + `\][ \t]*(?:#.*)?$([\s\S]*?)(?:\n\[|\z)`)
+		m := re.FindStringSubmatch(raw)
+		if m == nil {
+			continue
+		}
+		mm := regexp.MustCompile(`(?m)^[ \t]*(?:base_url|"base_url"|'base_url')[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)')`)
+		if v := mm.FindStringSubmatch(m[1]); v != nil {
+			if v[1] != "" {
+				return v[1]
+			}
+			return v[2]
+		}
 	}
 	return ""
 }
@@ -468,14 +487,120 @@ func codexDotEnvValuePresent(key string) (string, bool) {
 	return "", false
 }
 
-var (
-	byokProvidersOnce sync.Once
-	byokProvidersList []openCodeBYOK
-)
-
 func byokProvidersCached() []openCodeBYOK {
-	byokProvidersOnce.Do(func() { byokProvidersList = DiscoverOpenCodeBYOK() })
-	return byokProvidersList
+	providers := discoverCodexBYOK()
+	seen := make(map[string]bool, len(providers))
+	for _, provider := range providers {
+		seen[provider.ID] = true
+	}
+	for _, provider := range DiscoverOpenCodeBYOK() {
+		if !seen[provider.ID] {
+			providers = append(providers, provider)
+		}
+	}
+	return providers
+}
+
+var reCodexProviderHeader = regexp.MustCompile(`(?m)^\[model_providers\.((?:"[^"]+")|(?:'(?:[^']|'')+')|[A-Za-z0-9_-]+)\][ \t]*(?:#.*)?$`)
+
+func discoverCodexBYOK() []openCodeBYOK {
+	raw, ok := util.ReadFileSafe(util.CodexPathsResolved().Config)
+	if !ok || !codexTOMLWellFormed(raw) {
+		return nil
+	}
+	var providers []openCodeBYOK
+	for _, match := range reCodexProviderHeader.FindAllStringSubmatch(raw, -1) {
+		id := strings.Trim(match[1], `"'`)
+		if strings.HasPrefix(match[1], "'") {
+			id = strings.ReplaceAll(id, "''", "'")
+		}
+		base := codexNamedProviderField(raw, match[1], "base_url")
+		if !isAbsoluteHTTP(base) || sameProxyBase(base, ProxyEndpointFor("codex")) {
+			continue
+		}
+		envKey := codexNamedProviderField(raw, match[1], "env_key")
+		apiKey := codexNamedProviderField(raw, match[1], "api_key")
+		if envKey != "" {
+			apiKey = strings.TrimSpace(os.Getenv(envKey))
+		}
+		if apiKey == "" {
+			continue
+		}
+		providers = append(providers, openCodeBYOK{ID: id, File: util.CodexPathsResolved().Config, BaseURL: base, APIKey: apiKey})
+	}
+	return providers
+}
+
+func codexNamedProviderField(raw, headerID, key string) string {
+	header := "[model_providers." + headerID + "]"
+	start := strings.Index(raw, header)
+	if start < 0 {
+		return ""
+	}
+	block := raw[start+len(header):]
+	if next := regexp.MustCompile(`(?m)^\[`).FindStringIndex(block); next != nil {
+		block = block[:next[0]]
+	}
+	re := regexp.MustCompile(`(?m)^[ \t]*(?:` + regexp.QuoteMeta(key) + `|"` + regexp.QuoteMeta(key) + `"|'` + regexp.QuoteMeta(key) + `')[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)')`)
+	m := re.FindStringSubmatch(block)
+	if m == nil {
+		return ""
+	}
+	if m[1] != "" {
+		return m[1]
+	}
+	return m[2]
+}
+
+// codexTOMLWellFormed catches truncated strings, arrays, and inline tables
+// before regex discovery or mutation can adopt a broken config.
+func codexTOMLWellFormed(raw string) bool {
+	var stack []byte
+	inBasic, inLiteral, escaped := false, false, false
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if (strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) ||
+			(strings.HasPrefix(trimmed, "[[") && strings.HasSuffix(trimmed, "]]")) {
+			continue
+		}
+		for i := 0; i < len(line); i++ {
+			c := line[i]
+			if inBasic {
+				if escaped {
+					escaped = false
+				} else if c == '\\' {
+					escaped = true
+				} else if c == '"' {
+					inBasic = false
+				}
+				continue
+			}
+			if inLiteral {
+				if c == '\'' {
+					inLiteral = false
+				}
+				continue
+			}
+			switch c {
+			case '"':
+				inBasic = true
+			case '\'':
+				inLiteral = true
+			case '[', '{':
+				stack = append(stack, c)
+			case ']', '}':
+				if len(stack) == 0 || c == ']' && stack[len(stack)-1] != '[' || c == '}' && stack[len(stack)-1] != '{' {
+					return false
+				}
+				stack = stack[:len(stack)-1]
+			case '#':
+				for i < len(line) {
+					i++
+				}
+			}
+		}
+	}
+	return !inBasic && !inLiteral && !escaped && len(stack) == 0
 }
 
 // --- codex BYOK .env + takeover stash ---
@@ -557,9 +682,34 @@ func removeCodexByokDotEnv(b *openCodeBYOK) bool {
 	return upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true)
 }
 
+func removeCodexByokDotEnvOwned(b *openCodeBYOK, stash codexStash) bool {
+	if b == nil {
+		return false
+	}
+	var remove [][2]string
+	if !stash.EnvKeyExisted {
+		if value, present := codexDotEnvValuePresent(codexByokKeyVar); present && value != b.APIKey {
+			return false
+		}
+		remove = append(remove, [2]string{codexByokKeyVar, ""})
+	}
+	if !stash.EnvURLExisted {
+		if value, present := codexDotEnvValuePresent(codexByokURLVar); present && value != stripV1Suffix(b.BaseURL) {
+			return false
+		}
+		remove = append(remove, [2]string{codexByokURLVar, ""})
+	}
+	return len(remove) == 0 || upsertCodexDotEnv(remove, true)
+}
+
 type codexStash struct {
 	ProviderID    string `json:"provider_id"`
 	OpenAIBaseURL string `json:"openai_base_url,omitempty"`
+	Byok          bool   `json:"byok,omitempty"`
+	EnvKeyExisted bool   `json:"env_key_existed,omitempty"`
+	EnvURLExisted bool   `json:"env_url_existed,omitempty"`
+	ProviderLine  string `json:"provider_line,omitempty"`
+	URLLine       string `json:"url_line,omitempty"`
 }
 
 func codexStashPath() string {
@@ -572,7 +722,7 @@ func loadCodexStash() (codexStash, bool) {
 		return codexStash{}, true
 	}
 	var s codexStash
-	if json.Unmarshal([]byte(raw), &s) != nil || s.ProviderID == "" {
+	if json.Unmarshal([]byte(raw), &s) != nil || (s.ProviderID == "" && !s.Byok) {
 		return codexStash{}, false
 	}
 	return s, true
@@ -621,19 +771,42 @@ func ConfigureCodexProxy() (changed bool, file string) {
 	dotEnvRaw, dotEnvExisted := util.ReadFileSafe(dotEnvPath)
 	tookOver := false
 	stashRaw, stashExists := util.ReadFileSafe(codexStashPath())
+	stashCreated := false
 	if !codexProxyWritable(raw, endpoint) {
 		takeover := codexTakeoverTarget(raw)
 		if takeover == nil {
 			return false, p.Config
 		}
+		_, keyExisted := codexDotEnvValuePresent(codexByokKeyVar)
+		_, urlExisted := codexDotEnvValuePresent(codexByokURLVar)
 		if !saveCodexStash(codexStash{
 			ProviderID:    codexRootValue(raw, "model_provider"),
 			OpenAIBaseURL: codexRootValue(raw, "openai_base_url"),
+			Byok:          true,
+			EnvKeyExisted: keyExisted,
+			EnvURLExisted: urlExisted,
+			ProviderLine:  codexRootAssignmentLine(raw, "model_provider"),
+			URLLine:       codexRootAssignmentLine(raw, "openai_base_url"),
 		}) {
 			return false, p.Config
 		}
+		stashCreated = true
 		byok = takeover
 		tookOver = true
+	}
+	if byok != nil && !tookOver {
+		if stashExists {
+			if _, valid := loadCodexStash(); !valid {
+				return false, p.Config
+			}
+		} else {
+			_, keyExisted := codexDotEnvValuePresent(codexByokKeyVar)
+			_, urlExisted := codexDotEnvValuePresent(codexByokURLVar)
+			if !saveCodexStash(codexStash{Byok: true, EnvKeyExisted: keyExisted, EnvURLExisted: urlExisted}) {
+				return false, p.Config
+			}
+			stashCreated = true
+		}
 	}
 	var rootExtras []string
 	original := raw
@@ -657,10 +830,13 @@ func ConfigureCodexProxy() (changed bool, file string) {
 		next = codexInjectRootExtras(next, rootExtras)
 	}
 	if next == original {
+		if stashCreated {
+			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
+		}
 		return false, p.Config
 	}
 	if util.WriteFile(p.Config, next) != nil {
-		if tookOver {
+		if stashCreated {
 			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
 		}
 		return false, p.Config
@@ -670,7 +846,7 @@ func ConfigureCodexProxy() (changed bool, file string) {
 			return false, p.Config
 		}
 		_ = restoreCodexConfig(dotEnvPath, dotEnvRaw, dotEnvExisted)
-		if tookOver {
+		if stashCreated {
 			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
 		}
 		return false, p.Config
@@ -693,6 +869,9 @@ func RemoveCodexProxy() bool {
 	}
 	byok := codexPickBYOK(raw)
 	byokProxy := strings.Contains(codexProviderBlock(raw), "env_http_headers")
+	if byokProxy && byok == nil {
+		byok = &openCodeBYOK{}
+	}
 	next := raw
 	if codexMarkedCurrentProxy(next, endpoint) || codexMarkedLegacyBearerProxy(next, endpoint) {
 		if codexMarkedCurrentProxy(next, endpoint) {
@@ -717,8 +896,14 @@ func RemoveCodexProxy() bool {
 	}
 	if stash.ProviderID != "" {
 		next = util.SetTomlTopKey(next, "model_provider", stash.ProviderID)
+		if stash.ProviderLine != "" {
+			next = restoreCodexRootAssignmentLine(next, "model_provider", stash.ProviderLine)
+		}
 		if stash.OpenAIBaseURL != "" {
 			next = util.SetTomlTopKey(next, "openai_base_url", stash.OpenAIBaseURL)
+			if stash.URLLine != "" {
+				next = restoreCodexRootAssignmentLine(next, "openai_base_url", stash.URLLine)
+			}
 		} else {
 			next = util.RemoveTomlTopKey(next, "openai_base_url")
 		}
@@ -735,18 +920,26 @@ func RemoveCodexProxy() bool {
 	if util.WriteFile(p.Config, next) != nil {
 		return false
 	}
-	if byokProxy && !removeCodexByokDotEnv(byok) {
-		_ = restoreCodexConfig(p.Config, raw, true)
+	if byokProxy && ((stash.Byok && !removeCodexByokDotEnvOwned(byok, stash)) || (!stash.Byok && !removeCodexByokDotEnv(byok))) {
+		if restoreCodexConfig(p.Config, raw, true) != nil {
+			return false
+		}
 		return false
 	}
-	if stash.ProviderID != "" {
+	if stash.ProviderID != "" || stash.Byok {
 		if err := clearCodexStash(); err != nil {
-			_ = restoreCodexConfig(p.Config, raw, true)
-			_ = restoreCodexConfig(dotEnvPath, dotEnvRaw, dotEnvExisted)
+			if restoreCodexConfig(p.Config, raw, true) != nil || restoreCodexConfig(dotEnvPath, dotEnvRaw, dotEnvExisted) != nil {
+				return false
+			}
 			return false
 		}
 	}
 	return true
+}
+
+func restoreCodexRootAssignmentLine(raw, key, line string) string {
+	re := regexp.MustCompile(`(?m)^[ \t]*(?:` + regexp.QuoteMeta(key) + `|"` + regexp.QuoteMeta(key) + `"|'` + regexp.QuoteMeta(key) + `')[ \t]*=.*$`)
+	return re.ReplaceAllString(raw, line)
 }
 
 func codexProxySection(endpoint string, byok *openCodeBYOK) string {
