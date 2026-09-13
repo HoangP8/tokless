@@ -274,6 +274,7 @@ func antigravityWriteWindowsUserEnv() (bool, bool) {
 	u := antigravityURL()
 	ps := `$ErrorActionPreference='Stop'
 $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+if ($null -eq $k) { $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment') }
 $want = @{
   '` + antigravityProxyEnvKey + `' = '` + u + `'
   '` + antigravityCloudCodeKey + `' = '` + u + `'
@@ -324,6 +325,7 @@ func antigravityClearWindowsUserEnv() bool {
 	u := antigravityURL()
 	ps := `$ErrorActionPreference='Stop'
 $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+if ($null -eq $k) { exit 0 }
 $names = @('` + antigravityProxyEnvKey + `','` + antigravityCloudCodeKey + `')
 $changed = $false
 $marker = $k.GetValue('` + antigravityWindowsMarker + `', $null)
@@ -353,6 +355,7 @@ func ConfigureAntigravityProxy() (changed bool, file string) {
 		return false, file
 	}
 	if !antigravityProcessEnvCompatible() || !antigravityWindowsUserEnvCompatible() ||
+		!antigravityShimCompatible() || !antigravityIDECompatible() ||
 		!antigravityCanReplace(raw, antigravityProxyEnvKey, antigravityURL()) ||
 		!antigravityCanReplace(raw, antigravityCloudCodeKey, antigravityURL()) {
 		return false, file
@@ -374,8 +377,36 @@ func ConfigureAntigravityProxy() (changed bool, file string) {
 		}
 		return false, file
 	}
+	ideWasWired := AntigravityIDEProxyWired()
+	ideChanged, err := configureAntigravityIDE()
+	if err != nil {
+		if winChanged {
+			_ = antigravityClearWindowsUserEnv()
+		}
+		if existed {
+			_ = util.WriteFile(file, raw)
+		} else {
+			_ = os.Remove(file)
+		}
+		return false, file
+	}
+	shimChanged, err := installAntigravityShim()
+	if err != nil {
+		if ideChanged && !ideWasWired {
+			_ = removeAntigravityIDE()
+		}
+		if winChanged {
+			_ = antigravityClearWindowsUserEnv()
+		}
+		if existed {
+			_ = util.WriteFile(file, raw)
+		} else {
+			_ = os.Remove(file)
+		}
+		return false, file
+	}
 	antigravityApplyProcessEnv()
-	return dotChanged || winChanged, file
+	return dotChanged || winChanged || ideChanged || shimChanged, file
 }
 
 // RemoveAntigravityProxy deletes tokless-owned proxy config when it still matches.
@@ -384,6 +415,12 @@ func RemoveAntigravityProxy() bool {
 	raw, ok := util.ReadFileSafe(file)
 	url := antigravityURL()
 	removed := false
+	if removeAntigravityShim() {
+		removed = true
+	}
+	if removeAntigravityIDE() {
+		removed = true
+	}
 	if ok && antigravityEnvValue(raw, antigravityProxyEnvKey) == url && antigravityEnvValue(raw, antigravityCloudCodeKey) == url {
 		next := antigravityStripFence(raw)
 		if next != raw {
@@ -405,14 +442,37 @@ func RemoveAntigravityProxy() bool {
 	return removed
 }
 
-// AntigravityProxyWired reports whether .env points at headroom.
+// AntigravityProxyWired reports whether every installed Antigravity surface is managed.
 func AntigravityProxyWired() bool {
 	raw, ok := util.ReadFileSafe(antigravityEnvFile())
 	if !ok {
 		return false
 	}
-	return antigravityEnvValue(raw, antigravityProxyEnvKey) == antigravityURL() &&
-		antigravityEnvValue(raw, antigravityCloudCodeKey) == antigravityURL()
+	if antigravityEnvValue(raw, antigravityProxyEnvKey) != antigravityURL() ||
+		antigravityEnvValue(raw, antigravityCloudCodeKey) != antigravityURL() {
+		return false
+	}
+	hasSurface := false
+	if antigravityShimApplicable() {
+		hasSurface = true
+		if !AntigravityShimWired() {
+			return false
+		}
+	}
+	if antigravityIDEApplicable() {
+		hasSurface = true
+		if !AntigravityIDEProxyWired() {
+			return false
+		}
+	}
+	if util.IsWin {
+		hasSurface = true
+	}
+	if !hasSurface {
+		// Config-only installs have no launcher or IDE settings surface.
+		hasSurface = true
+	}
+	return hasSurface
 }
 
 // AntigravityProxySessionReady is true when process env will route agy through headroom.
