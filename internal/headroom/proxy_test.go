@@ -30,8 +30,10 @@ func isolateProxyOps(t *testing.T) {
 	oldSleep := proxySleep
 	oldNow := proxyNow
 	oldCopilotProbe := copilotProxyLiveProbe
+	oldGrokProbe := grokProxyLiveZProbe
 	t.Cleanup(func() {
 		proxyLiveZProbe, proxySpawn = oldProbe, oldSpawn
+		grokProxyLiveZProbe = oldGrokProbe
 		proxyIdentity, proxyKill = oldIdentity, oldKill
 		proxyWrite, proxyGone = oldWrite, oldGone
 		proxyWait = oldWait
@@ -39,6 +41,7 @@ func isolateProxyOps(t *testing.T) {
 		proxyNow = oldNow
 		copilotProxyLiveProbe = oldCopilotProbe
 		util.SetHomeOverride("")
+		activeBYOKRoutes.Store(nil)
 	})
 }
 
@@ -399,7 +402,7 @@ func TestStartProxyRecordWriteFailureRollsBack(t *testing.T) {
 	proxyLiveZProbe = func(time.Duration) bool { return false }
 	proxySpawn = func(cmd *exec.Cmd) error { cmd.Process = &os.Process{Pid: 5252}; return nil }
 	proxyIdentity = func(int) (processIdentityInfo, error) {
-		return processIdentityInfo{Executable: bin, Args: []string{"proxy", "--port", "8787", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}, Start: "start"}, nil
+		return processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}, nil
 	}
 	proxyWrite = func(string, proxyOwnership) error { return errors.New("disk full") }
 	proxyGone = func(*os.Process) bool { return true }
@@ -567,7 +570,7 @@ func TestStartProxyReadinessTimeoutRollsBack(t *testing.T) {
 	proxyIdentity = func(int) (processIdentityInfo, error) {
 		return processIdentityInfo{
 			Executable: bin,
-			Args:       []string{"proxy", "--port", "8787", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"},
+			Args:       proxyArgs(8787),
 			Start:      "start",
 		}, nil
 	}
@@ -659,7 +662,7 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 		cmd.Process = &os.Process{Pid: 5254}
 		return nil
 	}
-	args := []string{"proxy", "--port", "8787", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}
+	args := proxyArgs(8787)
 	launchIdentity := processIdentityInfo{Executable: bin, Args: args, Start: "start"}
 	identityCalls := 0
 	proxyIdentity = func(int) (processIdentityInfo, error) {
@@ -1042,7 +1045,7 @@ func TestProxyUpstreamURLsDefaultsAndEnv(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "")
 	t.Setenv("TOKLESS_HEADROOM_OPENAI_URL", "")
 	a, o := ProxyUpstreamURLs()
-	if a != "https://api.anthropic.com" || o != "https://api.openai.com" {
+	if a != defaultAnthropicTargetURL || o != defaultOpenAITargetURL {
 		t.Fatalf("defaults = %q, %q", a, o)
 	}
 	t.Setenv("TOKLESS_HEADROOM_ANTHROPIC_URL", "https://custom.anthropic")
@@ -1104,5 +1107,321 @@ func TestResolveHeadroomBinPrefersManaged(t *testing.T) {
 	_ = os.Remove(bin)
 	if got := ResolveHeadroomBin(); got != "" {
 		t.Fatalf("ResolveHeadroomBin without managed bin = %q, want empty", got)
+	}
+}
+
+func TestProxyDaemonEnvIncludesAllowedBaseURLs(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveBYOKRoutes([]util.BYOKRoute{
+		{ID: "opencode:test", Token: "testtoken", Protocol: "openai-chat", Upstream: "https://api.testprovider.com/v1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	env := proxyDaemonEnv()
+	found := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "HEADROOM_ALLOWED_BASE_URLS=") {
+			found = true
+			if !strings.Contains(kv, "https://api.testprovider.com") {
+				t.Fatalf("HEADROOM_ALLOWED_BASE_URLS missing upstream exact origin: %s", kv)
+			}
+			if !strings.Contains(kv, "http://127.0.0.1:18787") {
+				t.Fatalf("HEADROOM_ALLOWED_BASE_URLS missing byok gateway exact origin: %s", kv)
+			}
+			parts := strings.Split(strings.TrimPrefix(kv, "HEADROOM_ALLOWED_BASE_URLS="), ",")
+			for _, part := range parts {
+				if part == "127.0.0.1" || part == "localhost" {
+					t.Fatalf("HEADROOM_ALLOWED_BASE_URLS contains over-permissive bare host: %s", part)
+				}
+				if part == "api.testprovider.com" {
+					t.Fatalf("HEADROOM_ALLOWED_BASE_URLS contains bare hostname without scheme: %s", part)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("HEADROOM_ALLOWED_BASE_URLS not in proxyDaemonEnv: %v", env)
+	}
+}
+
+func TestHeadroomUpstreamGuardExactOriginAndSlowDNSBypass(t *testing.T) {
+	python := filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "bin", "python3")
+	if _, err := os.Stat(python); err != nil {
+		t.Skip("headroom python not found")
+	}
+	script := `
+import os, sys
+from concurrent.futures import TimeoutError
+
+os.environ["HEADROOM_ALLOWED_BASE_URLS"] = "http://127.0.0.1:18787,http://localhost:18787,https://api.customprovider.ai"
+from headroom.proxy.upstream_guard import is_safe_upstream_url, _allowlisted_destinations
+import headroom.proxy.upstream_guard as guard
+
+# Mock resolver pool so any DNS call raises TimeoutError (simulating 6s timeout)
+class SlowResolver:
+    def submit(self, *args, **kwargs):
+        class Future:
+            def result(self, timeout=None):
+                raise TimeoutError("DNS resolution timed out")
+        return Future()
+
+guard._RESOLVER_POOL = SlowResolver()
+
+# 1. Allowlisted exact origins MUST succeed without hitting resolver
+assert is_safe_upstream_url("https://api.customprovider.ai") is True, "exact origin https://api.customprovider.ai must pass"
+assert is_safe_upstream_url("https://api.customprovider.ai/api/v1/chat/completions") is True, "subpath must pass"
+assert is_safe_upstream_url("http://127.0.0.1:18787") is True, "gateway loopback must pass"
+
+# 2. Insecure or wrong-port variants MUST be rejected
+assert is_safe_upstream_url("http://api.customprovider.ai") is False, "insecure http variant must be rejected"
+assert is_safe_upstream_url("http://127.0.0.1:22") is False, "arbitrary loopback port must be rejected"
+assert is_safe_upstream_url("http://127.0.0.1:80") is False, "arbitrary loopback port 80 must be rejected"
+
+# 3. Unallowlisted host must hit resolver and fail closed when DNS times out
+assert is_safe_upstream_url("https://unallowlisted.slowdns.example.com") is False, "unallowlisted slow DNS host must fail closed"
+
+print("PASS: Upstream guard exact origin and slow DNS bypass verified")
+`
+	cmd := exec.Command(python, "-c", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python upstream guard test failed: %v\noutput:\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "PASS: Upstream guard exact origin and slow DNS bypass verified") {
+		t.Fatalf("unexpected output: %s", string(out))
+	}
+}
+
+func TestStartProxyRestartsWhenAllowedBaseURLsChange(t *testing.T) {
+	isolateProxyOps(t)
+	byokGatewayState.Lock()
+	oldListener := byokGatewayState.listener
+	byokGatewayState.listener = &net.TCPListener{}
+	byokGatewayState.Unlock()
+	t.Cleanup(func() {
+		byokGatewayState.Lock()
+		byokGatewayState.listener = oldListener
+		byokGatewayState.Unlock()
+	})
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	args := proxyArgs(8787)
+	oldAllowed := "http://127.0.0.1:18787,http://localhost:18787,https://old.provider.com"
+	if err := writeProxyOwnership(pidFile, proxyOwnership{
+		PID:             5370,
+		Executable:      bin,
+		Args:            args,
+		Start:           "start",
+		AllowedBaseURLs: oldAllowed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Add a new route so headroomAllowedBaseURLs() differs from oldAllowed
+	if err := util.SaveBYOKRoutes([]util.BYOKRoute{
+		{ID: "opencode:new", Token: "newtoken", Protocol: "openai-chat", Upstream: "https://new.provider.com/v1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	live := true
+	killed, spawned, wrote := false, false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case os.Getpid(), 5370, 5371:
+			return processIdentityInfo{Executable: bin, Args: args, Start: "start"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 5370 {
+			killed = true
+			live = false
+			return nil
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		live = true
+		spawned = true
+		cmd.Process = &os.Process{Pid: 5371}
+		return nil
+	}
+	proxyWrite = func(path string, record proxyOwnership) error {
+		wrote = true
+		if !strings.Contains(record.AllowedBaseURLs, "https://new.provider.com") {
+			t.Fatalf("restarted proxy recorded stale allowed urls: %s", record.AllowedBaseURLs)
+		}
+		return nil
+	}
+	if err := StartProxy(); err != nil {
+		t.Fatalf("StartProxy with updated allowlist failed: %v", err)
+	}
+	if !killed {
+		t.Fatalf("expected old daemon to be killed on allowlist update")
+	}
+	if !spawned {
+		t.Fatalf("expected new daemon to be spawned with updated allowlist")
+	}
+	if !wrote {
+		t.Fatalf("expected new ownership record to be written with updated allowlist")
+	}
+}
+
+func TestCanonicalAllowlistOriginRejectsInvalidEntries(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{"https://api.customprovider.ai", "https://api.customprovider.ai", false},
+		{"https://api.customprovider.ai:443", "https://api.customprovider.ai", false},
+		{"HTTPS://API.CustomProvider.AI:443/", "https://api.customprovider.ai", false},
+		{"http://127.0.0.1:18787", "http://127.0.0.1:18787", false},
+		{"http://localhost:80", "http://localhost", false},
+		{"http://localhost:8080", "http://localhost:8080", false},
+		{"ws://127.0.0.1:80", "ws://127.0.0.1", false},
+		{"ws://127.0.0.1:8080", "ws://127.0.0.1:8080", false},
+		{"wss://api.customprovider.ai:443", "wss://api.customprovider.ai", false},
+		{"wss://api.customprovider.ai:9443", "wss://api.customprovider.ai:9443", false},
+		{"http://[::1]:8080", "http://[::1]:8080", false},
+		{"http://[::1]:80", "http://[::1]", false},
+		{"https://[2001:db8::1]:443", "https://[2001:db8::1]", false},
+		{"https://[2001:db8::1]:8443", "https://[2001:db8::1]:8443", false},
+		{"https://user:pass@api.customprovider.ai", "", true},
+		{"http://user@127.0.0.1:18787", "", true},
+		{"https://api.customprovider.ai?param=1", "", true},
+		{"https://api.customprovider.ai#section", "", true},
+		{"https://api.customprovider.ai/other/subpath", "", true},
+		{"bare-host.com", "", true},
+		{"ftp://example.com", "", true},
+		{"file:///local/path", "", true},
+		{"https://", "", true},
+		{"", "", true},
+		{"://bad-url", "", true},
+		{"https://api.customprovider.ai:", "", true},
+		{"https://api.customprovider.ai:0", "", true},
+		{"https://api.customprovider.ai:65536", "", true},
+		{"https://api.customprovider.ai:invalidport", "", true},
+		{"http://[::1%eth0]:8080", "", true},
+		{"http://[invalid-ipv6]:8080", "", true},
+		{"http://host with spaces:8080", "", true},
+	}
+	for _, tc := range cases {
+		got, err := canonicalAllowlistOrigin(tc.input)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("canonicalAllowlistOrigin(%q) err = %v, wantErr = %v", tc.input, err, tc.wantErr)
+		}
+		if got != tc.want {
+			t.Errorf("canonicalAllowlistOrigin(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestStartProxyFailsClosedOnCorruptRouteRegistry(t *testing.T) {
+	isolateProxyOps(t)
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	routesFile := filepath.Join(home, ".local", "share", "tokless", "headroom", "byok.routes.json")
+	if err := os.MkdirAll(filepath.Dir(routesFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write invalid corrupted JSON
+	if err := os.WriteFile(routesFile, []byte("{corrupt-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := StartProxy()
+	if err == nil || !strings.Contains(err.Error(), "failed to parse configured BYOK route registry") {
+		t.Fatalf("StartProxy on corrupt routes want fail-closed error, got: %v", err)
+	}
+}
+
+func TestStartProxyRestartsSupervisedDaemonWhenAllowlistChanges(t *testing.T) {
+	isolateProxyOps(t)
+	byokGatewayState.Lock()
+	oldListener := byokGatewayState.listener
+	byokGatewayState.listener = &net.TCPListener{}
+	byokGatewayState.Unlock()
+	t.Cleanup(func() {
+		byokGatewayState.Lock()
+		byokGatewayState.listener = oldListener
+		byokGatewayState.Unlock()
+	})
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	bin := proxyTestBin(t)
+	args := proxyArgs(8787)
+	oldAllowed := "http://127.0.0.1:18787,http://localhost:18787,https://old.provider.com"
+
+	// Supervised state with old allowlist
+	if err := writeProxySupervisedState(5380, bin, args, nil, "start"); err != nil {
+		t.Fatal(err)
+	}
+	// Overwrite supervised state file with oldAllowed explicitly
+	supFile := proxySupervisedFile()
+	raw, _ := os.ReadFile(supFile)
+	var st proxySupervisedState
+	_ = json.Unmarshal(raw, &st)
+	st.AllowedBaseURLs = oldAllowed
+	b, _ := json.Marshal(st)
+	_ = os.WriteFile(supFile, b, 0o600)
+
+	// Add new route
+	if err := util.SaveBYOKRoutes([]util.BYOKRoute{
+		{ID: "opencode:supervised-test", Token: "tok", Protocol: "openai-chat", Upstream: "https://supervised.provider.com/v1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	live := true
+	killed, spawned, wrote := false, false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case os.Getpid(), 5380:
+			return processIdentityInfo{Executable: bin, Args: args, Start: "start"}, nil
+		case 5381:
+			return processIdentityInfo{Executable: bin, Args: args, Start: "start"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 5380 {
+			killed = true
+			live = false
+			return nil
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		live = true
+		spawned = true
+		cmd.Process = &os.Process{Pid: 5381}
+		return nil
+	}
+	proxyWrite = func(path string, record proxyOwnership) error {
+		wrote = true
+		return nil
+	}
+
+	if err := StartProxy(); err != nil {
+		t.Fatalf("StartProxy with updated allowlist on supervised daemon failed: %v", err)
+	}
+	if !killed {
+		t.Fatalf("expected old supervised daemon to be stopped on allowlist update")
+	}
+	if !spawned {
+		t.Fatalf("expected new daemon to be spawned with updated allowlist")
+	}
+	if !wrote {
+		t.Fatalf("expected new ownership record to be written with updated allowlist")
 	}
 }

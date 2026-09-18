@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,28 +19,32 @@ import (
 )
 
 const (
-	proxyReadyTimeout    = 15 * time.Second
-	proxyStopTimeout     = 5 * time.Second
-	proxyProbeTimeout    = 2 * time.Second
-	proxyPollInterval    = 300 * time.Millisecond
-	proxyIdentityTimeout = 2 * time.Second
-	proxyStartLockWait   = 30 * time.Second
-	proxyStartLockStale  = 60 * time.Second
+	proxyReadyTimeout         = 15 * time.Second
+	proxyStopTimeout          = 5 * time.Second
+	proxyProbeTimeout         = 2 * time.Second
+	proxyPollInterval         = 300 * time.Millisecond
+	proxyIdentityTimeout      = 2 * time.Second
+	proxyStartLockWait        = 30 * time.Second
+	proxyStartLockStale       = 60 * time.Second
+	defaultAnthropicTargetURL = "https://api.anthropic.com"
+	defaultOpenAITargetURL    = "https://api.openai.com"
 )
 
 type proxyOwnership struct {
-	PID        int      `json:"pid"`
-	Executable string   `json:"executable"`
-	Args       []string `json:"args"`
-	Start      string   `json:"start_fingerprint"`
+	PID             int      `json:"pid"`
+	Executable      string   `json:"executable"`
+	Args            []string `json:"args"`
+	Start           string   `json:"start_fingerprint"`
+	AllowedBaseURLs string   `json:"allowed_base_urls,omitempty"`
 }
 
 type proxySupervisedState struct {
-	PID         int      `json:"pid"`
-	Executable  string   `json:"executable"`
-	Args        []string `json:"args"`
-	Start       string   `json:"start_fingerprint"`
-	ManagerArgs []string `json:"manager_args,omitempty"`
+	PID             int      `json:"pid"`
+	Executable      string   `json:"executable"`
+	Args            []string `json:"args"`
+	Start           string   `json:"start_fingerprint"`
+	AllowedBaseURLs string   `json:"allowed_base_urls,omitempty"`
+	ManagerArgs     []string `json:"manager_args,omitempty"`
 }
 
 var (
@@ -58,7 +65,7 @@ func ProxyOpenAIURL() string { return util.HeadroomProxyOpenAIURL() }
 
 // realUpstreamURLs are the provider hosts Headroom should reach.
 func realUpstreamURLs() (anthropic, openai string) {
-	anthropic, openai = "https://api.anthropic.com", "https://api.openai.com"
+	anthropic, openai = defaultAnthropicTargetURL, defaultOpenAITargetURL
 	if v, set := os.LookupEnv("TOKLESS_HEADROOM_ANTHROPIC_URL"); set {
 		if strings.TrimSpace(v) != "" {
 			anthropic = strings.TrimSpace(v)
@@ -154,6 +161,7 @@ func proxyDaemonEnv() []string {
 		"ANTHROPIC_TARGET_API_URL":            true,
 		"GROK_MODELS_BASE_URL":                true,
 		"HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S": true,
+		"HEADROOM_ALLOWED_BASE_URLS":          true,
 	}
 	env := os.Environ()
 	out := env[:0]
@@ -167,7 +175,138 @@ func proxyDaemonEnv() []string {
 	if timeout == "" {
 		timeout = headroomUpstreamResolveTimeout
 	}
-	return append(out, "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S="+timeout)
+	out = append(out, "HEADROOM_UPSTREAM_RESOLVE_TIMEOUT_S="+timeout)
+	if allowed := headroomAllowedBaseURLs(); allowed != "" {
+		out = append(out, "HEADROOM_ALLOWED_BASE_URLS="+allowed)
+	}
+	return out
+}
+
+func canonicalAllowlistOrigin(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("empty origin")
+	}
+	if !strings.Contains(raw, "://") {
+		return "", fmt.Errorf("origin missing scheme: %s", raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("origin must not contain userinfo: %s", raw)
+	}
+	if u.RawQuery != "" {
+		return "", fmt.Errorf("origin must not contain query string: %s", raw)
+	}
+	if u.Fragment != "" {
+		return "", fmt.Errorf("origin must not contain fragment: %s", raw)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", fmt.Errorf("origin must not contain path: %s", raw)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" && scheme != "ws" && scheme != "wss" {
+		return "", fmt.Errorf("unsupported scheme: %s", scheme)
+	}
+	host := u.Host
+	if strings.HasSuffix(host, ":") {
+		return "", fmt.Errorf("origin has empty port: %s", raw)
+	}
+	hostname := strings.ToLower(u.Hostname())
+	if hostname == "" {
+		return "", fmt.Errorf("missing host in origin: %s", raw)
+	}
+	if strings.Contains(hostname, "%") {
+		return "", fmt.Errorf("IPv6 zone identifiers not allowed: %s", raw)
+	}
+	if strings.ContainsAny(hostname, " \t\r\n") {
+		return "", fmt.Errorf("host contains whitespace: %s", raw)
+	}
+	if strings.HasPrefix(u.Host, "[") || strings.Contains(u.Host, "]") {
+		if !strings.HasPrefix(u.Host, "[") || !strings.Contains(u.Host, "]") {
+			return "", fmt.Errorf("malformed IPv6 literal in origin: %s", raw)
+		}
+		if ip := net.ParseIP(hostname); ip == nil || ip.To4() != nil {
+			return "", fmt.Errorf("invalid IPv6 address: %s", raw)
+		}
+	} else if strings.Contains(hostname, ":") {
+		return "", fmt.Errorf("invalid colon in hostname: %s", raw)
+	}
+	port := u.Port()
+	if port != "" {
+		p, err := strconv.Atoi(port)
+		if err != nil || p <= 0 || p > 65535 {
+			return "", fmt.Errorf("invalid port in origin: %s", raw)
+		}
+	}
+	if port == "" || (scheme == "http" && port == "80") || (scheme == "https" && port == "443") || (scheme == "ws" && port == "80") || (scheme == "wss" && port == "443") {
+		if strings.Contains(hostname, ":") {
+			return fmt.Sprintf("%s://[%s]", scheme, hostname), nil
+		}
+		return fmt.Sprintf("%s://%s", scheme, hostname), nil
+	}
+	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(hostname, port)), nil
+}
+
+func headroomAllowedBaseURLs() string {
+	allowed, _ := headroomAllowedBaseURLsChecked()
+	return allowed
+}
+
+func headroomAllowedBaseURLsChecked() (string, error) {
+	allowed := make(map[string]struct{})
+	if existing := strings.TrimSpace(os.Getenv("HEADROOM_ALLOWED_BASE_URLS")); existing != "" {
+		for _, part := range strings.Split(existing, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			canon, err := canonicalAllowlistOrigin(part)
+			if err != nil {
+				return "", fmt.Errorf("invalid HEADROOM_ALLOWED_BASE_URLS entry %q: %w", part, err)
+			}
+			allowed[canon] = struct{}{}
+		}
+	}
+	portStr := strconv.Itoa(util.BYOKGatewayPort())
+	for _, origin := range []string{
+		"http://127.0.0.1:" + portStr,
+		"http://localhost:" + portStr,
+	} {
+		if canon, err := canonicalAllowlistOrigin(origin); err == nil {
+			allowed[canon] = struct{}{}
+		}
+	}
+	routes, err := util.ReadBYOKRoutes()
+	if err != nil {
+		util.L.Warn("reading BYOK routes for allowlist: " + err.Error())
+		routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
+		if util.Exists(routesFile) {
+			return "", fmt.Errorf("failed to parse configured BYOK route registry: %w", err)
+		}
+	}
+	for _, r := range routes {
+		if r.Upstream != "" {
+			if u, err := url.Parse(r.Upstream); err == nil && u.Scheme != "" && u.Host != "" {
+				originRaw := fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+				if canon, err := canonicalAllowlistOrigin(originRaw); err == nil {
+					allowed[canon] = struct{}{}
+				} else {
+					util.L.Warn("ignoring invalid BYOK upstream origin: " + r.Upstream)
+				}
+			} else {
+				util.L.Warn("ignoring unparseable BYOK upstream: " + r.Upstream)
+			}
+		}
+	}
+	keys := make([]string, 0, len(allowed))
+	for k := range allowed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ","), nil
 }
 
 func ResolveHeadroomBin() string {
@@ -249,7 +388,14 @@ func proxySupervisedFile() string {
 }
 
 func writeProxySupervisedState(pid int, bin string, args, managerArgs []string, start string) error {
-	data, err := json.Marshal(proxySupervisedState{PID: pid, Executable: bin, Args: args, Start: start, ManagerArgs: managerArgs})
+	data, err := json.Marshal(proxySupervisedState{
+		PID:             pid,
+		Executable:      bin,
+		Args:            args,
+		Start:           start,
+		AllowedBaseURLs: headroomAllowedBaseURLs(),
+		ManagerArgs:     managerArgs,
+	})
 	if err != nil {
 		return err
 	}
@@ -422,6 +568,33 @@ func proxyArgsMatchRecorded(port int) bool {
 	return len(record.Args) > len(want) && equalStrings(record.Args[len(record.Args)-len(want):], want)
 }
 
+func proxyAllowedBaseURLsMatchRecorded() bool {
+	pidFile, _ := proxyFiles()
+	currentAllowed, err := headroomAllowedBaseURLsChecked()
+	if err != nil {
+		return false
+	}
+	if raw, ok := util.ReadFileSafe(pidFile); ok {
+		var record proxyOwnership
+		if err := json.Unmarshal([]byte(raw), &record); err != nil {
+			return false
+		}
+		if record.AllowedBaseURLs == "" || record.AllowedBaseURLs != currentAllowed {
+			return false
+		}
+	}
+	if raw, ok := util.ReadFileSafe(proxySupervisedFile()); ok {
+		var state proxySupervisedState
+		if err := json.Unmarshal([]byte(raw), &state); err != nil {
+			return false
+		}
+		if state.AllowedBaseURLs == "" || state.AllowedBaseURLs != currentAllowed {
+			return false
+		}
+	}
+	return true
+}
+
 func proxyOwnedProcessLive() bool {
 	pidFile, _ := proxyFiles()
 	if raw, ok := util.ReadFileSafe(pidFile); ok {
@@ -450,11 +623,28 @@ func proxyOwnedProcessLive() bool {
 }
 
 func StartProxy() error {
+	if _, err := headroomAllowedBaseURLsChecked(); err != nil {
+		return fmt.Errorf("headroom proxy allowlist configuration: %w", err)
+	}
 	release, err := acquireProxyStartLock(proxyNow)
 	if err != nil {
 		return fmt.Errorf("headroom proxy start: %w", err)
 	}
 	defer release()
+	byokNeeded := BYOKRoutesConfigured()
+	byokStarted := false
+	proxyStarted := false
+	if byokNeeded {
+		byokStarted = !byokGatewayLive()
+		if err := StartBYOKGateway(); err != nil {
+			return fmt.Errorf("BYOK gateway start: %w", err)
+		}
+	}
+	defer func() {
+		if byokStarted && !proxyStarted {
+			_ = StopBYOKGateway()
+		}
+	}()
 	cleanupLegacyRouteState()
 	if applyCloudCodePatch() {
 		if err := stopProxySupervisorForPatch(); err != nil {
@@ -484,17 +674,27 @@ func StartProxy() error {
 	running := ProxyRunning()
 	owned := proxyOwnedProcessLive()
 	if running || owned {
-		if proxyArgsMatchRecorded(port) || proxySupervisedArgsMatch(port) {
+		argsMatch := proxyArgsMatchRecorded(port) || proxySupervisedArgsMatch(port)
+		if argsMatch && proxyAllowedBaseURLsMatchRecorded() {
 			if err := persistProxyRuntime(port); err != nil {
 				return fmt.Errorf("headroom proxy runtime record: %w", err)
 			}
 			util.L.Sub("headroom proxy already running on " + ProxyURL())
+			proxyStarted = true
+			byokStarted = false
 			return nil
 		}
 		if !owned {
 			return fmt.Errorf("headroom proxy is running without tokless ownership — refusing to replace")
 		}
-		return fmt.Errorf("headroom proxy is running with stale arguments — refusing to replace")
+		if !argsMatch {
+			return fmt.Errorf("headroom proxy is running with stale arguments — refusing to replace")
+		}
+		util.L.Sub("headroom proxy allowlist updated — restarting proxy")
+		if err := stopHeadroomDaemon(); err != nil {
+			return fmt.Errorf("stopping stale headroom proxy: %w", err)
+		}
+		cleanupLegacyRouteState()
 	}
 	bin := ResolveHeadroomBin()
 	if bin == "" {
@@ -530,7 +730,13 @@ func StartProxy() error {
 		}
 		return fmt.Errorf("headroom proxy startup identity unavailable; refusing to signal pid %d: %w", pid, err)
 	}
-	if err := proxyWrite(pidFile, proxyOwnership{PID: pid, Executable: identity.Executable, Args: identity.Args, Start: identity.Start}); err != nil {
+	if err := proxyWrite(pidFile, proxyOwnership{
+		PID:             pid,
+		Executable:      identity.Executable,
+		Args:            identity.Args,
+		Start:           identity.Start,
+		AllowedBaseURLs: headroomAllowedBaseURLs(),
+	}); err != nil {
 		return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy ownership record: %w", err))
 	}
 	util.L.Sub("headroom proxy on " + ProxyURL() + " (semantic cache off; log: " + logFile + ")")
@@ -542,6 +748,7 @@ func StartProxy() error {
 				return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy runtime record: %w", err))
 			}
 			util.L.Ok("headroom proxy ready")
+			byokStarted = false
 			return nil
 		}
 		proxySleep(proxyPollInterval)
@@ -776,6 +983,7 @@ func StopProxy() error {
 		return fmt.Errorf("headroom proxy stop: %w", err)
 	}
 	defer release()
+	defer func() { _ = StopBYOKGateway() }()
 	if err := requestProxyStop(); err != nil {
 		return fmt.Errorf("headroom proxy stop request: %w", err)
 	}
