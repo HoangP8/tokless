@@ -7,7 +7,7 @@ import (
 )
 
 // Claude BYOK: when ~/.claude/settings.json already points ANTHROPIC_BASE_URL
-// at a user-run gateway (LiteLLM, qwencoder, ...), tokless routes that traffic
+// at a user-run gateway, tokless routes that traffic
 // through headroom.
 const (
 	claudeProxyHeaderEnvKey = "ANTHROPIC_CUSTOM_HEADERS"
@@ -161,17 +161,40 @@ func claudeTakeoverBYOK(cfg *util.OrderedMap, env *util.OrderedMap, upstream str
 		env.Delete(claudeAPIKeyEnvKey)
 		env.Set(claudeAuthTokenEnvKey, entry.BaseKey)
 	}
+	normalizedUpstream := stripV1Suffix(upstream)
+	var previousRoute BYOKRoute
+	routeRegistered := false
+	// Only fail if HTTPS upstream registration fails
+	if strings.HasPrefix(normalizedUpstream, "https://") {
+		if _, _, prev, ok := registerBYOKRoute("claude", claudeByokStashProvider, "anthropic-messages", normalizedUpstream); !ok {
+			return false
+		} else {
+			previousRoute = prev
+			routeRegistered = true
+		}
+	} else {
+		if _, _, prev, ok := registerBYOKRoute("claude", claudeByokStashProvider, "anthropic-messages", normalizedUpstream); ok {
+			previousRoute = prev
+			routeRegistered = true
+		}
+	}
 	env.Set(claudeProxyEnvKey, ProxyEndpointFor("claude"))
 	kept, _ := claudeCustomHeadersDrop(lines)
-	kept = append(kept, claudeProxyHeaderLine+stripV1Suffix(upstream))
+	kept = append(kept, claudeProxyHeaderLine+normalizedUpstream)
 	claudeCustomHeadersSet(env, kept)
 	managed := util.StringifyJSON(cfg)
 	entry.Managed = []byte(managed)
 	if err := saveClaudeBYOKStashLocked(entry, stash); err != nil {
+		if routeRegistered {
+			rollbackBYOKRouteLogged("claude", claudeByokStashProvider, previousRoute)
+		}
 		return false
 	}
 	if err := util.WriteFileAtomic(util.ClaudeCodePaths().Settings, managed, 0o644); err != nil {
 		_ = saveProxyRouteStash(claudeByokStashAgent, previousStash)
+		if routeRegistered {
+			rollbackBYOKRouteLogged("claude", claudeByokStashProvider, previousRoute)
+		}
 		return false
 	}
 	return true
@@ -190,10 +213,24 @@ func claudeRestoreBYOK(_ *util.OrderedMap, _ *util.OrderedMap) bool {
 		return false
 	}
 	if len(entry.Original) > 0 && len(entry.Managed) > 0 && current == string(entry.Managed) {
-		if err := util.WriteFileAtomic(util.ClaudeCodePaths().Settings, string(entry.Original), 0o644); err != nil {
+		prevRoute, hasPrev := util.ReadBYOKRoute("claude:" + claudeByokStashProvider)
+		if err := deleteBYOKRoute("claude", claudeByokStashProvider); err != nil {
 			return false
 		}
-		return saveClaudeBYOKStashLocked(proxyRouteStashEntry{}, stash) == nil
+		if err := util.WriteFileAtomic(util.ClaudeCodePaths().Settings, string(entry.Original), 0o644); err != nil {
+			if hasPrev {
+				restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+			}
+			return false
+		}
+		if err := saveClaudeBYOKStashLocked(proxyRouteStashEntry{}, stash); err != nil {
+			_ = util.WriteFileAtomic(util.ClaudeCodePaths().Settings, current, 0o644)
+			if hasPrev {
+				restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+			}
+			return false
+		}
+		return true
 	}
 	if entry.ManagedNative {
 		cfg := util.TryParseJsonc(current)
@@ -211,10 +248,24 @@ func claudeRestoreBYOK(_ *util.OrderedMap, _ *util.OrderedMap) bool {
 		if env.Len() == 0 {
 			cfg.Delete("env")
 		}
-		if err := util.WriteFileAtomic(util.ClaudeCodePaths().Settings, util.StringifyJSON(cfg), 0o644); err != nil {
+		prevRoute, hasPrev := util.ReadBYOKRoute("claude:" + claudeByokStashProvider)
+		if err := deleteBYOKRoute("claude", claudeByokStashProvider); err != nil {
 			return false
 		}
-		return saveClaudeBYOKStashLocked(proxyRouteStashEntry{}, stash) == nil
+		if err := util.WriteFileAtomic(util.ClaudeCodePaths().Settings, util.StringifyJSON(cfg), 0o644); err != nil {
+			if hasPrev {
+				restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+			}
+			return false
+		}
+		if err := saveClaudeBYOKStashLocked(proxyRouteStashEntry{}, stash); err != nil {
+			_ = util.WriteFileAtomic(util.ClaudeCodePaths().Settings, current, 0o644)
+			if hasPrev {
+				restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+			}
+			return false
+		}
+		return true
 	}
 	cfg := util.TryParseJsonc(current)
 	if cfg == nil {
@@ -254,10 +305,21 @@ func claudeRestoreBYOK(_ *util.OrderedMap, _ *util.OrderedMap) bool {
 			}
 		}
 	}
+	prevRoute, hasPrev := util.ReadBYOKRoute("claude:" + claudeByokStashProvider)
+	if err := deleteBYOKRoute("claude", claudeByokStashProvider); err != nil {
+		return false
+	}
 	if err := util.WriteFileAtomic(util.ClaudeCodePaths().Settings, util.StringifyJSON(cfg), 0o644); err != nil {
+		if hasPrev {
+			restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+		}
 		return false
 	}
 	if err := saveClaudeBYOKStashLocked(proxyRouteStashEntry{}, stash); err != nil {
+		_ = util.WriteFileAtomic(util.ClaudeCodePaths().Settings, current, 0o644)
+		if hasPrev {
+			restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+		}
 		return false
 	}
 	return true

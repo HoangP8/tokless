@@ -2,6 +2,7 @@ package agents
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,6 +83,24 @@ func TestConfigureOpenCodeProxyUsesTransportPlugin(t *testing.T) {
 	if !ok || len(plugins) != 1 || !isOpenCodeTransportPluginEntry(plugins[0]) {
 		t.Fatalf("transport plugin malformed: %s", raw)
 	}
+	entryMap := plugins[0].([]any)[1].(*util.OrderedMap)
+	if byokURL, ok := entryMap.Get("byokGatewayUrl"); !ok || byokURL != util.BYOKGatewayEndpoint() {
+		t.Fatalf("transport plugin missing byokGatewayUrl: %v", entryMap)
+	}
+	upstreamsVal, ok := entryMap.Get("upstreams")
+	if !ok {
+		t.Fatalf("transport plugin missing upstreams: %v", entryMap)
+	}
+	upstreamsMap, ok := upstreamsVal.(*util.OrderedMap)
+	if !ok {
+		t.Fatalf("transport plugin upstreams wrong type: %T", upstreamsVal)
+	}
+	if u, ok := upstreamsMap.Get("prov-a"); !ok || u != "https://api.provider-a.test/v1" {
+		t.Fatalf("prov-a upstream mismatch: %v", u)
+	}
+	if u, ok := upstreamsMap.Get("prov-b"); !ok || u != "https://api.provider-b.test/v1" {
+		t.Fatalf("prov-b upstream mismatch: %v", u)
+	}
 	if !OpenCodeProxyWired() {
 		t.Fatal("OpenCode proxy must require retrieve tool suppression")
 	}
@@ -110,6 +129,35 @@ func TestConfigureOpenCodeProxyUsesTransportPlugin(t *testing.T) {
 	parsedCfg = util.TryParseJsonc(raw)
 	if _, ok := parsedCfg.Get("tools"); ok {
 		t.Fatal("remove must restore absent retrieve-tool setting")
+	}
+}
+
+func TestOpenCodeBYOKRoutesUseNamespaceAndCleanup(t *testing.T) {
+	opencodeProxyTestHome(t)
+	t.Setenv("TOKLESS_BYOK_PROXY_PORT", "9876")
+	custom := filepath.Join(t.TempDir(), "custom.json")
+	t.Setenv("OPENCODE_CONFIG", custom)
+	if err := util.WriteFile(custom, `{"provider":{"shared":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://api.example.test/v1","apiKey":"key"}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("configure did not wire custom config")
+	}
+	if _, ok := util.ReadBYOKRoute("opencode:shared"); !ok {
+		t.Fatal("OpenCode route was not namespaced")
+	}
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	if !ok || !strings.Contains(raw, `"routes"`) || !strings.Contains(raw, `"shared": "opencode:shared.`) {
+		t.Fatalf("custom BYOK route missing from plugin options: %s", raw)
+	}
+	if _, ok := util.ReadBYOKRoute("shared"); ok {
+		t.Fatal("un namespaced OpenCode route exists")
+	}
+	if !RemoveOpenCodeProxy() {
+		t.Fatal("remove failed")
+	}
+	if _, ok := util.ReadBYOKRoute("opencode:shared"); ok {
+		t.Fatal("OpenCode route survived cleanup")
 	}
 }
 
@@ -496,5 +544,93 @@ func TestConfigureOpenCodeProxyRollsBackPluginWhenBYOKFails(t *testing.T) {
 	}
 	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
 		t.Fatal("retrieve stash not rolled back")
+	}
+}
+
+func TestOpenCodeBYOKPluginHeaderIsolationNode(t *testing.T) {
+	node := util.Which("node")
+	if node == "" {
+		t.Skip("node not available")
+	}
+	dir := t.TempDir()
+	entryPath := filepath.Join(dir, "entry.opencode.js")
+	if err := os.WriteFile(entryPath, []byte(`
+export default async function MockNativePlugin(input, opts) {
+  return {
+    "chat.headers": async (hookInput, output) => {
+      // Native headroom might set its own headers
+      if (hookInput?.nativeHeader) {
+        output.headers["x-native-header"] = "native-value";
+      }
+    }
+  };
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pluginPath := filepath.Join(dir, "tokless-byok.js")
+	if err := os.WriteFile(pluginPath, toklessOpenCodeBYOKPlugin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(dir, "test.mjs")
+	if err := os.WriteFile(scriptPath, []byte(`
+import assert from "node:assert";
+import ToklessBYOKPlugin from "./tokless-byok.js";
+
+async function run() {
+  const plugin = await ToklessBYOKPlugin({}, {
+    routes: { "custom-provider": "opencode:custom-provider.tok123" },
+    upstreams: { "custom-provider": "https://api.customprovider.ai/api/v1" },
+    byokGatewayUrl: "http://127.0.0.1:18787"
+  });
+
+  const hook = plugin["chat.headers"];
+  assert(typeof hook === "function", "hook must be a function");
+
+  const sharedOutput = { headers: {} };
+
+  await hook({ model: { providerID: "custom-provider" } }, sharedOutput);
+  assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], "opencode:custom-provider.tok123");
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], "https://api.customprovider.ai");
+  assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], "/api/v1/chat/completions");
+
+  await hook({ model: { providerID: "openai" } }, sharedOutput);
+  assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], undefined);
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], undefined);
+  assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], undefined);
+
+  await hook({ model: { providerID: "openai" }, nativeHeader: true }, sharedOutput);
+  assert.strictEqual(sharedOutput.headers["x-native-header"], "native-value");
+
+  sharedOutput.headers["x-tokless-route"] = "stale-route";
+  sharedOutput.headers["X-TOKLESS-ROUTE"] = "stale-upper";
+  sharedOutput.headers["x-headroom-base-url"] = "https://unknown.random.origin:443/";
+  sharedOutput.headers["X-Headroom-Original-Path"] = "/custom/path/chat/completions";
+  await hook({ model: { providerID: "openai" } }, sharedOutput);
+  assert.strictEqual(sharedOutput.headers["x-tokless-route"], undefined);
+  assert.strictEqual(sharedOutput.headers["X-TOKLESS-ROUTE"], undefined);
+  assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], undefined);
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], undefined);
+  assert.strictEqual(sharedOutput.headers["X-Headroom-Original-Path"], undefined);
+
+  console.log("PASS: Isolation verified");
+}
+
+run().catch(err => {
+  console.error(err);
+  process.exit(1);
+});
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(node, scriptPath)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node test failed: %v\noutput:\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "PASS: Isolation verified") {
+		t.Fatalf("unexpected test output: %s", string(out))
 	}
 }

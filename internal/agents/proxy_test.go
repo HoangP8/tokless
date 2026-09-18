@@ -161,7 +161,7 @@ func TestClaudeProxyRestoresBYOKLeftoverOwnedAfterPortChange(t *testing.T) {
 	seed := `{
   "env": {
     "ANTHROPIC_API_KEY": "sk-byok",
-    "ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api",
+    "ANTHROPIC_BASE_URL": "https://provider.example/api",
     "ANTHROPIC_CUSTOM_HEADERS": "X-Keep: yes"
   }
 }`
@@ -176,7 +176,7 @@ func TestClaudeProxyRestoresBYOKLeftoverOwnedAfterPortChange(t *testing.T) {
 		t.Fatal("stash-owned BYOK leftover must restore")
 	}
 	raw, _ := util.ReadFileSafe(settings)
-	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api"`) ||
+	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "https://provider.example/api"`) ||
 		!strings.Contains(raw, `"X-Keep: yes"`) || strings.Contains(raw, "x-headroom-base-url") ||
 		!strings.Contains(raw, `"ANTHROPIC_API_KEY": "sk-byok"`) || strings.Contains(raw, "ANTHROPIC_AUTH_TOKEN") {
 		t.Fatalf("BYOK leftover restore wrong:\n%s", raw)
@@ -753,14 +753,14 @@ func TestConfigureCodexProxyUsesChatGPTOAuthWhenLoggedIn(t *testing.T) {
 
 func TestCodexProxyRefreshesBYOKDiscovery(t *testing.T) {
 	codexProxyTestHome(t)
-	dir := util.OpenCodePathsResolved().Dir
-	if err := util.WriteFile(filepath.Join(dir, "config.json"), `{"provider":{"first":{"options":{"baseURL":"https://first.example/v1","apiKey":"first-key"}}}}`); err != nil {
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(path, "[model_providers.first]\nbase_url = \"https://first.example/v1\"\napi_key = \"first-key\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	if got := byokProvidersCached(); len(got) != 1 || got[0].ID != "first" {
 		t.Fatalf("initial BYOK discovery = %+v", got)
 	}
-	if err := util.WriteFile(filepath.Join(dir, "config.json"), `{"provider":{"second":{"options":{"baseURL":"https://second.example/v1","apiKey":"second-key"}}}}`); err != nil {
+	if err := util.WriteFile(path, "[model_providers.second]\nbase_url = \"https://second.example/v1\"\napi_key = \"second-key\"\n"); err != nil {
 		t.Fatal(err)
 	}
 	got := byokProvidersCached()
@@ -769,16 +769,45 @@ func TestCodexProxyRefreshesBYOKDiscovery(t *testing.T) {
 	}
 }
 
+func TestCodexProxyRefusesAmbiguousBYOKProvider(t *testing.T) {
+	codexProxyTestHome(t)
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(path, "[model_providers.provider_a]\nbase_url = \"https://provider-a.example/v1\"\napi_key = \"provider-a-key\"\n\n[model_providers.provider_b]\nbase_url = \"https://provider-b.example/v1\"\napi_key = \"provider-b-key\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got := codexPickBYOK(`model = "provider-model"`); got != nil {
+		t.Fatalf("ambiguous BYOK provider selected: %+v", got)
+	}
+	if got := codexPickBYOK("model_provider = \"provider_b\"\n"); got == nil || got.ID != "provider_b" {
+		t.Fatalf("explicit BYOK provider = %+v, want provider_b", got)
+	}
+}
+
+func TestCodexProxyExplicitBYOKProviderOverridesOAuth(t *testing.T) {
+	codexProxyTestHome(t)
+	if err := util.WriteFile(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"), `{"auth_mode":"chatgpt"}`); err != nil {
+		t.Fatal(err)
+	}
+	path := util.CodexPathsResolved().Config
+	if err := util.WriteFile(path, "[model_providers.provider_a]\nbase_url = \"https://provider-a.example/v1\"\napi_key = \"provider-a-key\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	got := codexPickBYOK("model_provider = \"provider_a\"\n")
+	if got == nil || got.ID != "provider_a" {
+		t.Fatalf("explicit BYOK provider under OAuth = %+v, want provider_a", got)
+	}
+}
+
 func TestConfigureCodexProxyRoutesSelectedNativeBYOKProvider(t *testing.T) {
 	codexProxyTestHome(t)
-	t.Setenv("QWENCODER_API_KEY", "test-key")
+	t.Setenv("PROVIDER_API_KEY", "test-key")
 	path := util.CodexPathsResolved().Config
-	seed := `model_provider = "qwencoder"
+	seed := `model_provider = "provider"
 
-[model_providers.qwencoder]
-name = "Qwen"
-base_url = "https://dashscope.example/v1"
-env_key = "QWENCODER_API_KEY"
+[model_providers.provider]
+	name = "Provider"
+	base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 `
 	if err := util.WriteFile(path, seed); err != nil {
@@ -799,7 +828,7 @@ wire_api = "responses"
 		}
 	}
 	dotEnv, _ := util.ReadFileSafe(codexDotEnvPath())
-	if !strings.Contains(dotEnv, "TOKLESS_HEADROOM_BASE_URL=https://dashscope.example\n") || !strings.Contains(dotEnv, "TOKLESS_CODEX_API_KEY=test-key\n") {
+	if !strings.Contains(dotEnv, "TOKLESS_HEADROOM_BASE_URL=https://provider.example\n") || !strings.Contains(dotEnv, "TOKLESS_CODEX_API_KEY=test-key\n") {
 		t.Fatalf("Codex BYOK routing env missing: %s", dotEnv)
 	}
 	if !RemoveCodexProxy() {
@@ -807,10 +836,10 @@ wire_api = "responses"
 	}
 	raw, _ = util.ReadFileSafe(path)
 	for _, want := range []string{
-		`model_provider = "qwencoder"`,
-		`[model_providers.qwencoder]`,
-		`base_url = "https://dashscope.example/v1"`,
-		`env_key = "QWENCODER_API_KEY"`,
+		`model_provider = "provider"`,
+		`[model_providers.provider]`,
+		`base_url = "https://provider.example/v1"`,
+		`env_key = "PROVIDER_API_KEY"`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("Codex native BYOK config not restored, missing %q:\n%s", want, raw)
@@ -823,13 +852,13 @@ wire_api = "responses"
 
 func TestConfigureCodexProxyPreservesTakeoverStashOnRepeat(t *testing.T) {
 	codexProxyTestHome(t)
-	t.Setenv("QWENCODER_API_KEY", "test-key")
+	t.Setenv("PROVIDER_API_KEY", "test-key")
 	path := util.CodexPathsResolved().Config
-	seed := `model_provider = "qwencoder"
+	seed := `model_provider = "provider"
 
-[model_providers.qwencoder]
-base_url = "https://dashscope.example/v1"
-env_key = "QWENCODER_API_KEY"
+[model_providers.provider]
+	base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
 `
 	if err := util.WriteFile(path, seed); err != nil {
 		t.Fatal(err)
@@ -844,21 +873,21 @@ env_key = "QWENCODER_API_KEY"
 		t.Fatal("remove failed")
 	}
 	raw, _ := util.ReadFileSafe(path)
-	if !strings.Contains(raw, `model_provider = "qwencoder"`) {
+	if !strings.Contains(raw, `model_provider = "provider"`) {
 		t.Fatalf("original provider selection lost: %s", raw)
 	}
 }
 
 func TestConfigureCodexProxyRoutesQuotedNativeBYOKProvider(t *testing.T) {
 	codexProxyTestHome(t)
-	t.Setenv("QWEN_API_KEY", "test-key")
+	t.Setenv("PROVIDER_API_KEY", "test-key")
 	path := util.CodexPathsResolved().Config
-	seed := `"model_provider" = 'qwen.cloud'
+	seed := `"model_provider" = 'provider.cloud'
 
-[model_providers."qwen.cloud"]
-name = "Qwen"
-base_url = "https://dashscope.example/v1"
-env_key = "QWEN_API_KEY"
+[model_providers."provider.cloud"]
+name = "Provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 `
 	if err := util.WriteFile(path, seed); err != nil {
@@ -867,7 +896,7 @@ wire_api = "responses"
 	if !codexTOMLWellFormed(seed) {
 		t.Fatal("valid quoted Codex config rejected")
 	}
-	if got := discoverCodexBYOK(); len(got) != 1 || got[0].ID != "qwen.cloud" {
+	if got := discoverCodexBYOK(); len(got) != 1 || got[0].ID != "provider.cloud" {
 		t.Fatalf("quoted Codex provider not discovered: %+v", got)
 	}
 	if changed, _ := ConfigureCodexProxy(); !changed || !CodexProxyWired() {
@@ -877,7 +906,7 @@ wire_api = "responses"
 		t.Fatal("quoted Codex remove failed")
 	}
 	raw, _ := util.ReadFileSafe(path)
-	for _, want := range []string{`"model_provider" = 'qwen.cloud'`, `[model_providers."qwen.cloud"]`, `base_url = "https://dashscope.example/v1"`, `env_key = "QWEN_API_KEY"`} {
+	for _, want := range []string{`"model_provider" = 'provider.cloud'`, `[model_providers."provider.cloud"]`, `base_url = "https://provider.example/v1"`, `env_key = "PROVIDER_API_KEY"`} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("quoted Codex config not restored, missing %q:\n%s", want, raw)
 		}
@@ -1281,7 +1310,7 @@ func TestOmpProxyScenarios(t *testing.T) {
 
 func TestPiProxyPreservesNativeProvider(t *testing.T) {
 	piProxyTestHome(t)
-	raw := `{"providers":{"qwen":{"api":"openai-completions","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","headers":{"x-user":"keep"},"models":[{"id":"deepseek-v4-flash"}]}}}`
+	raw := `{"providers":{"provider":{"api":"openai-completions","baseUrl":"https://provider.example/v1","apiKey":"user-key","headers":{"x-user":"keep"},"models":[{"id":"provider-model"}]}}}`
 	if err := util.WriteFile(piModelsFile(), raw); err != nil {
 		t.Fatal(err)
 	}
@@ -1289,7 +1318,7 @@ func TestPiProxyPreservesNativeProvider(t *testing.T) {
 		t.Fatal("native Pi provider not wired")
 	}
 	got, _ := util.ReadFileSafe(piModelsFile())
-	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"id\": \"deepseek-v4-flash\"", "\"x-user\": \"keep\"", "\"baseUrl\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://dashscope.aliyuncs.com/compatible-mode\""} {
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"id\": \"provider-model\"", "\"x-user\": \"keep\"", "\"baseUrl\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://provider.example\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Pi route missing %q:\n%s", want, got)
 		}
@@ -1308,7 +1337,7 @@ func TestPiProxyPreservesNativeProvider(t *testing.T) {
 
 func TestKiloProxyPreservesNativeProvider(t *testing.T) {
 	kiloProxyTestHome(t)
-	raw := `{"provider":{"qwen":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","headers":{"x-user":"keep"}},"models":{"deepseek":{"name":"Deepseek"}}}}}`
+	raw := `{"provider":{"provider":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://provider.example/v1","apiKey":"user-key","headers":{"x-user":"keep"}},"models":{"provider-model":{"name":"Provider Model"}}}}}`
 	if err := util.WriteFile(util.KiloPathsResolved().Config, raw); err != nil {
 		t.Fatal(err)
 	}
@@ -1316,7 +1345,7 @@ func TestKiloProxyPreservesNativeProvider(t *testing.T) {
 		t.Fatal("native Kilo provider not wired")
 	}
 	got, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseURL\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://dashscope.aliyuncs.com/compatible-mode\""} {
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseURL\": \"http://127.0.0.1:18787\"", "\"x-headroom-base-url\": \"https://provider.example\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Kilo route missing %q:\n%s", want, got)
 		}
@@ -1332,7 +1361,7 @@ func TestKiloProxyPreservesNativeProvider(t *testing.T) {
 
 func TestDroidProxyPreservesNativeProvider(t *testing.T) {
 	droidProxyTestHome(t)
-	raw := `{"customModels":[{"model":"qwen","displayName":"Qwen","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","provider":"generic-chat-completion-api","extraHeaders":{"x-user":"keep"}}]}`
+	raw := `{"customModels":[{"model":"provider-model","displayName":"Provider Model","baseUrl":"https://provider.example/v1","apiKey":"user-key","provider":"generic-chat-completion-api","extraHeaders":{"x-user":"keep"}}]}`
 	if err := util.WriteFile(droidSettingsFile(), raw); err != nil {
 		t.Fatal(err)
 	}
@@ -1340,7 +1369,7 @@ func TestDroidProxyPreservesNativeProvider(t *testing.T) {
 		t.Fatal("native Droid provider not wired")
 	}
 	got, _ := util.ReadFileSafe(droidSettingsFile())
-	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseUrl\": \"http://127.0.0.1:8787/v1\"", "\"x-headroom-base-url\": \"https://dashscope.aliyuncs.com/compatible-mode\""} {
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseUrl\": \"http://127.0.0.1:18787\"", "\"x-headroom-base-url\": \"https://provider.example\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Droid route missing %q:\n%s", want, got)
 		}
@@ -1358,13 +1387,13 @@ func TestOmpProxyPreservesNativeProviderAndRole(t *testing.T) {
 	ompProxyTestHome(t)
 	models := `providers:
   qwen:
-    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    baseUrl: https://provider.example/v1
     apiKey: user-key
     api: openai-completions
     headers:
       x-user: keep
 modelRoles:
-  default: qwen/deepseek-v4-flash:high
+  default: qwen/provider-model:high
 `
 	if err := util.WriteFile(ompModelsFile(), models); err != nil {
 		t.Fatal(err)
@@ -1373,7 +1402,7 @@ modelRoles:
 		t.Fatal("native OMP provider not wired")
 	}
 	got, _ := util.ReadFileSafe(ompModelsFile())
-	for _, want := range []string{"baseUrl: http://127.0.0.1:8787/v1", "apiKey: user-key", "x-user: keep", "x-headroom-base-url: https://dashscope.aliyuncs.com/compatible-mode"} {
+	for _, want := range []string{"baseUrl: http://127.0.0.1:8787/v1", "apiKey: user-key", "x-user: keep", "x-headroom-base-url: https://provider.example"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("OMP route missing %q:\n%s", want, got)
 		}
@@ -1386,7 +1415,7 @@ modelRoles:
 		t.Fatal("OMP native route not removed")
 	}
 	got, _ = util.ReadFileSafe(ompModelsFile())
-	if !strings.Contains(got, "baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1") || strings.Contains(got, "x-headroom-base-url") {
+	if !strings.Contains(got, "baseUrl: https://provider.example/v1") || strings.Contains(got, "x-headroom-base-url") {
 		t.Fatalf("OMP provider not restored:\n%s", got)
 	}
 }
@@ -1799,7 +1828,7 @@ func TestOmpRoutePreservesOriginalLineBytes(t *testing.T) {
 	ompProxyTestHome(t)
 	original := `providers:
   qwen:
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"  # primary
+    baseUrl: "https://provider.example/v1"  # primary
     apiKey: user-key
     api: openai-completions
     headers:
@@ -1831,7 +1860,7 @@ func TestOmpSkipsFlowStyleHeaders(t *testing.T) {
 	ompProxyTestHome(t)
 	original := `providers:
   qwen:
-    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    baseUrl: https://provider.example/v1
     apiKey: k
     api: openai-completions
     headers: {x-user: keep}
@@ -1843,7 +1872,7 @@ func TestOmpSkipsFlowStyleHeaders(t *testing.T) {
 	ConfigureOmpProxy()
 	raw, _ := util.ReadFileSafe(file)
 	block := `  qwen:
-    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    baseUrl: https://provider.example/v1
     apiKey: k
     api: openai-completions
     headers: {x-user: keep}
@@ -2103,11 +2132,11 @@ func TestOmpQuotedBaseUrlRoutesClean(t *testing.T) {
 func TestOmpDuplicateProviderKeysRefused(t *testing.T) {
 	ompProxyTestHome(t)
 	dup := `providers:
-  qwen:
+	  provider:
     baseUrl: https://first.example/v1
     apiKey: a
     api: openai-completions
-  qwen:
+	  provider:
     baseUrl: https://second.example/v1
     apiKey: b
     api: openai-completions
@@ -2247,18 +2276,18 @@ func TestPiDetectProxyNativeRoutesManaged(t *testing.T) {
 func TestOmpDetectProxyNativeRoutesManaged(t *testing.T) {
 	ompProxyTestHome(t)
 	models := `providers:
-  qwen:
+  provider:
     baseUrl: http://127.0.0.1:8787/v1
     apiKey: user-key
     api: openai-completions
     headers:
-      x-headroom-base-url: https://dashscope.aliyuncs.com/compatible-mode
+      x-headroom-base-url: https://provider.example
 `
 	if err := util.WriteFile(ompModelsFile(), models); err != nil {
 		t.Fatal(err)
 	}
 	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{
-		"qwen": {Provider: "qwen", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Upstream: "https://dashscope.aliyuncs.com/compatible-mode", BaseKey: "baseUrl"},
+		"provider": {Provider: "provider", BaseURL: "https://provider.example/v1", Upstream: "https://provider.example", BaseKey: "baseUrl"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2275,7 +2304,7 @@ func TestOmpProxyBlankLineInHeadersDoesNotDuplicateKey(t *testing.T) {
 	ompProxyTestHome(t)
 	models := `providers:
   qwen:
-    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    baseUrl: https://provider.example/v1
     apiKey: user-key
     api: openai-completions
     headers:
@@ -2312,7 +2341,7 @@ func TestOmpProxyAlreadyRoutedWithoutStashNotClaimed(t *testing.T) {
     apiKey: user-key
     api: openai-completions
     headers:
-      x-headroom-base-url: https://dashscope.aliyuncs.com/compatible-mode
+      x-headroom-base-url: https://provider.example
 `
 	if err := util.WriteFile(ompModelsFile(), models); err != nil {
 		t.Fatal(err)
@@ -2334,7 +2363,7 @@ func TestOmpProxyAlreadyRoutedWithoutStashNotClaimed(t *testing.T) {
 
 func TestPiProxyAlreadyRoutedWithoutStashNotClaimed(t *testing.T) {
 	piProxyTestHome(t)
-	raw := `{"providers":{"qwen":{"baseUrl":"http://127.0.0.1:8787/v1","api":"openai-completions","apiKey":"user-key","headers":{"x-headroom-base-url":"https://dashscope.aliyuncs.com/compatible-mode"}}}}`
+	raw := `{"providers":{"provider":{"baseUrl":"http://127.0.0.1:8787/v1","api":"openai-completions","apiKey":"user-key","headers":{"x-headroom-base-url":"https://provider.example"}}}}`
 	if err := util.WriteFile(piModelsFile(), raw); err != nil {
 		t.Fatal(err)
 	}
@@ -2380,7 +2409,7 @@ func TestOmpProxyDoesNotPersistStashOnConfigWriteFailure(t *testing.T) {
 	ompProxyTestHome(t)
 	models := `providers:
   qwen:
-    baseUrl: https://dashscope.aliyuncs.com/compatible-mode/v1
+    baseUrl: https://provider.example/v1
     apiKey: user-key
     api: openai-completions
 `
@@ -2407,7 +2436,7 @@ func TestClaudeProxyTakesOverForeignBYOK(t *testing.T) {
 	seed := `{
   "env": {
     "ANTHROPIC_API_KEY": "sk-byok",
-    "ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api",
+    "ANTHROPIC_BASE_URL": "https://provider.example/api",
     "ANTHROPIC_CUSTOM_HEADERS": "X-Keep: yes"
   }
 }`
@@ -2419,7 +2448,7 @@ func TestClaudeProxyTakesOverForeignBYOK(t *testing.T) {
 	}
 	raw, _ := util.ReadFileSafe(settings)
 	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"`) ||
-		!strings.Contains(raw, "x-headroom-base-url: https://api.qwencoder.test/api") ||
+		!strings.Contains(raw, "x-headroom-base-url: https://provider.example/api") ||
 		!strings.Contains(raw, "X-Keep: yes") {
 		t.Fatalf("takeover state wrong:\n%s", raw)
 	}
@@ -2430,14 +2459,14 @@ func TestClaudeProxyTakesOverForeignBYOK(t *testing.T) {
 		t.Fatal("expected wired after takeover")
 	}
 	stash, ok := loadClaudeBYOKStash()
-	if !ok || stash.BaseURL != "https://api.qwencoder.test/api" || !stash.HadHeader || stash.Header != "X-Keep: yes" {
+	if !ok || stash.BaseURL != "https://provider.example/api" || !stash.HadHeader || stash.Header != "X-Keep: yes" {
 		t.Fatalf("stash wrong: %+v ok=%v", stash, ok)
 	}
 	if !RemoveClaudeProxy() {
 		t.Fatal("expected restore")
 	}
 	raw, _ = util.ReadFileSafe(settings)
-	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "https://api.qwencoder.test/api"`) ||
+	if !strings.Contains(raw, `"ANTHROPIC_BASE_URL": "https://provider.example/api"`) ||
 		!strings.Contains(raw, `"X-Keep: yes"`) || strings.Contains(raw, "x-headroom-base-url") ||
 		!strings.Contains(raw, `"ANTHROPIC_API_KEY": "sk-byok"`) || strings.Contains(raw, "ANTHROPIC_AUTH_TOKEN") {
 		t.Fatalf("restore state wrong:\n%s", raw)
@@ -2625,7 +2654,7 @@ func TestClaudeCustomHeadersDropVariants(t *testing.T) {
 func TestClaudeTakeoverStripsV1SuffixFromHop(t *testing.T) {
 	claudeProxyTestHome(t)
 	settings := util.ClaudeCodePaths().Settings
-	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://api.qwencoder.test/api/v1","ANTHROPIC_API_KEY":"sk-x"}}`
+	seed := `{"env":{"ANTHROPIC_BASE_URL":"https://provider.example/api/v1","ANTHROPIC_API_KEY":"sk-x"}}`
 	if err := util.WriteFile(settings, seed); err != nil {
 		t.Fatal(err)
 	}
@@ -2633,18 +2662,18 @@ func TestClaudeTakeoverStripsV1SuffixFromHop(t *testing.T) {
 		t.Fatal("expected takeover write")
 	}
 	raw, _ := util.ReadFileSafe(settings)
-	if strings.Contains(raw, "/v1/v1") || !strings.Contains(raw, "x-headroom-base-url: https://api.qwencoder.test/api") {
+	if strings.Contains(raw, "/v1/v1") || !strings.Contains(raw, "x-headroom-base-url: https://provider.example/api") {
 		t.Fatalf("hop header must drop /v1 suffix:\n%s", raw)
 	}
 	stash, ok := loadClaudeBYOKStash()
-	if !ok || stash.BaseURL != "https://api.qwencoder.test/api/v1" {
+	if !ok || stash.BaseURL != "https://provider.example/api/v1" {
 		t.Fatalf("stash must keep the verbatim user URL: %+v ok=%v", stash, ok)
 	}
 	if !RemoveClaudeProxy() {
 		t.Fatal("expected restore")
 	}
 	raw, _ = util.ReadFileSafe(settings)
-	if !strings.Contains(raw, `"https://api.qwencoder.test/api/v1"`) {
+	if !strings.Contains(raw, `"https://provider.example/api/v1"`) {
 		t.Fatalf("restore lost verbatim URL:\n%s", raw)
 	}
 }
@@ -2716,10 +2745,10 @@ func TestMixedProviderProxyKeepsDistinctUpstreams(t *testing.T) {
 	if err := util.WriteFile(clineProvidersFile(), `{"version":1,"lastUsedProvider":"openai-compatible","providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","apiKey":"user-key","model":"user-model","baseUrl":"https://api.user.test/v1"},"tokenSource":"manual"}}}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := util.WriteFile(piModelsFile(), `{"providers":{"qwen":{"api":"openai-completions","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"user-key","models":[{"id":"deepseek-v4-flash"}]}}}`); err != nil {
+	if err := util.WriteFile(piModelsFile(), `{"providers":{"provider":{"api":"openai-completions","baseUrl":"https://provider.example/v1","apiKey":"user-key","models":[{"id":"provider-model"}]}}}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := util.WriteFile(util.KiloPathsResolved().Config, `{"provider":{"qwen":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://kilo.example/v1","apiKey":"kilo-key"},"models":{"m":{"name":"M"}}}}}`); err != nil {
+	if err := util.WriteFile(util.KiloPathsResolved().Config, `{"provider":{"provider":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://kilo.example/v1","apiKey":"kilo-key"},"models":{"m":{"name":"M"}}}}}`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2752,7 +2781,7 @@ func TestMixedProviderProxyKeepsDistinctUpstreams(t *testing.T) {
 		t.Fatalf("cline header missing:\n%s", clineRaw)
 	}
 	piRaw, _ := util.ReadFileSafe(piModelsFile())
-	if !strings.Contains(piRaw, `"x-headroom-base-url": "https://dashscope.aliyuncs.com/compatible-mode"`) {
+	if !strings.Contains(piRaw, `"x-headroom-base-url": "https://provider.example"`) {
 		t.Fatalf("pi header missing:\n%s", piRaw)
 	}
 	kiloRaw, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)

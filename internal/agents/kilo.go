@@ -510,13 +510,14 @@ func kiloProviderRoute(provider *util.OrderedMap) (baseKey, base string, options
 	return baseKey, base, options, headers, true
 }
 
-func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool) {
+func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool, []byokRouteRollback) {
 	providers, ok := mapChild(cfg, "provider")
 	if !ok {
-		return false, false
+		return false, false, nil
 	}
 	routed := map[string]bool{}
 	changed, found := false, false
+	var registeredRoutes []byokRouteRollback
 	for _, id := range providers.Keys() {
 		if id == kiloProxyProvider {
 			continue
@@ -532,6 +533,15 @@ func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntr
 		}
 		upstream := normalizedHeadroomUpstream(base, "openai-completions")
 		endpoint := ProxyEndpointFor("kilo")
+		if sameProxyBase(base, util.BYOKGatewayEndpoint()) {
+			if route, exists := util.ReadBYOKRoute("kilo:" + id); exists {
+				if current, exists := headers.Get("X-Tokless-Route"); exists && current == util.BYOKRouteHeader(route) {
+					routed[id] = true
+					found = true
+					continue
+				}
+			}
+		}
 		if current, exists := headers.Get(headroomBaseURLHeader); exists {
 			currentString, currentOK := current.(string)
 			if !currentOK || (currentString != upstream && !sameProxyBase(base, endpoint)) {
@@ -546,6 +556,17 @@ func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntr
 			}
 			routed[id] = true
 			continue
+		}
+		routeEndpoint, routeHeader, previousRoute, routeOK := registerBYOKRoute("kilo", id, "openai-completions", upstream)
+		if strings.HasPrefix(strings.ToLower(upstream), "https://") && !routeOK {
+			for _, route := range registeredRoutes {
+				_ = rollbackBYOKRoute("kilo", route.id, route.previous)
+			}
+			return false, true, nil
+		}
+		if routeOK {
+			endpoint = routeEndpoint
+			registeredRoutes = append(registeredRoutes, byokRouteRollback{id: id, previous: previousRoute})
 		}
 		hadHeader, header := false, ""
 		if current, exists := headers.Get(headroomBaseURLHeader); exists {
@@ -562,6 +583,9 @@ func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntr
 			options.Set("headers", headers)
 		}
 		headers.Set(headroomBaseURLHeader, upstream)
+		if routeOK {
+			headers.Set("X-Tokless-Route", routeHeader)
+		}
 		changed = true
 	}
 	for id := range stash {
@@ -571,7 +595,7 @@ func kiloNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntr
 			}
 		}
 	}
-	return changed, found
+	return changed, found, registeredRoutes
 }
 
 // kiloProxyProviderEntry builds the opencode-style provider entry injected
@@ -643,15 +667,24 @@ func configureKiloProxyLocked() (changed bool, file string) {
 	stash := loadProxyRouteStashLocked("kilo")
 	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("kilo"))
 	prevStashLen := len(stash)
-	if nativeChanged, nativeFound := kiloNativeRoutes(cfg, stash); nativeFound {
+	if nativeChanged, nativeFound, registeredRoutes := kiloNativeRoutes(cfg, stash); nativeFound {
 		if saveProxyRouteStash("kilo", stash) != nil {
+			for _, route := range registeredRoutes {
+				rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+			}
 			return false, file
 		}
 		if !nativeChanged {
+			for _, route := range registeredRoutes {
+				rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+			}
 			return false, file
 		}
 		if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
 			restoreProxyRouteStashLogged("kilo", stashRaw, stashExists)
+			for _, route := range registeredRoutes {
+				rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+			}
 			return false, file
 		}
 		return true, file
@@ -718,12 +751,21 @@ func removeKiloProxyLocked() bool {
 				continue
 			}
 			baseKey, base, _, headers, routeOK := kiloProviderRoute(provider)
-			if !routeOK || !sameProxyBase(base, ProxyEndpointFor("kilo")) {
+			if !routeOK {
+				remaining[id] = entry
+				continue
+			}
+			_, headerOK := headers.Get(headroomBaseURLHeader)
+			routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
+			matchesProxy := sameProxyBase(base, ProxyEndpointFor("kilo")) && headerOK
+			route, routeExists := util.ReadBYOKRoute("kilo:" + id)
+			matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
+			if !matchesProxy && !matchesBYOK {
 				remaining[id] = entry
 				continue
 			}
 			value, exists = headers.Get(headroomBaseURLHeader)
-			if !exists || value != entry.Upstream {
+			if exists && value != entry.Upstream {
 				remaining[id] = entry
 				continue
 			}
@@ -735,6 +777,7 @@ func removeKiloProxyLocked() bool {
 			} else {
 				headers.Delete(headroomBaseURLHeader)
 			}
+			headers.Delete("X-Tokless-Route")
 			if headers.Len() == 0 {
 				options.Delete("headers")
 			}
@@ -743,7 +786,21 @@ func removeKiloProxyLocked() bool {
 		if !changed || util.WriteFile(p.Config, util.StringifyJSON(cfg)) != nil {
 			return false
 		}
+		var deletedRoutes []BYOKRoute
+		for id := range stash {
+			if _, isRouted := remaining[id]; !isRouted {
+				if route, exists := util.ReadBYOKRoute("kilo:" + id); exists {
+					deletedRoutes = append(deletedRoutes, route)
+				}
+				if err := deleteBYOKRoute("kilo", id); err != nil {
+					restoreDeletedBYOKRoutes(deletedRoutes)
+					_ = util.WriteFile(p.Config, original)
+					return false
+				}
+			}
+		}
 		if err := saveProxyRouteStash("kilo", remaining); err != nil {
+			restoreDeletedBYOKRoutes(deletedRoutes)
 			if restoreErr := util.WriteFile(p.Config, original); restoreErr != nil {
 				util.L.Err("kilo proxy rollback failed: " + restoreErr.Error())
 			}
@@ -801,8 +858,15 @@ func KiloProxyWired() bool {
 				return false
 			}
 			_, base, _, headers, routeOK := kiloProviderRoute(provider)
+			if !routeOK {
+				return false
+			}
 			upstream, headerOK := headers.Get(headroomBaseURLHeader)
-			if !routeOK || !sameProxyBase(base, ProxyEndpointFor("kilo")) || !headerOK || upstream != entry.Upstream {
+			routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
+			matchesProxy := sameProxyBase(base, ProxyEndpointFor("kilo")) && headerOK && upstream == entry.Upstream
+			route, routeExists := util.ReadBYOKRoute("kilo:" + id)
+			matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
+			if !matchesProxy && !matchesBYOK {
 				return false
 			}
 		}

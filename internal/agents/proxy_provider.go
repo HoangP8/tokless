@@ -12,6 +12,13 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+type BYOKRoute = util.BYOKRoute
+
+type byokRouteRollback struct {
+	id       string
+	previous BYOKRoute
+}
+
 const proxyProviderEnv = "TOKLESS_PROXY_PROVIDER"
 
 // ProviderModel is the model metadata a provider-block spec carries.
@@ -236,7 +243,7 @@ func loadProxyRouteStash(agent string) map[string]proxyRouteStashEntry {
 
 func normalizedHeadroomUpstream(baseURL, api string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if api == "openai-completions" && strings.HasSuffix(strings.ToLower(baseURL), "/v1") {
+	if (api == "openai-completions" || api == "openai-responses") && strings.HasSuffix(strings.ToLower(baseURL), "/v1") {
 		return baseURL[:len(baseURL)-len("/v1")]
 	}
 	if api == "anthropic-messages" && strings.HasSuffix(strings.ToLower(baseURL), "/v1") {
@@ -249,8 +256,55 @@ func proxyEndpointForAPI(api string) string {
 	if api == "anthropic-messages" {
 		return util.HeadroomProxyURL()
 	}
-	if api == "openai-completions" {
+	if api == "openai-completions" || api == "openai-responses" {
 		return util.HeadroomProxyOpenAIURL()
 	}
 	return ""
+}
+
+// registerBYOKRoute records native-provider routing metadata before wiring the
+// provider. Credentials remain in the provider's native configuration.
+func registerBYOKRoute(agent, id, api, upstream string) (string, string, BYOKRoute, bool) {
+	protocol := util.BYOKRouteProtocol(api)
+	if protocol == "" || strings.TrimSpace(upstream) == "" {
+		return "", "", BYOKRoute{}, false
+	}
+	namespacedID := agent + ":" + id
+	route, previous, err := util.UpsertBYOKRoute(namespacedID, protocol, upstream)
+	if err != nil {
+		return "", "", BYOKRoute{}, false
+	}
+	return util.BYOKGatewayEndpoint(), util.BYOKRouteHeader(route), previous, true
+}
+
+// rollbackBYOKRoute restores a route to its previous state, or removes it if it was new.
+func rollbackBYOKRoute(agent, id string, previous BYOKRoute) error {
+	namespacedID := agent + ":" + id
+	if previous.ID == "" {
+		return util.DeleteBYOKRoute(namespacedID)
+	}
+	_, _, err := util.UpsertBYOKRoute(namespacedID, previous.Protocol, previous.Upstream)
+	return err
+}
+
+func rollbackBYOKRouteLogged(agent, id string, previous BYOKRoute) bool {
+	if err := rollbackBYOKRoute(agent, id, previous); err != nil {
+		util.L.Err(fmt.Sprintf("%s BYOK route rollback failed: %v", agent, err))
+		return false
+	}
+	return true
+}
+
+// deleteBYOKRoute removes a namespaced BYOK route from the registry.
+func deleteBYOKRoute(agent, id string) error {
+	namespacedID := agent + ":" + id
+	return util.DeleteBYOKRoute(namespacedID)
+}
+
+func restoreDeletedBYOKRoutes(routes []BYOKRoute) {
+	for _, route := range routes {
+		if _, _, err := util.UpsertBYOKRoute(route.ID, route.Protocol, route.Upstream); err != nil {
+			util.L.Err("BYOK route restore failed: " + err.Error())
+		}
+	}
 }

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const GrokOAuthProxyDefaultPort = 8788
+const GrokOAuthProxyDefaultPort = 28787
 
 func GrokOAuthProxyPort() int {
 	if v := strings.TrimSpace(os.Getenv("TOKLESS_GROK_PROXY_PORT")); v != "" {

@@ -1,7 +1,10 @@
 package agents
 
 import (
+	_ "embed"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +12,9 @@ import (
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
+
+//go:embed opencode_byok_plugin.js
+var toklessOpenCodeBYOKPlugin []byte
 
 // ConfigureOpenCodeMcp writes/updates a local MCP entry in opencode config.
 func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
@@ -174,37 +180,111 @@ func openCodeProxySpecs() []ProviderSpec {
 }
 
 func ConfigureOpenCodeProxy() (changed bool, file string) {
+	err := withProxyRouteStashLock(func() error {
+		var err error
+		changed, file, err = configureOpenCodeProxyLocked()
+		return err
+	})
+	if err != nil {
+		util.L.Err("opencode proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureOpenCodeProxyLocked() (changed bool, file string, resultErr error) {
 	file = util.OpenCodePathsResolved().Config
 	configRaw, configExists := util.ReadFileSafe(file)
 	retrieveRaw, retrieveExists := util.ReadFileSafe(openCodeRetrieveStatePath())
+	type routeChange struct {
+		id       string
+		previous BYOKRoute
+	}
+	var routeChanges []routeChange
+	rollbackRoutes := func() error {
+		var errs []error
+		for i := len(routeChanges) - 1; i >= 0; i-- {
+			route := routeChanges[i]
+			if route.previous.ID == "" {
+				if err := util.DeleteBYOKRoute(route.id); err != nil {
+					errs = append(errs, fmt.Errorf("delete OpenCode route %s: %w", route.id, err))
+				}
+				continue
+			}
+			if _, _, err := util.UpsertBYOKRoute(route.id, route.previous.Protocol, route.previous.Upstream); err != nil {
+				errs = append(errs, fmt.Errorf("restore OpenCode route %s: %w", route.id, err))
+			}
+		}
+		return errors.Join(errs...)
+	}
+	for _, provider := range DiscoverOpenCodeBYOK() {
+		if provider.Protocol == "" {
+			continue
+		}
+		id := "opencode:" + provider.ID
+		_, previous, err := util.UpsertBYOKRoute(id, provider.Protocol, provider.BaseURL)
+		if err != nil {
+			return false, file, errors.Join(err, rollbackRoutes())
+		}
+		routeChanges = append(routeChanges, routeChange{id: id, previous: previous})
+	}
 	pluginChanged, file := configureOpenCodeTransportPlugin()
 	if !pluginChanged && !openCodeTransportPluginWired() {
-		return false, file
+		return false, file, errors.Join(fmt.Errorf("configure OpenCode transport plugin"), rollbackRoutes())
 	}
-	byokChanged, _, ok := wireOpenCodeBYOKChecked()
+	byokChanged, _, ok := wireOpenCodeBYOKLocked()
 	if !ok {
+		errs := []error{fmt.Errorf("configure OpenCode BYOK routes"), rollbackRoutes()}
 		if err := restoreCodexConfig(file, configRaw, configExists); err != nil {
-			return false, file
+			errs = append(errs, err)
 		}
 		if err := restoreOpenCodeRetrieveState(retrieveRaw, retrieveExists); err != nil {
-			return false, file
+			errs = append(errs, err)
 		}
-		return false, file
+		return false, file, errors.Join(errs...)
 	}
-	return byokChanged || pluginChanged, file
+	return byokChanged || pluginChanged, file, nil
 }
 
 func RemoveOpenCodeProxy() bool {
+	var removed bool
+	if err := withProxyRouteStashLock(func() error {
+		var err error
+		removed, err = removeOpenCodeProxyLocked()
+		return err
+	}); err != nil {
+		util.L.Err("opencode proxy lock failed: " + err.Error())
+		return false
+	}
+	return removed
+}
+
+func removeOpenCodeProxyLocked() (bool, error) {
 	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
 		if _, ok := loadOpenCodeRetrieveState(); !ok {
-			return false
+			return false, fmt.Errorf("invalid OpenCode retrieve stash")
 		}
 	}
 	if !byokStashValid() {
-		return false
+		return false, fmt.Errorf("invalid OpenCode BYOK stash")
 	}
 	byokRemoved := false
 	stashed := loadBYOKStash()
+	routeIDs := map[string]bool{}
+	if routes, err := util.ReadBYOKRoutes(); err == nil || os.IsNotExist(err) {
+		for _, route := range routes {
+			if strings.HasPrefix(route.ID, "opencode:") {
+				routeIDs[route.ID] = true
+			}
+		}
+	} else {
+		return false, fmt.Errorf("read BYOK routes")
+	}
+	for _, provider := range DiscoverOpenCodeBYOK() {
+		routeIDs["opencode:"+provider.ID] = true
+	}
+	for id := range stashed {
+		routeIDs["opencode:"+id] = true
+	}
 	pluginWired := openCodeTransportPluginWired()
 	configPath := util.OpenCodePathsResolved().Config
 	configRaw, configExists := util.ReadFileSafe(configPath)
@@ -217,34 +297,42 @@ func RemoveOpenCodeProxy() bool {
 		}
 	}
 	if len(stashed) > 0 {
-		if !unwireOpenCodeBYOK() {
-			return false
+		if _, ok := unwireOpenCodeBYOKLocked(); !ok {
+			return false, fmt.Errorf("restore OpenCode BYOK providers")
 		}
 		byokRemoved = true
 	}
 	pluginRemoved := removeOpenCodeTransportPlugin()
 	if pluginWired && !pluginRemoved {
-		rollbackOK := true
+		var errs []error
 		for path, raw := range providerFiles {
-			if util.WriteFile(path, raw) != nil {
-				rollbackOK = false
+			if err := util.WriteFile(path, raw); err != nil {
+				errs = append(errs, err)
 			}
 		}
-		if restoreCodexConfig(byokStashPath(), byokStashRaw, byokStashExists) != nil {
-			rollbackOK = false
+		if err := restoreCodexConfig(byokStashPath(), byokStashRaw, byokStashExists); err != nil {
+			errs = append(errs, err)
 		}
-		if restoreCodexConfig(configPath, configRaw, configExists) != nil {
-			rollbackOK = false
+		if err := restoreCodexConfig(configPath, configRaw, configExists); err != nil {
+			errs = append(errs, err)
 		}
-		if restoreOpenCodeRetrieveState(retrieveRaw, retrieveExists) != nil {
-			rollbackOK = false
+		if err := restoreOpenCodeRetrieveState(retrieveRaw, retrieveExists); err != nil {
+			errs = append(errs, err)
 		}
-		if !rollbackOK {
-			return false
-		}
-		return false
+		return false, errors.Join(append([]error{fmt.Errorf("remove OpenCode transport plugin")}, errs...)...)
 	}
-	return pluginRemoved || byokRemoved
+	for id := range routeIDs {
+		if err := util.DeleteBYOKRoute(id); err != nil {
+			for path, raw := range providerFiles {
+				_ = util.WriteFile(path, raw)
+			}
+			_ = restoreCodexConfig(byokStashPath(), byokStashRaw, byokStashExists)
+			_ = restoreCodexConfig(configPath, configRaw, configExists)
+			_ = restoreOpenCodeRetrieveState(retrieveRaw, retrieveExists)
+			return false, fmt.Errorf("delete OpenCode route %s: %w", id, err)
+		}
+	}
+	return pluginRemoved || byokRemoved, nil
 }
 
 func OpenCodeProxyWired() bool {
@@ -266,13 +354,31 @@ func openCodeTransportPluginPath() string {
 	return filepath.Join(root, "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
 }
 
+func openCodeBYOKPluginPath() string {
+	return filepath.Join(filepath.Dir(openCodeTransportPluginPath()), "tokless-byok.js")
+}
+
 func openCodeTransportPluginURL() string {
-	return "file://" + filepath.ToSlash(openCodeTransportPluginPath())
+	return "file://" + filepath.ToSlash(openCodeBYOKPluginPath())
 }
 
 func openCodeTransportPluginEntry() []any {
 	options := util.NewOrderedMap()
-	options.Set("proxyUrl", strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1"))
+	proxyURL := strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")
+	routes := util.NewOrderedMap()
+	upstreams := util.NewOrderedMap()
+	for _, provider := range DiscoverOpenCodeBYOK() {
+		if route, ok := util.ReadBYOKRoute("opencode:" + provider.ID); ok {
+			routes.Set(provider.ID, util.BYOKRouteHeader(route))
+			if provider.BaseURL != "" {
+				upstreams.Set(provider.ID, provider.BaseURL)
+			}
+		}
+	}
+	options.Set("proxyUrl", proxyURL)
+	options.Set("routes", routes)
+	options.Set("upstreams", upstreams)
+	options.Set("byokGatewayUrl", util.BYOKGatewayEndpoint())
 	return []any{openCodeTransportPluginURL(), options}
 }
 
@@ -295,12 +401,25 @@ func isOpenCodeTransportPluginEntry(v any) bool {
 		return false
 	}
 	proxyURL, _ := options.Get("proxyUrl")
-	return proxyURL == strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")
+	return proxyURL == util.BYOKGatewayEndpoint() || proxyURL == strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")
 }
 
 func configureOpenCodeTransportPlugin() (changed bool, file string) {
 	file = util.OpenCodePathsResolved().Config
+	if err := util.EnsureDir(filepath.Dir(openCodeBYOKPluginPath())); err != nil {
+		return false, file
+	}
 	if !util.Exists(openCodeTransportPluginPath()) {
+		return false, file
+	}
+	pluginExisted := util.Exists(openCodeBYOKPluginPath())
+	committed := false
+	defer func() {
+		if !committed && !pluginExisted {
+			_ = os.Remove(openCodeBYOKPluginPath())
+		}
+	}()
+	if err := util.WriteFile(openCodeBYOKPluginPath(), string(toklessOpenCodeBYOKPlugin)); err != nil {
 		return false, file
 	}
 	raw, exists := util.ReadFileSafe(file)
@@ -379,6 +498,7 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 		_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
 		return false, file
 	}
+	committed = true
 	return changed, file
 }
 
@@ -440,6 +560,10 @@ func removeOpenCodeTransportPlugin() bool {
 		return false
 	}
 	if err := clearOpenCodeRetrieveState(); err != nil {
+		_ = util.WriteFile(file, raw)
+		return false
+	}
+	if err := os.Remove(openCodeBYOKPluginPath()); err != nil && !os.IsNotExist(err) {
 		_ = util.WriteFile(file, raw)
 		return false
 	}

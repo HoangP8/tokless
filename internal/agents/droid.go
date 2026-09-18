@@ -525,18 +525,18 @@ func droidModelRoute(model *util.OrderedMap) (id, base string, headers *util.Ord
 	return id, base, headers, true
 }
 
-func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool) {
+func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEntry) (bool, bool, []byokRouteRollback) {
 	value, ok := cfg.Get("customModels")
 	if !ok {
-		return false, false
+		return false, false, nil
 	}
 	models, ok := value.([]any)
 	if !ok {
-		return false, false
+		return false, false, nil
 	}
 	routed := map[string]bool{}
+	var registeredRoutes []byokRouteRollback
 	changed, found := false, false
-	endpoint := ProxyEndpointFor("droid")
 	seenIDs := map[string]bool{}
 	for _, value := range models {
 		model, ok := value.(*util.OrderedMap)
@@ -548,7 +548,7 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 			continue
 		}
 		if seenIDs[id] {
-			return false, true
+			return false, true, nil
 		}
 		seenIDs[id] = true
 	}
@@ -562,6 +562,16 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 			continue
 		}
 		upstream := normalizedHeadroomUpstream(base, "openai-completions")
+		endpoint := ProxyEndpointFor("droid")
+		if sameProxyBase(base, util.BYOKGatewayEndpoint()) {
+			if route, exists := util.ReadBYOKRoute("droid:" + id); exists {
+				if current, exists := headers.Get("X-Tokless-Route"); exists && current == util.BYOKRouteHeader(route) {
+					routed[id] = true
+					found = true
+					continue
+				}
+			}
+		}
 		if current, exists := headers.Get(headroomBaseURLHeader); exists {
 			currentString, currentOK := current.(string)
 			if !currentOK || (currentString != upstream && !sameProxyBase(base, endpoint)) {
@@ -576,6 +586,17 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 			}
 			routed[id] = true
 			continue
+		}
+		routeEndpoint, routeHeader, previousRoute, routeOK := registerBYOKRoute("droid", id, "openai-completions", upstream)
+		if strings.HasPrefix(strings.ToLower(upstream), "https://") && !routeOK {
+			for _, route := range registeredRoutes {
+				_ = rollbackBYOKRoute("droid", route.id, route.previous)
+			}
+			return false, true, nil
+		}
+		if routeOK {
+			endpoint = routeEndpoint
+			registeredRoutes = append(registeredRoutes, byokRouteRollback{id: id, previous: previousRoute})
 		}
 		hadHeader, header := false, ""
 		if current, exists := headers.Get(headroomBaseURLHeader); exists {
@@ -592,6 +613,9 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 			model.Set("extraHeaders", headers)
 		}
 		headers.Set(headroomBaseURLHeader, upstream)
+		if routeOK {
+			headers.Set("X-Tokless-Route", routeHeader)
+		}
 		changed = true
 	}
 	for id := range stash {
@@ -613,7 +637,7 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 			}
 		}
 	}
-	return changed, found
+	return changed, found, registeredRoutes
 }
 
 func droidSettingsFile() string { return filepath.Join(droidDir(), "settings.json") }
@@ -668,15 +692,24 @@ func configureDroidProxyLocked() (changed bool, file string) {
 	stash := loadProxyRouteStashLocked("droid")
 	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("droid"))
 	prevStashLen := len(stash)
-	if nativeChanged, nativeFound := droidNativeRoutes(cfg, stash); nativeFound {
+	if nativeChanged, nativeFound, registeredRoutes := droidNativeRoutes(cfg, stash); nativeFound {
 		if saveProxyRouteStash("droid", stash) != nil {
+			for _, route := range registeredRoutes {
+				rollbackBYOKRouteLogged("droid", route.id, route.previous)
+			}
 			return false, file
 		}
 		if !nativeChanged {
+			for _, route := range registeredRoutes {
+				rollbackBYOKRouteLogged("droid", route.id, route.previous)
+			}
 			return false, file
 		}
 		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
 			restoreProxyRouteStashLogged("droid", stashRaw, stashExists)
+			for _, route := range registeredRoutes {
+				rollbackBYOKRouteLogged("droid", route.id, route.previous)
+			}
 			return false, file
 		}
 		return true, file
@@ -778,12 +811,17 @@ func removeDroidProxyLocked() bool {
 			if !exists {
 				continue
 			}
-			if !sameProxyBase(base, ProxyEndpointFor("droid")) {
+			_, headerOK := headers.Get(headroomBaseURLHeader)
+			routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
+			matchesProxy := sameProxyBase(base, ProxyEndpointFor("droid")) && headerOK
+			route, routeExists := util.ReadBYOKRoute("droid:" + id)
+			matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
+			if !matchesProxy && !matchesBYOK {
 				remaining[id] = entry
 				continue
 			}
 			value, exists := headers.Get(headroomBaseURLHeader)
-			if !exists || value != entry.Upstream {
+			if exists && value != entry.Upstream {
 				remaining[id] = entry
 				continue
 			}
@@ -793,6 +831,7 @@ func removeDroidProxyLocked() bool {
 			} else {
 				headers.Delete(headroomBaseURLHeader)
 			}
+			headers.Delete("X-Tokless-Route")
 			if headers.Len() == 0 {
 				model.Delete("extraHeaders")
 			}
@@ -801,7 +840,21 @@ func removeDroidProxyLocked() bool {
 		if !changed || util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
 			return false
 		}
+		var deletedRoutes []BYOKRoute
+		for id := range stash {
+			if _, isRouted := remaining[id]; !isRouted {
+				if route, exists := util.ReadBYOKRoute("droid:" + id); exists {
+					deletedRoutes = append(deletedRoutes, route)
+				}
+				if err := deleteBYOKRoute("droid", id); err != nil {
+					restoreDeletedBYOKRoutes(deletedRoutes)
+					_ = util.WriteFile(f, original)
+					return false
+				}
+			}
+		}
 		if err := saveProxyRouteStash("droid", remaining); err != nil {
+			restoreDeletedBYOKRoutes(deletedRoutes)
 			if restoreErr := util.WriteFile(f, original); restoreErr != nil {
 				util.L.Err("droid proxy rollback failed: " + restoreErr.Error())
 			}
@@ -884,8 +937,15 @@ func DroidProxyWired() bool {
 					continue
 				}
 				_, base, headers, routeOK := droidModelRoute(model)
+				if !routeOK {
+					break
+				}
 				upstream, headerOK := headers.Get(headroomBaseURLHeader)
-				if routeOK && sameProxyBase(base, ProxyEndpointFor("droid")) && headerOK && upstream == entry.Upstream {
+				routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
+				matchesProxy := sameProxyBase(base, ProxyEndpointFor("droid")) && headerOK && upstream == entry.Upstream
+				route, routeExists := util.ReadBYOKRoute("droid:" + id)
+				matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
+				if matchesProxy || matchesBYOK {
 					found = true
 				}
 				break

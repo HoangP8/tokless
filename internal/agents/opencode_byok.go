@@ -13,22 +13,31 @@ import (
 
 // openCodeBYOK is one user-defined provider that can ride the headroom proxy.
 type openCodeBYOK struct {
-	ID      string
-	File    string
-	BaseURL string
-	APIKey  string
-	Npm     string
+	ID          string
+	File        string
+	BaseURL     string
+	APIKey      string
+	Npm         string
+	Protocol    string
+	RouteHeader string
 }
 
 // openCodeConfigFiles returns every global OpenCode config that may hold providers,
 // in OpenCode load order (config.json first → opencode.json → opencode.jsonc).
 func openCodeConfigFiles() []string {
 	dir := util.OpenCodePathsResolved().Dir
-	return []string{
+	paths := []string{
 		filepath.Join(dir, "config.json"),
 		filepath.Join(dir, "opencode.json"),
 		filepath.Join(dir, "opencode.jsonc"),
 	}
+	custom := util.OpenCodePathsResolved().Config
+	for _, path := range paths {
+		if path == custom {
+			return paths
+		}
+	}
+	return append(paths, custom)
 }
 
 // DiscoverOpenCodeBYOK finds user providers with a real upstream + credential.
@@ -83,7 +92,7 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 					a.npm = s
 				}
 			}
-			if base != "" && isAbsoluteHTTP(base) && !sameProxyBase(base, proxyBase) {
+			if base != "" && isValidBYOKUpstream(base) && !sameProxyBase(base, proxyBase) {
 				a.base = base
 				a.file = path
 			}
@@ -110,14 +119,26 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 			continue
 		}
 		out = append(out, openCodeBYOK{
-			ID:      id,
-			File:    a.file,
-			BaseURL: a.base,
-			APIKey:  a.key,
-			Npm:     a.npm,
+			ID:       id,
+			File:     a.file,
+			BaseURL:  a.base,
+			APIKey:   a.key,
+			Npm:      a.npm,
+			Protocol: openCodeProtocol(a.npm),
 		})
 	}
 	return out
+}
+
+func openCodeProtocol(npm string) string {
+	switch strings.TrimSpace(npm) {
+	case "@ai-sdk/anthropic":
+		return "anthropic-messages"
+	case "@ai-sdk/openai-compatible", "@ai-sdk/openai":
+		return "openai-chat"
+	default:
+		return ""
+	}
 }
 
 func providerBaseAndKey(m *util.OrderedMap) (base, key string) {
@@ -174,7 +195,11 @@ func isAbsoluteHTTP(raw string) bool {
 	if err != nil {
 		return false
 	}
-	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+}
+
+func isValidBYOKUpstream(raw string) bool {
+	return isAbsoluteHTTP(raw) && util.ValidBYOKUpstream(raw)
 }
 
 // SyncOpenCodeBYOKRoutes is retained for command output compatibility.
@@ -346,7 +371,7 @@ func setOpenCodeProviderRoute(path, id, baseURL, upstream string) bool {
 	if current == "" {
 		return false
 	}
-	if upstream == "" && current != ProxyEndpointFor("opencode") {
+	if upstream == "" && current != ProxyEndpointFor("opencode") && current != util.BYOKGatewayEndpoint() && baseURL != util.BYOKGatewayEndpoint() {
 		return false
 	}
 	headers, ok := mapChild(options, "headers")

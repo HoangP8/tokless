@@ -104,6 +104,8 @@ func TestCursorDetectionRejectsUnrelatedAgentCLI(t *testing.T) {
 
 func TestCursorDetectionWindowsOfficialPaths(t *testing.T) {
 	root := t.TempDir()
+	util.SetHomeOverride(root)
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	t.Setenv("LOCALAPPDATA", filepath.Join(root, "local"))
 	t.Setenv("ProgramFiles", filepath.Join(root, "programs"))
 	t.Setenv("PATH", t.TempDir())
@@ -127,6 +129,8 @@ func TestCursorDetectionWSLWindowsDesktop(t *testing.T) {
 	skipOnWindows(t)
 	root := t.TempDir()
 	home := filepath.Join(root, "mnt", "c", "Users", "CursorUser")
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
 	t.Setenv("WSL_INTEROP", "1")
 	t.Setenv("PATH", filepath.Join(root, "bin"))
@@ -159,6 +163,8 @@ func TestCursorDetectionWSLWindowsDesktop(t *testing.T) {
 
 func TestCursorDetectionMacOfficialBundles(t *testing.T) {
 	root := t.TempDir()
+	util.SetHomeOverride(root)
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	t.Setenv("PATH", t.TempDir())
 	oldGOOS, oldRoot := goosForDetect, cursorDetectRoot
 	goosForDetect, cursorDetectRoot = "darwin", root
@@ -177,6 +183,8 @@ func TestCursorDetectionMacOfficialBundles(t *testing.T) {
 
 func TestCursorDetectionLinuxDesktopFileValidation(t *testing.T) {
 	root := t.TempDir()
+	util.SetHomeOverride(root)
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	t.Setenv("PATH", t.TempDir())
 	oldGOOS, oldRoot := goosForDetect, cursorDetectRoot
 	goosForDetect, cursorDetectRoot = "linux", root

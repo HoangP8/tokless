@@ -105,7 +105,11 @@ func codexProxyBlock(endpoint string, byok *openCodeBYOK) *util.TomlBlock {
 		return block
 	}
 	block.Set("env_key", codexByokKeyVar)
-	block.Set("env_http_headers", map[string]string{headroomBaseURLHeader: codexByokURLVar})
+	headers := map[string]string{headroomBaseURLHeader: codexByokURLVar}
+	if byok.RouteHeader != "" {
+		headers[byokRouteHeaderKey] = codexByokRouteVar
+	}
+	block.Set("env_http_headers", headers)
 	block.Set("supports_websockets", false)
 	return block
 }
@@ -260,8 +264,12 @@ func codexMatchedMarkedSection(raw, endpoint string) (string, []string, bool) {
 	section := strings.TrimSpace(raw[start:end])
 	extras := codexRootExtras(section)
 	core := strings.TrimSpace(codexWithoutLines(section, extras))
+	byok := &openCodeBYOK{}
+	if strings.Contains(core, byokRouteHeaderKey) {
+		byok.RouteHeader = codexByokRouteVar
+	}
 	ok := core == strings.TrimSpace(codexProxySection(endpoint, nil)) ||
-		core == strings.TrimSpace(codexProxySection(endpoint, &openCodeBYOK{})) ||
+		core == strings.TrimSpace(codexProxySection(endpoint, byok)) ||
 		core == strings.TrimSpace(strings.Replace(
 			codexProxySection(endpoint, nil),
 			"supports_websockets = false",
@@ -366,8 +374,13 @@ func codexProxyOwned(raw, endpoint string) bool {
 // codexByokFlavor reports whether an existing headroom provider block was
 // written in the BYOK flavor.
 func codexByokFlavor(raw string) *openCodeBYOK {
-	if strings.Contains(codexProviderBlock(raw), "env_http_headers") {
-		return &openCodeBYOK{}
+	block := codexProviderBlock(raw)
+	if strings.Contains(block, "env_http_headers") {
+		byok := &openCodeBYOK{}
+		if strings.Contains(block, byokRouteHeaderKey) {
+			byok.RouteHeader = "__tokless_route__"
+		}
+		return byok
 	}
 	return nil
 }
@@ -442,16 +455,30 @@ func stripV1Suffix(u string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(u, "/"), "/v1")
 }
 
-// codexPickBYOK chooses the BYOK provider codex should ride: an already-wired
-// .env keeps its provider, else the user's current provider when discovered,
-// else the first discovered one.
+// codexPickBYOK chooses only an explicitly identified BYOK provider. Multiple
+// discovered providers must never be selected by config order.
 func codexPickBYOK(raw string) *openCodeBYOK {
-	if codexUsesChatGPTAuth() {
-		return nil
-	}
 	byoks := byokProvidersCached()
 	if len(byoks) == 0 {
 		return nil
+	}
+	if id := codexRootValue(raw, "model_provider"); id != "" && id != "headroom" {
+		for i := range byoks {
+			if byoks[i].ID == id {
+				return &byoks[i]
+			}
+		}
+		return nil
+	}
+	if codexUsesChatGPTAuth() {
+		return nil
+	}
+	if route := codexDotEnvValue(codexByokRouteVar); route != "" {
+		for i := range byoks {
+			if strings.HasPrefix(route, "codex:"+byoks[i].ID+".") {
+				return &byoks[i]
+			}
+		}
 	}
 	if url := codexDotEnvValue(codexByokURLVar); url != "" {
 		for i := range byoks {
@@ -460,14 +487,10 @@ func codexPickBYOK(raw string) *openCodeBYOK {
 			}
 		}
 	}
-	if id := codexRootValue(raw, "model_provider"); id != "" && id != "headroom" {
-		for i := range byoks {
-			if byoks[i].ID == id {
-				return &byoks[i]
-			}
-		}
+	if len(byoks) == 1 {
+		return &byoks[0]
 	}
-	return &byoks[0]
+	return nil
 }
 
 // codexDotEnvValue reads one KEY=value line from CODEX_HOME/.env.
@@ -488,17 +511,7 @@ func codexDotEnvValuePresent(key string) (string, bool) {
 }
 
 func byokProvidersCached() []openCodeBYOK {
-	providers := discoverCodexBYOK()
-	seen := make(map[string]bool, len(providers))
-	for _, provider := range providers {
-		seen[provider.ID] = true
-	}
-	for _, provider := range DiscoverOpenCodeBYOK() {
-		if !seen[provider.ID] {
-			providers = append(providers, provider)
-		}
-	}
-	return providers
+	return discoverCodexBYOK()
 }
 
 var reCodexProviderHeader = regexp.MustCompile(`(?m)^\[model_providers\.((?:"[^"]+")|(?:'(?:[^']|'')+')|[A-Za-z0-9_-]+)\][ \t]*(?:#.*)?$`)
@@ -520,13 +533,21 @@ func discoverCodexBYOK() []openCodeBYOK {
 		}
 		envKey := codexNamedProviderField(raw, match[1], "env_key")
 		apiKey := codexNamedProviderField(raw, match[1], "api_key")
+		wireAPI := codexNamedProviderField(raw, match[1], "wire_api")
 		if envKey != "" {
 			apiKey = strings.TrimSpace(os.Getenv(envKey))
 		}
 		if apiKey == "" {
 			continue
 		}
-		providers = append(providers, openCodeBYOK{ID: id, File: util.CodexPathsResolved().Config, BaseURL: base, APIKey: apiKey})
+		protocol := ""
+		switch wireAPI {
+		case "responses":
+			protocol = "openai-responses"
+		case "chat":
+			protocol = "openai-chat"
+		}
+		providers = append(providers, openCodeBYOK{ID: id, File: util.CodexPathsResolved().Config, BaseURL: base, APIKey: apiKey, Protocol: protocol})
 	}
 	return providers
 }
@@ -607,6 +628,8 @@ func codexTOMLWellFormed(raw string) bool {
 
 const codexByokKeyVar = "TOKLESS_CODEX_API_KEY"
 const codexByokURLVar = "TOKLESS_HEADROOM_BASE_URL"
+const codexByokRouteVar = "TOKLESS_CODEX_ROUTE"
+const byokRouteHeaderKey = "X-Tokless-Route"
 
 func codexDotEnvPath() string {
 	return filepath.Join(util.CodexPathsResolved().Dir, ".env")
@@ -661,10 +684,14 @@ func writeCodexByokDotEnv(b *openCodeBYOK) bool {
 			return false
 		}
 	}
-	return upsertCodexDotEnv([][2]string{
+	kvPairs := [][2]string{
 		{codexByokKeyVar, b.APIKey},
 		{codexByokURLVar, stripV1Suffix(b.BaseURL)},
-	}, false)
+	}
+	if b.RouteHeader != "" {
+		kvPairs = append(kvPairs, [2]string{codexByokRouteVar, b.RouteHeader})
+	}
+	return upsertCodexDotEnv(kvPairs, false)
 }
 
 func removeCodexByokDotEnv(b *openCodeBYOK) bool {
@@ -679,7 +706,11 @@ func removeCodexByokDotEnv(b *openCodeBYOK) bool {
 			return false
 		}
 	}
-	return upsertCodexDotEnv([][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}, true)
+	removePairs := [][2]string{{codexByokKeyVar, ""}, {codexByokURLVar, ""}}
+	if b.RouteHeader != "" {
+		removePairs = append(removePairs, [2]string{codexByokRouteVar, ""})
+	}
+	return upsertCodexDotEnv(removePairs, true)
 }
 
 func removeCodexByokDotEnvOwned(b *openCodeBYOK, stash codexStash) bool {
@@ -756,6 +787,17 @@ func restoreCodexConfig(path, raw string, existed bool) error {
 // ConfigureCodexProxy injects headroom's persistent-provider scope into
 // config.toml.
 func ConfigureCodexProxy() (changed bool, file string) {
+	file = util.CodexPathsResolved().Config
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureCodexProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("codex proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureCodexProxyLocked() (changed bool, file string) {
 	p := util.CodexPathsResolved()
 	_ = util.EnsureDir(p.Dir)
 	raw, ok := util.ReadFileSafe(p.Config)
@@ -772,6 +814,8 @@ func ConfigureCodexProxy() (changed bool, file string) {
 	tookOver := false
 	stashRaw, stashExists := util.ReadFileSafe(codexStashPath())
 	stashCreated := false
+	routeRegistered := false
+	var previousRoute BYOKRoute
 	if !codexProxyWritable(raw, endpoint) {
 		takeover := codexTakeoverTarget(raw)
 		if takeover == nil {
@@ -793,6 +837,20 @@ func ConfigureCodexProxy() (changed bool, file string) {
 		stashCreated = true
 		byok = takeover
 		tookOver = true
+		if takeover.Protocol != "" && takeover.BaseURL != "" {
+			normalizedUpstream := stripV1Suffix(takeover.BaseURL)
+			_, routeHeader, prev, routeOK := registerBYOKRoute("codex", takeover.ID, takeover.Protocol, normalizedUpstream)
+			if routeOK {
+				takeover.RouteHeader = routeHeader
+				byok = takeover
+				routeRegistered = true
+				previousRoute = prev
+			}
+		}
+		if takeover.Protocol != "" && takeover.BaseURL != "" && !routeRegistered {
+			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
+			return false, p.Config
+		}
 	}
 	if byok != nil && !tookOver {
 		if stashExists {
@@ -806,6 +864,18 @@ func ConfigureCodexProxy() (changed bool, file string) {
 				return false, p.Config
 			}
 			stashCreated = true
+		}
+		if byok.Protocol != "" && byok.BaseURL != "" {
+			if route, ok := util.ReadBYOKRoute("codex:" + byok.ID); ok {
+				byok.RouteHeader = util.BYOKRouteHeader(route)
+			} else {
+				_, routeHeader, prev, routeOK := registerBYOKRoute("codex", byok.ID, byok.Protocol, stripV1Suffix(byok.BaseURL))
+				if !routeOK {
+					return false, p.Config
+				}
+				byok.RouteHeader, previousRoute = routeHeader, prev
+				routeRegistered = true
+			}
 		}
 	}
 	var rootExtras []string
@@ -830,18 +900,27 @@ func ConfigureCodexProxy() (changed bool, file string) {
 		next = codexInjectRootExtras(next, rootExtras)
 	}
 	if next == original {
+		if routeRegistered && byok != nil {
+			rollbackBYOKRouteLogged("codex", byok.ID, previousRoute)
+		}
 		if stashCreated {
 			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
 		}
 		return false, p.Config
 	}
 	if util.WriteFile(p.Config, next) != nil {
+		if routeRegistered && byok != nil {
+			rollbackBYOKRouteLogged("codex", byok.ID, previousRoute)
+		}
 		if stashCreated {
 			_ = restoreCodexConfig(codexStashPath(), stashRaw, stashExists)
 		}
 		return false, p.Config
 	}
 	if byok != nil && !writeCodexByokDotEnv(byok) {
+		if routeRegistered {
+			rollbackBYOKRouteLogged("codex", byok.ID, previousRoute)
+		}
 		if err := restoreCodexConfig(p.Config, original, ok); err != nil {
 			return false, p.Config
 		}
@@ -857,7 +936,17 @@ func ConfigureCodexProxy() (changed bool, file string) {
 
 // RemoveCodexProxy drops the provider scope only while its values still match
 // what tokless set.
-func RemoveCodexProxy() bool {
+func RemoveCodexProxy() (removed bool) {
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeCodexProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("codex proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeCodexProxyLocked() bool {
 	p := util.CodexPathsResolved()
 	raw, ok := util.ReadFileSafe(p.Config)
 	if !ok {
@@ -925,6 +1014,13 @@ func RemoveCodexProxy() bool {
 			return false
 		}
 		return false
+	}
+	if byok != nil && byok.ID != "" {
+		if err := deleteBYOKRoute("codex", byok.ID); err != nil {
+			_ = restoreCodexConfig(p.Config, raw, true)
+			_ = restoreCodexConfig(dotEnvPath, dotEnvRaw, dotEnvExisted)
+			return false
+		}
 	}
 	if stash.ProviderID != "" || stash.Byok {
 		if err := clearCodexStash(); err != nil {

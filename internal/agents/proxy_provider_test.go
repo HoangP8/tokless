@@ -81,6 +81,39 @@ func TestProxyWireModelAndKeyEnvOverride(t *testing.T) {
 	}
 }
 
+func TestProxyEndpointForAPI(t *testing.T) {
+	if got := proxyEndpointForAPI("openai-completions"); got != "http://127.0.0.1:8787/v1" {
+		t.Fatalf("openai-completions endpoint = %q", got)
+	}
+	if got := proxyEndpointForAPI("openai-responses"); got != "http://127.0.0.1:8787/v1" {
+		t.Fatalf("openai-responses endpoint = %q", got)
+	}
+	if got := proxyEndpointForAPI("anthropic-messages"); got != "http://127.0.0.1:8787" {
+		t.Fatalf("anthropic-messages endpoint = %q", got)
+	}
+	if got := proxyEndpointForAPI("google-generative-ai"); got != "" {
+		t.Fatalf("google-generative-ai endpoint = %q, want unsupported", got)
+	}
+}
+
+func TestNormalizedHeadroomUpstream(t *testing.T) {
+	tests := []struct {
+		name, base, api, want string
+	}{
+		{name: "openai completions", base: "https://provider.example/v1", api: "openai-completions", want: "https://provider.example"},
+		{name: "openai responses", base: "https://provider.example/v1", api: "openai-responses", want: "https://provider.example"},
+		{name: "anthropic messages", base: "https://provider.example/v1", api: "anthropic-messages", want: "https://provider.example"},
+		{name: "non versioned base", base: "https://provider.example/api", api: "openai-responses", want: "https://provider.example/api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizedHeadroomUpstream(tt.base, tt.api); got != tt.want {
+				t.Fatalf("normalizedHeadroomUpstream(%q, %q) = %q, want %q", tt.base, tt.api, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfigureOpenCodeProxyRoutesBYOKThroughHeadroom(t *testing.T) {
 	opencodeProxyTestHome(t)
 	cfgPath := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")

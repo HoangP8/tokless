@@ -17,7 +17,6 @@ var grokBuildBlockRE = regexp.MustCompile(`(?s)` + regexp.QuoteMeta(grokBuildMar
 var grokBuildTableRE = regexp.MustCompile(`(?m)^\[model\.grok-build\]\s*(?:#[^\n]*)?$`)
 var grokBuildNextTableRE = regexp.MustCompile(`(?m)^\[`)
 
-
 func grokBuildHomeDir() string {
 	if v := strings.TrimSpace(os.Getenv("GROK_HOME")); v != "" {
 		return v
@@ -38,7 +37,6 @@ func stripGrokBuildBlocks(content string) string {
 	stripped = regexp.MustCompile(`\n{3,}`).ReplaceAllString(stripped, "\n\n")
 	return strings.TrimRight(stripped, "\n")
 }
-
 
 func nextGrokBuildTableIndex(content string, from int) int {
 	loc := grokBuildNextTableRE.FindStringIndex(content[from:])

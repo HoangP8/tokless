@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -29,45 +30,68 @@ func clineDesiredProvider() *util.OrderedMap {
 	return m
 }
 
-func clineRoutedProvider(existing *util.OrderedMap) (*util.OrderedMap, bool) {
+func clineRoutedProvider(existing *util.OrderedMap, register bool) (*util.OrderedMap, bool, func()) {
 	settingsValue, ok := existing.Get("settings")
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	settings, ok := settingsValue.(*util.OrderedMap)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	baseValue, ok := settings.Get("baseUrl")
 	base, baseOK := baseValue.(string)
 	if !ok || !baseOK || !isAbsoluteHTTP(base) || sameProxyBase(base, ProxyEndpointFor("cline")) {
-		return nil, false
+		return nil, false, nil
 	}
 	cloned, err := util.ParseJsonc(util.StringifyJSON(existing))
 	if err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 	routedValue, ok := cloned.Get("settings")
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	routed, ok := routedValue.(*util.OrderedMap)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	headers := util.NewOrderedMap()
 	if value, exists := routed.Get("headers"); exists {
 		var headersOK bool
 		headers, headersOK = value.(*util.OrderedMap)
 		if !headersOK {
-			return nil, false
+			return nil, false, nil
 		}
 	}
-	headers.Set(headroomBaseURLHeader, normalizedHeadroomUpstream(base, "openai-completions"))
+	upstream := normalizedHeadroomUpstream(base, "openai-completions")
+	var previousRoute BYOKRoute
+	routeRegistered := false
+	// Only fail if HTTPS upstream registration fails
+	if register && strings.HasPrefix(upstream, "https://") {
+		if _, _, prev, ok := registerBYOKRoute("cline", clineProviderName, "openai-completions", upstream); !ok {
+			return nil, false, nil
+		} else {
+			previousRoute = prev
+			routeRegistered = true
+		}
+	} else if register {
+		// HTTP upstreams can't be routed through BYOK gateway, but config still works
+		if _, _, prev, ok := registerBYOKRoute("cline", clineProviderName, "openai-completions", upstream); ok {
+			previousRoute = prev
+			routeRegistered = true
+		}
+	}
+	rollback := func() {
+		if routeRegistered {
+			rollbackBYOKRouteLogged("cline", clineProviderName, previousRoute)
+		}
+	}
+	headers.Set(headroomBaseURLHeader, upstream)
 	routed.Set("provider", clineProviderName)
 	routed.Set("baseUrl", ProxyEndpointFor("cline"))
 	routed.Set("headers", headers)
-	return cloned, true
+	return cloned, true, rollback
 }
 
 func clineProviderConfig(raw string) (*util.OrderedMap, *util.OrderedMap, error) {
@@ -135,6 +159,18 @@ func settingsValue(settings *util.OrderedMap, key string) any {
 }
 
 func ConfigureClineProxy() (bool, string) {
+	var changed bool
+	var file string
+	if err := withProxyRouteStashLock(func() error {
+		changed, file = configureClineProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("cline proxy lock failed: " + err.Error())
+	}
+	return changed, file
+}
+
+func configureClineProxyLocked() (bool, string) {
 	file := clineProvidersFile()
 	raw, exists := util.ReadFileSafe(file)
 	if !exists && util.Exists(file) {
@@ -156,6 +192,13 @@ func ConfigureClineProxy() (bool, string) {
 	desired := clineDesiredProvider()
 	changed := false
 	stateContent := ""
+	var rollbackRoute func()
+	committed := false
+	defer func() {
+		if !committed && rollbackRoute != nil {
+			rollbackRoute()
+		}
+	}()
 	if existing, ok := providers.Get(clineProviderName); ok {
 		existingMap, existingOK := existing.(*util.OrderedMap)
 		if !existingOK {
@@ -169,7 +212,7 @@ func ConfigureClineProxy() (bool, string) {
 			routed = existingMap
 		} else {
 			var routedOK bool
-			routed, routedOK = clineRoutedProvider(existingMap)
+			routed, routedOK, rollbackRoute = clineRoutedProvider(existingMap, true)
 			if !routedOK {
 				return false, file
 			}
@@ -228,6 +271,7 @@ func ConfigureClineProxy() (bool, string) {
 		}
 		return false, file
 	}
+	committed = true
 	return true, file
 }
 
@@ -244,7 +288,7 @@ func clineStateMatchesRoute(raw string, original, current any) bool {
 	if !ok || !jsonValueEqual(originalMap, original) {
 		return false
 	}
-	routed, ok := clineRoutedProvider(originalMap)
+	routed, ok, _ := clineRoutedProvider(originalMap, false)
 	return ok && jsonValueEqual(routed, current)
 }
 
@@ -261,11 +305,21 @@ func clineStateOwnsCurrent(raw string, current any) bool {
 	if !ok {
 		return false
 	}
-	routed, ok := clineRoutedProvider(original)
+	routed, ok, _ := clineRoutedProvider(original, false)
 	return ok && jsonValueEqual(routed, current)
 }
 
-func RemoveClineProxy() bool {
+func RemoveClineProxy() (removed bool) {
+	if err := withProxyRouteStashLock(func() error {
+		removed = removeClineProxyLocked()
+		return nil
+	}); err != nil {
+		util.L.Err("cline proxy lock failed: " + err.Error())
+	}
+	return removed
+}
+
+func removeClineProxyLocked() bool {
 	file := clineProvidersFile()
 	raw, ok := util.ReadFileSafe(file)
 	if !ok {
@@ -300,10 +354,23 @@ func RemoveClineProxy() bool {
 	} else {
 		return false
 	}
-	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, true); err != nil {
+	prevRoute, hasPrev := util.ReadBYOKRoute("cline:" + clineProviderName)
+	if err := deleteBYOKRoute("cline", clineProviderName); err != nil {
 		return false
 	}
-	_ = os.Remove(clineProviderStateFile())
+	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, true); err != nil {
+		if hasPrev {
+			restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+		}
+		return false
+	}
+	if err := os.Remove(clineProviderStateFile()); err != nil && !os.IsNotExist(err) {
+		_ = clineWriteFileGuarded(file, raw, util.StringifyJSON(cfg), true)
+		if hasPrev {
+			restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
+		}
+		return false
+	}
 	return true
 }
 
