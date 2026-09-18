@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/HoangP8/tokless/internal/util"
 )
 
 func tempProjectDir(t *testing.T) string {
@@ -193,6 +195,9 @@ func TestInjectCodegraphPathSkipsNonProjectDir(t *testing.T) {
 }
 
 func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	binDir := t.TempDir()
 	project := tempProjectDir(t)
 	log := filepath.Join(binDir, "calls")
@@ -224,6 +229,9 @@ func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+	origEnsureProxyUp := ensureProxyUp
+	ensureProxyUp = func() error { return nil }
+	t.Cleanup(func() { ensureProxyUp = origEnsureProxyUp })
 	if code := RunMcp([]string{"--agent", "omp", "codegraph", "serve"}); code != 0 {
 		t.Fatalf("RunMcp = %d", code)
 	}
@@ -363,5 +371,69 @@ func TestRunMcpStopsWhenProxyStartupFails(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("MCP child ran after proxy startup failure: %v", err)
+	}
+}
+
+// TestRunMcpCodegraphBootPerAgent pins the RED2 guarantee: a real wrapped
+// codegraph MCP boot builds the per-project index before the server starts,
+// for every agent tokless wires through run-mcp.
+func TestRunMcpCodegraphBootPerAgent(t *testing.T) {
+	agents := []string{"claude", "codex", "opencode", "omp", "kilo", "droid", "antigravity", "grok", "copilot", "cline", "cursor"}
+	for _, agent := range agents {
+		t.Run(agent, func(t *testing.T) {
+			binDir := t.TempDir()
+			project := tempProjectDir(t)
+			log := filepath.Join(binDir, "calls")
+			script := "#!/bin/sh\n" +
+				"if [ \"$1\" = \"--version\" ]; then echo 1.2.3; exit 0; fi\n" +
+				"if [ \"$1\" = status ]; then echo '{\"initialized\":true,\"index\":{\"state\":\"complete\",\"pendingRefs\":0}}'; exit 0; fi\n" +
+				"echo \"$*\" >> \"$CODEGRAPH_LOG\"\n" +
+				"if [ \"$1\" = init ]; then mkdir -p .codegraph; touch .codegraph/codegraph.db; exit 0; fi\n" +
+				"exit 0\n"
+			if err := os.WriteFile(filepath.Join(binDir, "codegraph"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(project, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("CODEGRAPH_LOG", log)
+			t.Setenv("TOKLESS_TEST", "")
+			proxyCalls := 0
+			oldEnsure := ensureProxyUp
+			ensureProxyUp = func() error { proxyCalls++; return nil }
+			t.Cleanup(func() { ensureProxyUp = oldEnsure })
+			oldDir, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chdir(project); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(oldDir) })
+
+			if code := RunMcp([]string{"--agent", agent, "codegraph", "serve", "--mcp"}); code != 0 {
+				t.Fatalf("RunMcp --agent %s = %d, want 0", agent, code)
+			}
+			if _, err := os.Stat(filepath.Join(project, ".codegraph", "codegraph.db")); err != nil {
+				t.Fatalf("agent %s: index not built: %v", agent, err)
+			}
+			got, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatalf("agent %s: read calls: %v", agent, err)
+			}
+			if !strings.Contains(string(got), "serve --mcp --path "+project+"\n") {
+				t.Fatalf("agent %s: MCP child not launched with project path: %q", agent, got)
+			}
+			if agent == "cursor" {
+				if proxyCalls != 0 {
+					t.Fatalf("cursor: proxy started despite manual wiring: %d", proxyCalls)
+				}
+				return
+			}
+			if proxyCalls != 1 {
+				t.Fatalf("agent %s: proxy startups = %d, want 1", agent, proxyCalls)
+			}
+		})
 	}
 }

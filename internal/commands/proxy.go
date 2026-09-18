@@ -167,6 +167,8 @@ var copilotProxyRunning = headroompkg.CopilotProxyRunning
 var startGrokProxy = headroompkg.StartGrokOAuthProxy
 var stopGrokProxy = headroompkg.StopGrokOAuthProxy
 var grokProxyOwned = headroompkg.GrokOAuthProxyOwned
+var grokProxyRunning = headroompkg.GrokOAuthProxyRunning
+var clearStaleGrokProxy = headroompkg.ClearStaleGrokProxyRecord
 
 // RunProxyUp starts the headroom proxy daemon and points agents at it.
 func RunProxyUp(opts InitOptions) int {
@@ -249,7 +251,7 @@ func RunProxyUp(opts InitOptions) int {
 	agentsBefore := make(map[string]bool)
 	grokConfigured := false
 	grokStarted := false
-	grokRunningBefore := headroompkg.GrokOAuthProxyRunning()
+	grokRunningBefore := grokProxyRunning()
 	if grokSelected {
 		wasWired := agents.GrokProxyWired()
 		changed, _, configureErr := agents.ConfigureGrokProxyChecked()
@@ -456,10 +458,15 @@ func RunProxyDown(opts InitOptions) int {
 	}
 	sharedRunningBefore := complete && proxyRunning()
 	copilotRunningBefore := copilotBefore && copilotProxyRunning()
-	grokRunningBefore := headroompkg.GrokOAuthProxyRunning()
+	grokRunningBefore := grokProxyRunning()
 	grokOAuthWiredBefore := agents.GrokOAuthProxyWired()
 	grokUsesSharedBefore := agents.GrokProxyUsesHeadroom()
 	grokStopped := false
+	if grokSelected && grokOAuthWiredBefore && !grokRunningBefore {
+		if err := clearStaleGrokProxy(); err != nil {
+			util.L.Sub("grok proxy stale record cleanup: " + err.Error())
+		}
+	}
 	autostartBefore := complete && proxyAutostartEnabled()
 	restoreCopilotWiring := func() {
 		if copilotBefore && !agents.CopilotProxyWired() {
@@ -486,7 +493,7 @@ func RunProxyDown(opts InitOptions) int {
 				util.L.Sub("proxy restore failed: " + err.Error())
 			}
 		}
-		if grokRunningBefore && !headroompkg.GrokOAuthProxyRunning() {
+		if grokRunningBefore && !grokProxyRunning() {
 			if err := startGrokProxy(); err != nil {
 				util.L.Sub("grok proxy restore failed: " + err.Error())
 			}
@@ -497,7 +504,7 @@ func RunProxyDown(opts InitOptions) int {
 			}
 		}
 	}
-	if (grokSelected || !selected) && (grokRunningBefore || grokOAuthWiredBefore) {
+	if (grokSelected || !selected) && grokRunningBefore {
 		if err := stopGrokProxy(); err != nil {
 			util.L.Err("grok OAuth proxy stop: " + err.Error())
 			restoreAll()
@@ -569,7 +576,7 @@ func RunProxyDown(opts InitOptions) int {
 			restoreAll()
 			return 1
 		}
-		if grokSelected && !grokStopped && (grokRunningBefore || grokOAuthWiredBefore) {
+		if grokSelected && !grokStopped && grokRunningBefore {
 			if err := stopGrokProxy(); err != nil {
 				util.L.Err("grok OAuth proxy stop: " + err.Error())
 				restoreAll()
@@ -597,13 +604,25 @@ func RunProxyDown(opts InitOptions) int {
 		restoreAll()
 		return 1
 	}
+	managedBefore := sharedRunningBefore || grokRunningBefore || copilotRunningBefore ||
+		autostartBefore || grokOAuthWiredBefore
+	for _, wired := range wiredBefore {
+		if wired {
+			managedBefore = true
+			break
+		}
+	}
+	if !managedBefore {
+		util.L.Raw("")
+		return 0
+	}
 	if err := disableProxyAutostart(); err != nil {
 		util.L.Sub("autostart: " + err.Error())
 		restoreAll()
 		util.L.Raw("")
 		return 1
 	}
-	if !grokStopped && (grokRunningBefore || grokOAuthWiredBefore) {
+	if !grokStopped && grokRunningBefore {
 		if err := stopGrokProxy(); err != nil {
 			util.L.Err("grok OAuth proxy stop: " + err.Error())
 			restoreAll()

@@ -27,7 +27,9 @@ func proxyCmdTestHome(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("test headroom"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { util.SetHomeOverride("") })
+	oldGrokRunning := grokProxyRunning
+	grokProxyRunning = func() bool { return false }
+	t.Cleanup(func() { util.SetHomeOverride(""); grokProxyRunning = oldGrokRunning })
 }
 
 // TestProxyInstructionsEndpointShapes pins the manual/env guidance to the same
@@ -148,15 +150,124 @@ func TestRunProxyDownDryRunMakesNoChanges(t *testing.T) {
 func TestRunProxyDownStopsAfterFullUnwire(t *testing.T) {
 	proxyCmdTestHome(t)
 	var stops int
-	oldStop, oldDisable := stopProxy, disableProxyAutostart
+	oldStop, oldDisable, oldRunning := stopProxy, disableProxyAutostart, proxyRunning
 	stopProxy = func() error { stops++; return nil }
 	disableProxyAutostart = func() error { return nil }
-	t.Cleanup(func() { stopProxy, disableProxyAutostart = oldStop, oldDisable })
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() { stopProxy, disableProxyAutostart, proxyRunning = oldStop, oldDisable, oldRunning })
 	if got := RunProxyDown(InitOptions{}); got != 0 {
 		t.Fatalf("proxy down full exit code = %d, want 0", got)
 	}
 	if stops != 1 {
 		t.Fatalf("stop proxy call count = %d, want 1", stops)
+	}
+}
+
+// TestRunProxyDownPreferenceMatrix pins when a full teardown owns the global
+// routing preference.
+func TestRunProxyDownPreferenceMatrix(t *testing.T) {
+	state := func() string {
+		if !util.ProxyRoutingPreferenceSet() {
+			return ""
+		}
+		if util.ProxyRoutingEnabled() {
+			return "enabled"
+		}
+		return "disabled"
+	}
+	cases := []struct {
+		name       string
+		start      string
+		managed    bool
+		partial    bool
+		unwireFail bool
+		localBYOK  bool
+		oauthWired bool
+		autostart  bool
+		want       string
+	}{
+		{name: "fresh full down, preference missing", start: "", managed: false, want: ""},
+		{name: "fresh full down, preference enabled", start: "enabled", managed: false, want: "enabled"},
+		{name: "fresh full down, preference disabled", start: "disabled", managed: false, want: "disabled"},
+		{name: "fresh full down with local grok BYOK, preference missing", start: "", managed: false, localBYOK: true, want: ""},
+		{name: "fresh full down with local grok BYOK, preference enabled", start: "enabled", managed: false, localBYOK: true, want: "enabled"},
+		{name: "managed full down latches disabled", start: "", managed: true, want: "disabled"},
+		{name: "managed full down over enabled latches disabled", start: "enabled", managed: true, want: "disabled"},
+		{name: "grok oauth wiring alone latches disabled", start: "", managed: false, oauthWired: true, want: "disabled"},
+		{name: "autostart alone latches disabled", start: "", managed: false, autostart: true, want: "disabled"},
+		{name: "partial down leaves preference unchanged", start: "", managed: true, partial: true, want: ""},
+		{name: "failed unwire leaves preference unchanged", start: "enabled", managed: true, unwireFail: true, want: "enabled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proxyCmdTestHome(t)
+			grokHome := t.TempDir()
+			t.Setenv("GROK_HOME", grokHome)
+			if tc.localBYOK {
+				local := "[model_providers.local]\nbase_url = \"https://provider.example/v1\"\napi_key = \"provider-key\"\n"
+				if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte(local), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch tc.start {
+			case "enabled":
+				if err := util.SetProxyRoutingEnabled(true); err != nil {
+					t.Fatal(err)
+				}
+			case "disabled":
+				if err := util.SetProxyRoutingEnabled(false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			oldStop, oldDisable, oldEnable := stopProxy, disableProxyAutostart, enableProxyAutostart
+			oldRunning, oldAuto := proxyRunning, proxyAutostartEnabled
+			oldGrokRunning, oldCopilotRunning := grokProxyRunning, copilotProxyRunning
+			oldRemove, oldWired := removeProxyAgent, proxyAgentWired
+			t.Cleanup(func() {
+				stopProxy, disableProxyAutostart, enableProxyAutostart = oldStop, oldDisable, oldEnable
+				proxyRunning, proxyAutostartEnabled = oldRunning, oldAuto
+				grokProxyRunning, copilotProxyRunning = oldGrokRunning, oldCopilotRunning
+				removeProxyAgent, proxyAgentWired = oldRemove, oldWired
+			})
+			stopProxy = func() error { return nil }
+			disableProxyAutostart = func() error { return nil }
+			enableProxyAutostart = func() error { return nil }
+			proxyAutostartEnabled = func() bool { return tc.autostart }
+			proxyRunning = func() bool { return tc.managed }
+			grokProxyRunning = func() bool { return false }
+			copilotProxyRunning = func() bool { return false }
+			if tc.oauthWired {
+				oauth := "[models]\ndefault = \"grok-4.6\"\n\n[models.extra_headers]\nx-note = \"keep\"\n"
+				if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte(oauth), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if changed, _ := agents.ConfigureGrokProxy(); !changed {
+					t.Fatal("oauth route was not configured")
+				}
+				if !agents.GrokOAuthProxyWired() {
+					t.Fatal("oauth wiring not detected")
+				}
+			}
+			if tc.unwireFail {
+				removeProxyAgent = func(string) bool { return false }
+				proxyAgentWired = func(string) bool { return true }
+			}
+
+			opts := InitOptions{}
+			if tc.partial {
+				opts.Agents = []string{"claude"}
+			}
+			wantExit := 0
+			if tc.unwireFail {
+				wantExit = 1
+			}
+			if got := RunProxyDown(opts); got != wantExit {
+				t.Fatalf("exit = %d, want %d", got, wantExit)
+			}
+			if got := state(); got != tc.want {
+				t.Fatalf("preference after down = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -530,6 +641,123 @@ func TestRunProxyUpStopsNewGrokDaemonWhenLaterAgentFails(t *testing.T) {
 	}
 }
 
+func TestRunProxyUpPreservesRunningGrokDaemonOnLaterAgentFailure(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok-4.6\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldRunningGrok := grokProxyRunning
+	oldStart, oldStop := startProxy, stopProxy
+	oldStartGrok, oldStopGrok := startGrokProxy, stopGrokProxy
+	oldEnable, oldAuto, oldRunning := enableProxyAutostart, proxyAutostartEnabled, proxyRunning
+	oldConfigure, oldRemove, oldWired := configureProxyAgent, removeProxyAgent, proxyAgentWired
+	t.Cleanup(func() {
+		grokProxyRunning = oldRunningGrok
+		startProxy, stopProxy = oldStart, oldStop
+		startGrokProxy, stopGrokProxy = oldStartGrok, oldStopGrok
+		enableProxyAutostart, proxyAutostartEnabled, proxyRunning = oldEnable, oldAuto, oldRunning
+		configureProxyAgent, removeProxyAgent, proxyAgentWired = oldConfigure, oldRemove, oldWired
+	})
+	grokProxyRunning = func() bool { return true }
+	started, stopped := 0, 0
+	startProxy = func() error { return nil }
+	stopProxy = func() error { return nil }
+	startGrokProxy = func() error { started++; return nil }
+	stopGrokProxy = func() error { stopped++; return nil }
+	enableProxyAutostart = func() error { return nil }
+	proxyAutostartEnabled = func() bool { return true }
+	proxyRunning = func() bool { return true }
+	configureProxyAgent = func(id string) bool { return id != "codex" }
+	removeProxyAgent = func(string) bool { return true }
+	proxyAgentWired = func(string) bool { return false }
+
+	if got := RunProxyUp(InitOptions{Agents: []string{"grok", "codex"}}); got != 1 {
+		t.Fatalf("exit = %d, want 1", got)
+	}
+	if stopped != 0 {
+		t.Fatalf("pre-existing Grok daemon stops = %d, want 0", stopped)
+	}
+}
+
+func TestRunProxyDownStopsRunningGrokDaemon(t *testing.T) {
+	proxyCmdTestHome(t)
+	oldRunningGrok, oldStopGrok, oldClear := grokProxyRunning, stopGrokProxy, clearStaleGrokProxy
+	t.Cleanup(func() { grokProxyRunning, stopGrokProxy, clearStaleGrokProxy = oldRunningGrok, oldStopGrok, oldClear })
+	grokProxyRunning = func() bool { return true }
+	stopped, cleared := 0, 0
+	stopGrokProxy = func() error { stopped++; return nil }
+	clearStaleGrokProxy = func() error { cleared++; return nil }
+
+	if got := RunProxyDown(InitOptions{}); got != 0 {
+		t.Fatalf("exit = %d, want 0", got)
+	}
+	if stopped != 1 {
+		t.Fatalf("Grok daemon stops = %d, want 1", stopped)
+	}
+	if cleared != 0 {
+		t.Fatalf("stale cleanup ran for live daemon: %d", cleared)
+	}
+}
+
+func TestRunProxyDownClearsStaleGrokRecordWhenDaemonGone(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok-4.6\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := agents.ConfigureGrokProxyChecked(); err != nil {
+		t.Fatal(err)
+	}
+	oldRunningGrok, oldStopGrok, oldClear := grokProxyRunning, stopGrokProxy, clearStaleGrokProxy
+	t.Cleanup(func() { grokProxyRunning, stopGrokProxy, clearStaleGrokProxy = oldRunningGrok, oldStopGrok, oldClear })
+	stopped, cleared := 0, 0
+	stopGrokProxy = func() error { stopped++; return nil }
+	clearStaleGrokProxy = func() error { cleared++; return nil }
+
+	if got := RunProxyDown(InitOptions{Agents: []string{"grok"}}); got != 0 {
+		t.Fatalf("exit = %d, want 0", got)
+	}
+	if cleared != 1 {
+		t.Fatalf("stale record cleanups = %d, want 1", cleared)
+	}
+	if stopped != 0 {
+		t.Fatalf("daemon stops = %d, want 0", stopped)
+	}
+}
+
+func TestRunProxyDownClearsStaleGrokRecordWhenDaemonNotRunning(t *testing.T) {
+	proxyCmdTestHome(t)
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "config.toml"), []byte("[models]\ndefault = \"grok-4.6\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := agents.ConfigureGrokProxyChecked(); err != nil {
+		t.Fatal(err)
+	}
+	if !agents.GrokOAuthProxyWired() {
+		t.Fatal("precondition: Grok OAuth config not wired")
+	}
+	oldClear, oldStop := clearStaleGrokProxy, stopGrokProxy
+	cleared, stopped := 0, 0
+	clearStaleGrokProxy = func() error { cleared++; return nil }
+	stopGrokProxy = func() error { stopped++; return nil }
+	t.Cleanup(func() { clearStaleGrokProxy, stopGrokProxy = oldClear, oldStop })
+
+	if got := RunProxyDown(InitOptions{Agents: []string{"grok"}}); got != 0 {
+		t.Fatalf("exit = %d, want 0", got)
+	}
+	if cleared != 1 {
+		t.Fatalf("stale record cleanup calls = %d, want 1", cleared)
+	}
+	if stopped != 0 {
+		t.Fatalf("daemon stop calls = %d, want 0 (daemon was not running)", stopped)
+	}
+}
+
 func TestRunProxyUpGrokOnlyPreservesSharedPreference(t *testing.T) {
 	proxyCmdTestHome(t)
 	grokHome := t.TempDir()
@@ -554,8 +782,8 @@ func TestRunProxyUpGrokOnlyPreservesSharedPreference(t *testing.T) {
 }
 
 func TestRunProxyUpRejectsProxyLanePortCollision(t *testing.T) {
-	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "8788")
-	t.Setenv("TOKLESS_GROK_PROXY_PORT", "8788")
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "28787")
+	t.Setenv("TOKLESS_GROK_PROXY_PORT", "28787")
 	if err := validateProxyLanePorts(); err == nil {
 		t.Fatal("duplicate proxy lane ports must fail closed")
 	}

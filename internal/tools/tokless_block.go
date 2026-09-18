@@ -396,7 +396,12 @@ func stripIndexPreamble(head []string) []string {
 
 func isToklessIndexPreamble(lines []string) bool {
 	body := strings.Join(lines, "\n")
-	return strings.Contains(body, "- **Principles**") || strings.Contains(body, "- **Response Style") || strings.Contains(body, "- **Code Index")
+	return strings.Contains(body, "Principles —") ||
+		strings.Contains(body, "Response Style") ||
+		strings.Contains(body, "Code Index") ||
+		strings.Contains(body, "- **Principles**") ||
+		strings.Contains(body, "- **Response Style") ||
+		strings.Contains(body, "- **Code Index")
 }
 
 func writeOwnerAtPath(path, owner string) {

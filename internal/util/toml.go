@@ -2,6 +2,7 @@ package util
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -68,9 +69,14 @@ func fmtTomlValue(v TomlValue) string {
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case map[string]string:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 		var parts []string
-		for k, val := range t {
-			parts = append(parts, k+` = "`+tomlEscapeStr(val)+`"`)
+		for _, k := range keys {
+			parts = append(parts, k+` = "`+tomlEscapeStr(t[k])+`"`)
 		}
 		return "{ " + strings.Join(parts, ", ") + " }"
 	}
@@ -95,8 +101,13 @@ func RenderBlock(block *TomlBlock) string {
 	if env, ok := block.Fields["env"].(map[string]string); ok {
 		lines = append(lines, "")
 		lines = append(lines, "["+block.Header+".env]")
-		for k, v := range env {
-			lines = append(lines, k+` = "`+tomlEscapeStr(v)+`"`)
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			lines = append(lines, k+` = "`+tomlEscapeStr(env[k])+`"`)
 		}
 	}
 	return strings.Join(lines, "\n") + "\n"

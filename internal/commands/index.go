@@ -150,47 +150,6 @@ func RunIndex(opts InitOptions, auto bool) int {
 	return 0
 }
 
-// RunCodegraphAutoIndex indexes only CodeGraph for MCP startup.
-func RunCodegraphAutoIndex(workspace ...string) int {
-	dir := ""
-	if len(workspace) > 0 {
-		dir = workspace[0]
-	}
-	if dir == "" {
-		var err error
-		dir, err = os.Getwd()
-		if err != nil {
-			util.L.Err("cannot resolve current directory: " + err.Error())
-			return 1
-		}
-	}
-	dir = findProjectDir(dir)
-	if !looksLikeProject(dir) {
-		return 0
-	}
-	return runCodegraphAutoIndex(dir)
-}
-
-// RunCodegraphMcpBootstrap initializes or repairs the CodeGraph index.
-func RunCodegraphMcpBootstrap(workspace ...string) int {
-	dir := ""
-	if len(workspace) > 0 {
-		dir = workspace[0]
-	}
-	if dir == "" {
-		var err error
-		dir, err = os.Getwd()
-		if err != nil {
-			return 0
-		}
-	}
-	dir = findProjectDir(dir)
-	if !looksLikeProject(dir) || tools.CodegraphIndexHealthy(dir) {
-		return 0
-	}
-	return runCodegraphAutoIndex(dir)
-}
-
 func runCodegraphAutoIndex(dir string) int {
 	ok, err := tools.RunCodegraphIndex(dir, core.RunOpts{})
 	if err != nil {

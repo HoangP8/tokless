@@ -72,7 +72,7 @@ func TestRunProxyForegroundPersistsRuntimeBeforeExec(t *testing.T) {
 	oldExec := proxyExec
 	t.Cleanup(func() { proxyExec = oldExec })
 	proxyExec = func(gotBin string, gotArgs, env []string) error {
-		if gotBin != bin || !equalStrings(gotArgs, []string{bin, "proxy", "--port", "9123", "--no-cache", "--anthropic-api-url", "https://api.anthropic.com", "--openai-api-url", "https://api.openai.com"}) {
+		if gotBin != bin || !equalStrings(gotArgs, append([]string{bin}, proxyArgs(9123)...)) {
 			t.Fatalf("exec = %q %v", gotBin, gotArgs)
 		}
 		for _, value := range env {

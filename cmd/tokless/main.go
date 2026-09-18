@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -193,6 +194,13 @@ func run() int {
 			return 1
 		}
 		if err := headroompkg.StartProxy(); err != nil {
+			util.L.Err(err.Error())
+			return 1
+		}
+		return 0
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "__byok-gateway-serve" {
+		if err := headroompkg.RunBYOKGatewayServe(); err != nil && err != http.ErrServerClosed {
 			util.L.Err(err.Error())
 			return 1
 		}

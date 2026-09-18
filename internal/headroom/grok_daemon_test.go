@@ -89,7 +89,7 @@ func TestStartGrokOAuthProxyRetainsRecordWhenRollbackProcessSurvives(t *testing.
 	proxyKill = func(*os.Process) error { return nil }
 	proxyWait = func(*os.Process) error { return os.ErrProcessDone }
 	proxyGone = func(*os.Process) bool { return false }
-	proxyLiveZProbe = func(time.Duration) bool { return false }
+	grokProxyLiveZProbe = func(time.Duration) bool { return false }
 	now := time.Unix(100, 0)
 	proxyNow = func() time.Time { return now }
 	proxySleep = func(time.Duration) { now = now.Add(proxyReadyTimeout) }
@@ -137,7 +137,7 @@ func TestStartGrokOAuthProxyRefusesIdentityChangeDuringReadiness(t *testing.T) {
 	proxyKill = func(*os.Process) error { return nil }
 	proxyWait = func(*os.Process) error { return os.ErrProcessDone }
 	proxyGone = func(*os.Process) bool { return true }
-	proxyLiveZProbe = func(time.Duration) bool { return false }
+	grokProxyLiveZProbe = func(time.Duration) bool { return false }
 	if err := StartGrokOAuthProxy(); err == nil || !strings.Contains(err.Error(), "identity changed") {
 		t.Fatalf("StartGrokOAuthProxy error = %v, want readiness identity refusal", err)
 	}
@@ -148,6 +148,7 @@ func TestStartGrokOAuthProxyCleansUpWhenIdentityNeverSurfaces(t *testing.T) {
 	bin := proxyTestBin(t)
 	proxySpawn = func(cmd *exec.Cmd) error { cmd.Process = &os.Process{Pid: 4251}; return nil }
 	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, os.ErrNotExist }
+	grokProxyLiveZProbe = func(time.Duration) bool { return false }
 	killed, waited := false, false
 	proxyKill = func(*os.Process) error { killed = true; return nil }
 	proxyWait = func(*os.Process) error { waited = true; return nil }
@@ -164,6 +165,7 @@ func TestStartGrokOAuthProxyCleansUpWhenIdentityNeverSurfaces(t *testing.T) {
 }
 
 func TestStopGrokOAuthProxyRefusesReplacementRecordDuringStaleCleanup(t *testing.T) {
+	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	pidFile, _ := grokProxyFiles()
@@ -177,6 +179,7 @@ func TestStopGrokOAuthProxyRefusesReplacementRecordDuringStaleCleanup(t *testing
 	}
 	oldIdentity, oldGone := proxyIdentity, proxyGone
 	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, os.ErrNotExist }
+	grokProxyLiveZProbe = func(time.Duration) bool { return false }
 	proxyGone = func(*os.Process) bool {
 		if err := os.WriteFile(pidFile, []byte(replacement), 0o600); err != nil {
 			t.Fatal(err)
@@ -191,5 +194,84 @@ func TestStopGrokOAuthProxyRefusesReplacementRecordDuringStaleCleanup(t *testing
 	got, ok := util.ReadFileSafe(pidFile)
 	if !ok || got != replacement {
 		t.Fatalf("replacement ownership record = %q (ok=%v)", got, ok)
+	}
+}
+
+func TestClearStaleGrokProxyRecordRemovesOrphan(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	pidFile, _ := grokProxyFiles()
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pidFile, []byte(`{"pid":4248,"executable":"/nonexistent","args":["proxy"],"start_fingerprint":"old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, os.ErrNotExist }
+	proxyGone = func(*os.Process) bool { return true }
+	grokProxyLiveZProbe = func(time.Duration) bool { return false }
+
+	if err := ClearStaleGrokProxyRecord(); err != nil {
+		t.Fatalf("ClearStaleGrokProxyRecord error = %v", err)
+	}
+	if _, ok := util.ReadFileSafe(pidFile); ok {
+		t.Fatal("orphaned ownership record survived stale cleanup")
+	}
+}
+
+func TestClearStaleGrokProxyRecordRetainsHealthyListener(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	pidFile, _ := grokProxyFiles()
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"pid":4248,"executable":"/nonexistent","args":["proxy"],"start_fingerprint":"old"}`
+	if err := os.WriteFile(pidFile, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, os.ErrNotExist }
+	proxyGone = func(*os.Process) bool { return true }
+	grokProxyLiveZProbe = func(time.Duration) bool { return true }
+
+	if err := ClearStaleGrokProxyRecord(); err == nil || !strings.Contains(err.Error(), "healthy listener remains") {
+		t.Fatalf("ClearStaleGrokProxyRecord error = %v", err)
+	}
+	got, ok := util.ReadFileSafe(pidFile)
+	if !ok || got != raw {
+		t.Fatalf("ownership record = %q (ok=%v), want retained", got, ok)
+	}
+}
+
+func TestClearStaleGrokProxyRecordRetainsLiveProcess(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	pidFile, _ := grokProxyFiles()
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"pid":4248,"executable":"/nonexistent","args":["proxy"],"start_fingerprint":"old"}`
+	if err := os.WriteFile(pidFile, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: "/bin/headroom", Args: []string{"proxy"}, Start: "old"}, nil
+	}
+	killed := false
+	proxyKill = func(*os.Process) error { killed = true; return nil }
+	grokProxyLiveZProbe = func(time.Duration) bool { return true }
+
+	if err := ClearStaleGrokProxyRecord(); err == nil || !strings.Contains(err.Error(), "still identifiable") {
+		t.Fatalf("ClearStaleGrokProxyRecord error = %v", err)
+	}
+	if killed {
+		t.Fatal("stale cleanup signaled a live process")
+	}
+	got, ok := util.ReadFileSafe(pidFile)
+	if !ok || got != raw {
+		t.Fatalf("ownership record = %q (ok=%v), want retained", got, ok)
 	}
 }
