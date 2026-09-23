@@ -250,25 +250,7 @@ func readMcpProbeResponse(rd *bufio.Reader, framed bool) ([]byte, error) {
 }
 
 func toklessRunMcpCommand() string {
-	self, err := os.Executable()
-	if err != nil {
-		return whichToklessOrBare()
-	}
-	if resolved, err := filepath.EvalSymlinks(self); err == nil && resolved != "" {
-		self = resolved
-	}
-	if IsGoTestExecutable(self) || isEphemeralBinary(self) {
-		return whichToklessOrBare()
-	}
-	return self
-}
-
-func isEphemeralBinary(p string) bool {
-	p = filepath.Clean(p)
-	if strings.HasPrefix(filepath.Base(p), "go-build") {
-		return true
-	}
-	return strings.HasPrefix(p, "/tmp/") || strings.Contains(p, string(filepath.Separator)+"tmp"+string(filepath.Separator))
+	return ToklessPersistedAbs()
 }
 
 // WrapAutoIndex routes an MCP launch through `tokless run-mcp --agent <id>` so

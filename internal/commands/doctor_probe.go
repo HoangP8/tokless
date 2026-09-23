@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +30,35 @@ func probeAgentRuntime(agentID string) []runtimeIssue {
 			out = append(out, runtimeIssue{kind: "hook", detail: detail})
 		}
 	}
+	for _, file := range managedRuntimeFiles(agentID) {
+		if detail := probeRuntimeFile(file); detail != "" {
+			out = append(out, runtimeIssue{kind: "hook", detail: detail})
+		}
+	}
 	for _, spawn := range managedMcpSpawns(agentID) {
 		if detail := probeMcpSpawn(spawn.Command, spawn.Args); detail != "" {
 			out = append(out, runtimeIssue{kind: "mcp", detail: detail})
 		}
 	}
 	return out
+}
+
+type runtimeFile struct {
+	path    string
+	markers []string
+}
+
+func probeRuntimeFile(file runtimeFile) string {
+	raw, ok := util.ReadFileSafe(file.path)
+	if !ok {
+		return ""
+	}
+	for _, marker := range file.markers {
+		if !strings.Contains(raw, marker) {
+			return "RTK integration file invalid: " + shortPath(file.path)
+		}
+	}
+	return ""
 }
 
 // --- hooks ---
@@ -44,7 +68,7 @@ func probeHookCommand(command string) string {
 	if command == "" {
 		return "empty hook command"
 	}
-	fields := strings.Fields(command)
+	fields := util.SplitCommand(command)
 	if len(fields) == 0 {
 		return "empty hook command"
 	}
@@ -66,9 +90,6 @@ func probeHookCommand(command string) string {
 
 // windowsBashHostilePath reports unquoted Windows paths with backslashes.
 func windowsBashHostilePath(exe string) bool {
-	if runtime.GOOS != "windows" && !util.IsWin {
-		return false
-	}
 	if !util.IsWin {
 		return false
 	}
@@ -343,6 +364,7 @@ func shortPath(p string) string {
 
 func managedHookCommands(agentID string) []string {
 	var raws []string
+	var direct []string
 	switch agentID {
 	case "claude":
 		raws = append(raws, readFileOrEmpty(util.ClaudeCodePaths().Settings))
@@ -358,23 +380,88 @@ func managedHookCommands(agentID string) []string {
 		raws = append(raws, readFileOrEmpty(filepath.Join(ideRootForDoctor(), ".github", "hooks", "tokless-codegraph-index.json")))
 	case "droid":
 		raws = append(raws, readFileOrEmpty(filepath.Join(util.Home(), ".factory", "hooks.json")))
+	case "cursor":
+		raws = append(raws, readFileOrEmpty(filepath.Join(util.CursorPathsResolved().Dir, "hooks.json")))
+	case "grok":
+		grokDir := os.Getenv("GROK_HOME")
+		if grokDir == "" {
+			grokDir = filepath.Join(util.Home(), ".grok")
+		}
+		raws = append(raws, readFileOrEmpty(filepath.Join(grokDir, "hooks", "tokless-rtk.json")))
+	case "cline":
+		path := filepath.Join(util.ClinePathsResolved().HooksDir, "PreToolUse")
+		if util.IsWin {
+			path += ".cjs"
+		}
+		if raw := readFileOrEmpty(path); raw != "" {
+			if command := extractClineHookCommand(raw); command != "" {
+				direct = append(direct, command)
+			}
+		}
 	}
 	var cmds []string
 	seen := map[string]bool{}
 	for _, raw := range raws {
-		for _, c := range extractJSONCommands(raw) {
-			fields := strings.Fields(c)
-			if !isToklessManagedHook(fields) {
-				continue
-			}
-			if seen[c] {
-				continue
-			}
-			seen[c] = true
-			cmds = append(cmds, c)
+		direct = append(direct, extractJSONCommands(raw)...)
+	}
+	for _, c := range direct {
+		if !isToklessManagedHook(util.SplitCommand(c)) || seen[c] {
+			continue
 		}
+		seen[c] = true
+		cmds = append(cmds, c)
 	}
 	return cmds
+}
+
+func managedRuntimeFiles(agentID string) []runtimeFile {
+	pathFor := func(path string, markers ...string) runtimeFile {
+		return runtimeFile{path: path, markers: markers}
+	}
+	switch agentID {
+	case "opencode":
+		return []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
+	case "pi":
+		return []runtimeFile{pathFor(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
+	case "omp":
+		return []runtimeFile{pathFor(filepath.Join(agents.OmpAgentDirResolved(), "extensions", "tokless-rtk.ts"), "TOKLESS", "rtk-hook", "omp")}
+	case "kilo":
+		return []runtimeFile{pathFor(filepath.Join(util.KiloPathsResolved().PluginsDir, "rtk.ts"), "tokless-kilo-rtk-v1", "rtk-rewrite")}
+	case "cline":
+		path := filepath.Join(util.ClinePathsResolved().HooksDir, "PreToolUse")
+		if util.IsWin {
+			path += ".cjs"
+		}
+		return []runtimeFile{pathFor(path, "tokless-cline-rtk-v1", "rtk-hook", "cline")}
+	default:
+		return nil
+	}
+}
+
+func extractClineHookCommand(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "exec ") {
+			if i := strings.Index(line, " rtk-hook cline"); i >= 0 {
+				exe := strings.TrimSpace(line[len("exec "):i])
+				exe = strings.Trim(exe, "'\"")
+				if exe != "" {
+					return exe + " rtk-hook cline"
+				}
+			}
+		}
+		const spawnPrefix = `spawnSync("`
+		if i := strings.Index(line, spawnPrefix); i >= 0 {
+			start := i + len(spawnPrefix)
+			if end := strings.Index(line[start:], `", ["rtk-hook", "cline"]`); end >= 0 {
+				exe, err := strconv.Unquote(`"` + line[start:start+end] + `"`)
+				if err == nil && exe != "" {
+					return exe + " rtk-hook cline"
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func ideRootForDoctor() string {

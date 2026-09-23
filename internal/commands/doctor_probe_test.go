@@ -391,6 +391,50 @@ func TestManagedHookCommandsClaude(t *testing.T) {
 	}
 }
 
+func TestManagedRuntimeFiles(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	op := util.OpenCodePathsResolved()
+	if err := os.MkdirAll(op.PluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(op.PluginsDir, "tokless-rtk.ts")
+	if err := os.WriteFile(path, []byte("const TOKLESS_BIN = \"tokless\"\nrtk-rewrite"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := managedRuntimeFiles("opencode")
+	if len(files) != 1 || files[0].path != path {
+		t.Fatalf("files = %+v", files)
+	}
+	if detail := probeRuntimeFile(files[0]); detail != "" {
+		t.Fatalf("probeRuntimeFile: %q", detail)
+	}
+	if detail := probeRuntimeFile(runtimeFile{path: path, markers: []string{"missing"}}); !strings.Contains(detail, "invalid") {
+		t.Fatalf("invalid detail = %q", detail)
+	}
+}
+
+func TestManagedHookCommandsCline(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	hooks := util.ClinePathsResolved().HooksDir
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(hooks, "PreToolUse")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n# tokless-cline-rtk-v1\nexec '/tmp/tokless' rtk-hook cline\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmds := managedHookCommands("cline")
+	if len(cmds) != 1 || cmds[0] != "/tmp/tokless rtk-hook cline" {
+		t.Fatalf("cmds = %v", cmds)
+	}
+}
+
 func TestProbeAgentRuntimeClaudeBashHostile(t *testing.T) {
 	orig := util.IsWin
 	defer func() { util.IsWin = orig }()

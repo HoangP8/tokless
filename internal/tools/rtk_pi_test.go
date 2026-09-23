@@ -94,7 +94,7 @@ export default function (pi: ExtensionAPI) {
 	if !strings.Contains(got, `event.toolName !== "bash"`) {
 		t.Errorf("extension did not use stable bash check: %s", got)
 	}
-	if strings.Contains(got, "REWRITE_TIMEOUT_MS,") && strings.Index(got,"REWRITE_TIMEOUT_MS") != strings.LastIndex(got,"REWRITE_TIMEOUT_MS") {
+	if strings.Contains(got, "REWRITE_TIMEOUT_MS,") && strings.Index(got, "REWRITE_TIMEOUT_MS") != strings.LastIndex(got, "REWRITE_TIMEOUT_MS") {
 		t.Errorf("rewrite exec still carries upstream timeout: %s", got)
 	}
 	if !strings.Contains(got, `["rtk-rewrite", "--", cmd]`) || !strings.Contains(got, "TOKLESS_BIN") {

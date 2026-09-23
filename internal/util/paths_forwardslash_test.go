@@ -7,10 +7,13 @@ func TestPersistedToklessCommand(t *testing.T) {
 	defer func() { IsWin = origIsWin }()
 
 	IsWin = true
+	if got := PersistedToklessCommand("", "rtk-hook", "droid"); got != "" {
+		t.Fatalf("empty executable produced %q", got)
+	}
 	if got, want := PersistedToklessCommand(`C:\Users\user\tokless.exe`, "rtk-hook", "droid"), "C:/Users/user/tokless.exe rtk-hook droid"; got != want {
 		t.Fatalf("command = %q, want %q", got, want)
 	}
-	if got := PersistedToklessCommand(`C:\Program Files\tokless\tokless.exe`, "rtk-hook", "droid"); got != "tokless rtk-hook droid" {
+	if got := PersistedToklessCommand(`C:\Program Files\tokless\tokless.exe`, "rtk-hook", "droid"); got != `"C:/Program Files/tokless/tokless.exe" rtk-hook droid` {
 		t.Fatalf("spaced command = %q", got)
 	}
 

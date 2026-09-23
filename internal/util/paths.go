@@ -11,14 +11,77 @@ import (
 
 var IsWin = runtime.GOOS == "windows"
 
+// ShQuote quotes a string safely for POSIX shells.
+func ShQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// SplitCommand splits a command line into arguments respecting single and double quotes.
+func SplitCommand(cmd string) []string {
+	var tokens []string
+	var token strings.Builder
+	inSingle, inDouble := false, false
+	runes := []rune(cmd)
+
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '\\' && i+1 < len(runes) {
+			next := runes[i+1]
+			if (inDouble && (next == '"' || next == '\\')) || (!inSingle && !inDouble && (next == '"' || next == '\'' || next == ' ' || next == '\t')) {
+				token.WriteRune(next)
+				i++
+				continue
+			}
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if (r == ' ' || r == '\t') && !inSingle && !inDouble {
+			if token.Len() > 0 {
+				tokens = append(tokens, token.String())
+				token.Reset()
+			}
+			continue
+		}
+		token.WriteRune(r)
+	}
+	if token.Len() > 0 {
+		tokens = append(tokens, token.String())
+	}
+	return tokens
+}
+
 // PersistedToklessCommand builds a shell command stored in an agent config.
 func PersistedToklessCommand(exe string, args ...string) string {
-	if strings.ContainsAny(exe, " \t") {
-		exe = "tokless"
-	} else if IsWin {
-		exe = strings.ReplaceAll(exe, "\\", "/")
+	if exe == "" {
+		return ""
 	}
-	return strings.Join(append([]string{exe}, args...), " ")
+	if IsWin {
+		exe = strings.ReplaceAll(exe, "\\", "/")
+		if strings.ContainsAny(exe, " \t") {
+			exe = `"` + strings.ReplaceAll(exe, `"`, `\"`) + `"`
+		}
+	} else if strings.ContainsAny(exe, " \t") {
+		exe = ShQuote(exe)
+	}
+	formattedArgs := make([]string, len(args))
+	for i, arg := range args {
+		if strings.ContainsAny(arg, " \t") {
+			if IsWin {
+				formattedArgs[i] = `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
+			} else {
+				formattedArgs[i] = ShQuote(arg)
+			}
+		} else {
+			formattedArgs[i] = arg
+		}
+	}
+	return strings.Join(append([]string{exe}, formattedArgs...), " ")
 }
 
 var homeOverride string
@@ -64,8 +127,8 @@ func ToklessAbs() string {
 	return exe
 }
 
-// ToklessPersistedAbs resolves a stable executable for commands stored in
-// agent configuration.
+// ToklessPersistedAbs resolves the stable installed executable used in
+// commands written to agent config. Marker first; then known install paths.
 func ToklessPersistedAbs() string {
 	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
 		var marker InstallRecord
@@ -73,28 +136,35 @@ func ToklessPersistedAbs() string {
 			return marker.Path
 		}
 	}
-	known := []string{filepath.Join(Home(), ".local", "bin", "tokless"), "/usr/local/bin/tokless"}
+	known := []string{filepath.Join(Home(), ".local", "bin", "tokless")}
 	if IsWin {
 		known = nil
 		if local := os.Getenv("LOCALAPPDATA"); local != "" {
 			known = append(known, filepath.Join(local, "Programs", "tokless", "tokless.exe"))
 		}
+	} else {
+		known = append(known, "/usr/local/bin/tokless")
 	}
 	for _, path := range known {
 		if stableExecutable(path) {
 			return path
 		}
 	}
-	if exe := ToklessAbsStrict(); exe != "" && stableExecutable(exe) {
-		return exe
+	if path := Which("tokless"); filepath.IsAbs(path) && stableExecutable(path) {
+		return path
 	}
-	return "tokless"
+	// Unit tests use a bare command when no installed binary exists. Never use
+	// this path for production persistence: real installs resolve above.
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return "tokless"
+	}
+	return ""
 }
 
 func stableExecutable(path string) bool {
 	if path == "" || !filepath.IsAbs(path) || strings.IndexFunc(path, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r)
-	}) >= 0 {
+		return unicode.IsControl(r) || (unicode.IsSpace(r) && r != ' ')
+	}) >= 0 || strings.TrimSpace(path) != path {
 		return false
 	}
 	info, err := os.Lstat(path)
