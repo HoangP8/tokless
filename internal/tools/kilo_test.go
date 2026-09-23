@@ -187,6 +187,7 @@ func TestKiloCodegraphWireUnwireUpdatesGlobalConfig(t *testing.T) {
 
 func TestKiloWindowsAutoIndexSpawnShape(t *testing.T) {
 	kiloToolProject(t)
+	t.Setenv("TOKLESS_TEST", "1")
 	orig := util.IsWin
 	defer func() { util.IsWin = orig }()
 	util.IsWin = true
@@ -268,8 +269,8 @@ func TestKiloRTKPluginAPI(t *testing.T) {
 		t.Fatalf("Kilo RTK wire = %v, %v", ok, err)
 	}
 	raw, _ := util.ReadFileSafe(filepath.Join(util.KiloPathsResolved().PluginsDir, "rtk.ts"))
-	absRTK, _ := filepath.Abs(util.ResolveRtkBin())
-	for _, want := range []string{"@kilocode/plugin", "Plugin", "const rtk = " + strconv.Quote(absRTK), "const server: Plugin = async ({ $ })", "tool.execute.before", "toLowerCase", "output.args", "${rtk} rewrite ${command}", ".quiet().nothrow()", "String(result.stdout).trim()", "rewritten !== command", `export default { id: "tokless-rtk", server }`, kiloRtkMarker} {
+	tokless := util.ToklessPersistedAbs()
+	for _, want := range []string{"@kilocode/plugin", "Plugin", "const rtk = " + strconv.Quote(tokless), "const server: Plugin = async ({ $ })", "tool.execute.before", "toLowerCase", "output.args", "${rtk} rtk-rewrite -- ${command}", ".quiet().nothrow()", "String(result.stdout).trim()", "rewritten !== command", "export default server", kiloRtkMarker} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("Kilo plugin missing %q: %s", want, raw)
 		}
@@ -277,7 +278,7 @@ func TestKiloRTKPluginAPI(t *testing.T) {
 	if strings.Contains(raw, `from "bun"`) {
 		t.Fatal("Kilo RTK plugin imports Bun directly")
 	}
-	if strings.Contains(raw, absRTK+" rewrite") {
+	if strings.Contains(raw, tokless+" rtk-rewrite") {
 		t.Fatal("Kilo RTK plugin embeds unsafe raw executable command")
 	}
 	_ = root
@@ -311,6 +312,7 @@ func TestKiloGlobalRTKPathsOutsideGit(t *testing.T) {
 
 func TestKiloRTKLegacyMigrationSafety(t *testing.T) {
 	root := kiloToolProject(t)
+	t.Setenv("TOKLESS_TEST", "1")
 	util.SetHomeOverride(filepath.Join(root, "home"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(root, "global-kilo"))
@@ -350,6 +352,9 @@ func TestKiloRTKPluginRuntime(t *testing.T) {
 	plugin := filepath.Join(t.TempDir(), "rtk.ts")
 	if err := os.WriteFile(plugin, []byte(kiloRtkPluginSource(rtk)), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(plugin); err != nil || strings.Contains(string(raw), `export default { id:`) {
+		t.Fatalf("Kilo plugin must export its function directly: %v", err)
 	}
 	moduleDir := filepath.Join(filepath.Dir(plugin), "node_modules", "@kilocode", "plugin")
 	if err := os.MkdirAll(moduleDir, 0o755); err != nil {

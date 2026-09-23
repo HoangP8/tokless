@@ -126,62 +126,6 @@ func rtkInstallPrebuilt(asset string, opts core.RunOpts) bool {
 	return true
 }
 
-func rtkTestShim(agent string) {
-	switch agent {
-	case "codex":
-		dir := util.CodexPathsResolved().Dir
-		_ = os.MkdirAll(dir, 0o755)
-		_ = os.Remove(filepath.Join(dir, "RTK.md"))
-	case "claude":
-		cp := util.ClaudeCodePaths()
-		dir := cp.Dir
-		_ = os.MkdirAll(dir, 0o755)
-		_ = os.Remove(filepath.Join(dir, "RTK.md"))
-		settingsPath := cp.Settings
-		if !claudeSettingsHasRtkHook(settingsPath) {
-			cfg := util.NewOrderedMap()
-			if raw, ok := util.ReadFileSafe(settingsPath); ok {
-				if m := util.TryParseJsonc(raw); m != nil {
-					cfg = m
-				}
-			}
-			hooks := getOrCreateMapT(cfg, "hooks")
-			var pre []any
-			if v, ok := hooks.Get("PreToolUse"); ok {
-				if arr, ok := v.([]any); ok {
-					pre = arr
-				}
-			}
-			entry := util.NewOrderedMap()
-			entry.Set("matcher", "Bash")
-			hook := util.NewOrderedMap()
-			hook.Set("type", "command")
-			hook.Set("command", "tokless rtk-hook claude")
-			entry.Set("hooks", []any{hook})
-			pre = append(pre, entry)
-			hooks.Set("PreToolUse", pre)
-			_ = util.WriteFile(settingsPath, util.StringifyJSON(cfg))
-		}
-	case "opencode":
-		dir := util.OpenCodePathsResolved().PluginsDir
-		_ = os.MkdirAll(dir, 0o755)
-		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk plugin shim (tokless test mode)\nexport const Plugin = async () => ({});\n")
-	case "antigravity":
-		dir := filepath.Join(util.Home(), ".gemini", "antigravity-cli")
-		_ = os.MkdirAll(dir, 0o755)
-		writeIfMissing(filepath.Join(dir, "settings.json"),
-			`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":"~/.gemini/hooks/rtk-hook-gemini.sh"}]}]}}`+"\n")
-	case "copilot":
-		agents.InstallCopilotRtkHook()
-	case "pi":
-		dir := filepath.Join(agents.PiAgentDirResolved(), "extensions")
-		_ = os.MkdirAll(dir, 0o755)
-		writeIfMissing(filepath.Join(dir, "rtk.ts"), "// rtk pi shim (tokless test)\n")
-	case "omp":
-		writeOmpRtkExtension()
-	}
-}
-
 const ompRtkExtension = `import { spawn } from "node:child_process"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 const TOKLESS = %s
@@ -227,9 +171,16 @@ func ompRtkExtensionPath() string {
 	return filepath.Join(agents.OmpAgentDirResolved(), "extensions", "tokless-rtk.ts")
 }
 
-func writeOmpRtkExtension() {
-	_ = util.EnsureDir(filepath.Dir(ompRtkExtensionPath()))
-	_ = util.WriteFile(ompRtkExtensionPath(), fmt.Sprintf(ompRtkExtension, strconv.Quote(util.ToklessAbs())))
+func writeOmpRtkExtension() bool {
+	if err := util.EnsureDir(filepath.Dir(ompRtkExtensionPath())); err != nil {
+		return false
+	}
+	return util.WriteFile(ompRtkExtensionPath(), fmt.Sprintf(ompRtkExtension, strconv.Quote(util.ToklessPersistedAbs()))) == nil
+}
+
+func ompRtkExtensionValid() bool {
+	raw, ok := util.ReadFileSafe(ompRtkExtensionPath())
+	return ok && raw == fmt.Sprintf(ompRtkExtension, strconv.Quote(util.ToklessPersistedAbs()))
 }
 
 func rtkWireOmp() core.AgentFn {
@@ -238,8 +189,10 @@ func rtkWireOmp() core.AgentFn {
 			util.L.Sub("[dry-run] would install OMP tool_call RTK extension")
 			return true, nil
 		}
-		writeOmpRtkExtension()
-		return agents.HasOmpRtkExtension(), nil
+		if !writeOmpRtkExtension() {
+			return false, nil
+		}
+		return ompRtkExtensionValid(), nil
 	}
 }
 
@@ -265,7 +218,7 @@ const server: Plugin = async ({ $ }) => ({
   },
 })
 
-export default { id: "tokless-rtk", server }
+export default server
 `
 
 func kiloRtkPath() string {
@@ -305,9 +258,9 @@ func kiloForeignBackupPath(path string) string {
 	}
 }
 
-func kiloRtkPluginSource(rtk string) string {
-	source := strings.Replace(kiloRtkPlugin, "RTK_PATH_PLACEHOLDER", strconv.Quote(rtk), 1)
-	return strings.Replace(source, "KILO_COMMAND_TEMPLATE", "`"+"${rtk} rewrite ${command}"+"`", 1)
+func kiloRtkPluginSource(executable string) string {
+	source := strings.Replace(kiloRtkPlugin, "RTK_PATH_PLACEHOLDER", strconv.Quote(executable), 1)
+	return strings.Replace(source, "KILO_COMMAND_TEMPLATE", "`"+"${rtk} rtk-rewrite -- ${command}"+"`", 1)
 }
 
 func kiloRtkWire(opts core.RunOpts) (bool, error) {
@@ -318,12 +271,8 @@ func kiloRtkWire(opts core.RunOpts) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
-	rtk := util.ResolveRtkBin()
-	if rtk == "" {
-		return false, nil
-	}
-	rtk, err := filepath.Abs(rtk)
-	if err != nil {
+	rtk := util.ToklessPersistedAbs()
+	if rtk == "" || util.ResolveRtkBin() == "" {
 		return false, nil
 	}
 	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
@@ -382,14 +331,13 @@ func kiloRtkUnwire(core.RunOpts) (bool, error) {
 func kiloRtkVerify() bool {
 	path := kiloRtkPath()
 	raw, ok := util.ReadFileSafe(path)
-	rtk := util.ResolveRtkBin()
+	rtk := util.ToklessPersistedAbs()
 	if rtk == "" {
 		return false
 	}
-	rtk, err := filepath.Abs(rtk)
-	return err == nil && ok && strings.Contains(raw, kiloRtkMarker) &&
+	return ok && strings.Contains(raw, kiloRtkMarker) &&
 		strings.Contains(raw, `tool.execute.before`) && strings.Contains(raw, `const rtk = `+strconv.Quote(rtk)) &&
-		strings.Contains(raw, "${rtk} rewrite ${command}")
+		strings.Contains(raw, "rtk-rewrite -- ${command}")
 }
 
 const clineRtkMarker = "tokless-cline-rtk-v1"
@@ -411,19 +359,14 @@ func clineRtkHookScript(exe string) string {
 			"const r = spawnSync(" + strconv.Quote(exe) + ", [\"rtk-hook\", \"cline\"], { stdio: \"inherit\" });\n" +
 			"process.exit(typeof r.status === \"number\" ? r.status : 0);\n"
 	}
-	return "#!/bin/sh\n# " + clineRtkMarker + "\nexec " + shQuote(exe) + " rtk-hook cline\n"
-}
-
-// shQuote single-quotes s for POSIX sh, safe for embedded single quotes.
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return "#!/bin/sh\n# " + clineRtkMarker + "\nexec " + util.ShQuote(exe) + " rtk-hook cline\n"
 }
 
 func clineRtkWire(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	exe := util.ToklessAbsStrict()
+	exe := util.ToklessPersistedAbs()
 	if exe == "" {
 		util.L.Err("cannot resolve absolute tokless path for Cline hook; refusing to install a PATH-dependent hook")
 		return false, nil
@@ -507,25 +450,161 @@ func clineRtkVerify() bool {
 func rtkWirePi() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
-			util.L.Sub("[dry-run] would run: rtk init -g --agent pi")
+			util.L.Sub("[dry-run] would install Pi tool_call RTK extension")
 			return true, nil
 		}
-		if os.Getenv("TOKLESS_TEST") == "1" {
-			rtkTestShim("pi")
-			return agents.HasPiRtkExtension(), nil
+		path := filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")
+		if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+			return false, err
 		}
-		rtkPath := util.ResolveRtkBin()
-		if rtkPath == "" {
-			util.L.Err("rtk binary not found on PATH or known install dirs")
+		exe := util.ToklessPersistedAbs()
+		if exe == "" {
 			return false, nil
 		}
-		r := util.Run(rtkPath, []string{"init", "-g", "--agent", "pi"}, util.RunOptions{Capture: true})
-		if r.Code != 0 {
-			util.L.Debug("rtk init --agent pi exited " + clip(r.Stderr))
-			return false, nil
-		}
-		return normalizePiRtkExtension() && agents.HasPiRtkExtension(), nil
+		return util.WriteFile(path, fmt.Sprintf(piRtkExtension, strconv.Quote(exe))) == nil && agents.HasPiRtkExtension(), nil
 	}
+}
+
+const openCodeRtkPlugin = `import { spawn } from "node:child_process"
+
+const TOKLESS_BIN = %s
+
+export const ToklessRtkPlugin = async () => ({
+  "tool.execute.before": async (input: any, output: any) => {
+    if (String(input?.tool ?? "").toLowerCase() !== "bash") return
+    const command = output?.args?.command
+    if (typeof command !== "string") return
+    const rewritten = await new Promise<string>((resolve) => {
+      const child = spawn(TOKLESS_BIN, ["rtk-rewrite", "--", command], { stdio: ["ignore", "pipe", "ignore"] })
+      let stdout = ""
+      child.stdout.setEncoding("utf8")
+      child.stdout.on("data", (chunk) => { stdout += chunk })
+      child.once("error", () => resolve(""))
+      child.once("close", (code) => resolve(code === 0 ? stdout.trim() : ""))
+    })
+    if (rewritten && rewritten !== command) output.args.command = rewritten
+  },
+})
+
+export default ToklessRtkPlugin
+`
+
+func openCodeRtkPluginPath() string {
+	return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts")
+}
+
+func rtkWireClaude() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install Claude Bash PreToolUse hook")
+			return true, nil
+		}
+		exe := util.ToklessPersistedAbs()
+		if exe == "" {
+			return false, nil
+		}
+		cp := util.ClaudeCodePaths()
+		if err := util.EnsureDir(cp.Dir); err != nil {
+			return false, err
+		}
+		cfg := util.NewOrderedMap()
+		if raw, ok := util.ReadFileSafe(cp.Settings); ok {
+			cfg = util.TryParseJsonc(raw)
+			if cfg == nil {
+				return false, nil
+			}
+		}
+		hooks := getOrCreateMapT(cfg, "hooks")
+		pre, _ := hooks.Get("PreToolUse")
+		arr, _ := pre.([]any)
+		command := claudeRtkHookCommand(exe)
+		managed := false
+		for _, value := range arr {
+			group, ok := value.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			matcher, _ := group.Get("matcher")
+			if matcher != "Bash" {
+				continue
+			}
+			hooksValue, _ := group.Get("hooks")
+			hookArr, _ := hooksValue.([]any)
+			for _, hookValue := range hookArr {
+				hook, ok := hookValue.(*util.OrderedMap)
+				if !ok {
+					continue
+				}
+				if current, _ := hook.Get("command"); claudeRtkHookManaged(fmt.Sprint(current)) {
+					hook.Set("command", command)
+					managed = true
+				}
+			}
+		}
+		if !managed {
+			group := util.NewOrderedMap()
+			group.Set("matcher", "Bash")
+			hook := util.NewOrderedMap()
+			hook.Set("type", "command")
+			hook.Set("command", command)
+			group.Set("hooks", []any{hook})
+			arr = append(arr, group)
+			hooks.Set("PreToolUse", arr)
+		}
+		if err := util.WriteFile(cp.Settings, util.StringifyJSON(cfg)); err != nil {
+			return false, err
+		}
+		agents.AllowClaudeBashPattern("Bash(rtk *)")
+		return claudeSettingsHasRtkHook(cp.Settings), nil
+	}
+}
+
+func rtkWireOpenCode() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install OpenCode tool.execute.before RTK plugin")
+			return true, nil
+		}
+		exe := util.ToklessPersistedAbs()
+		if exe == "" {
+			return false, nil
+		}
+		path := openCodeRtkPluginPath()
+		if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+			return false, err
+		}
+		if err := util.WriteFile(path, fmt.Sprintf(openCodeRtkPlugin, strconv.Quote(exe))); err != nil {
+			return false, err
+		}
+		return rtkOpenCodePluginValid(), nil
+	}
+}
+
+func rtkOpenCodePluginValid() bool {
+	raw, ok := util.ReadFileSafe(openCodeRtkPluginPath())
+	return ok && strings.Contains(raw, "tool.execute.before") && strings.Contains(raw, "rtk-rewrite") && strings.Contains(raw, "TOKLESS_BIN")
+}
+
+const piRtkExtension = `const TOKLESS_BIN = %s
+
+export default function (pi: any) {
+  pi.on("tool_call", async (event: any) => {
+    if (event?.toolName !== "bash" || typeof event?.input?.command !== "string") return
+    const command = event.input.command
+    try {
+      const result = await pi.exec(TOKLESS_BIN, ["rtk-rewrite", "--", command])
+      if (result.code !== 0 || typeof result.stdout !== "string") return
+      const rewritten = result.stdout.trim()
+      if (!rewritten || rewritten === command) return
+      return { input: { ...event.input, command: rewritten } }
+    } catch {}
+  })
+}
+`
+
+func writePiRtkExtension(path string) bool {
+	exe := util.ToklessPersistedAbs()
+	return exe != "" && util.WriteFile(path, fmt.Sprintf(piRtkExtension, strconv.Quote(exe))) == nil
 }
 
 // normalizePiRtkExtension removes imports from RTK's generated Pi extension.
@@ -540,7 +619,7 @@ func normalizePiRtkExtension() bool {
 	next = strings.ReplaceAll(next, "pi: ExtensionAPI", "pi: any")
 	next = strings.ReplaceAll(next, `if (!isToolCallEventType("bash", event)) return`, `if (event.toolName !== "bash") return`)
 	next = strings.ReplaceAll(next, `      if (cmd.startsWith("rtk ")) return`+"\n", "")
-	tokless := strconv.Quote(util.ToklessAbs())
+	tokless := strconv.Quote(util.ToklessPersistedAbs())
 	const anchor = `const result = await pi.exec("rtk", ["rewrite", cmd], {`
 	const delegate = `const result = await pi.exec(TOKLESS_BIN, ["rtk-rewrite", "--", cmd], {`
 	if strings.Contains(next, "TOKLESS_BIN") {
@@ -674,7 +753,7 @@ func removeClaudeRtkHookGroup() {
 // with the tokless wrapper so the output includes explicit permissionDecision: "allow".
 func overrideClaudeRtkHook() {
 	cp := util.ClaudeCodePaths()
-	newCmd := claudeRtkHookCommand(util.ToklessAbs())
+	newCmd := claudeRtkHookCommand(util.ToklessPersistedAbs())
 	raw, ok := util.ReadFileSafe(cp.Settings)
 	if !ok {
 		return
@@ -772,8 +851,6 @@ func overrideClaudeRtkHook() {
 		_ = util.WriteFile(cp.Settings, util.StringifyJSON(cfg))
 	}
 	agents.AllowClaudeBashPattern("Bash(rtk *)")
-	_ = os.Remove(filepath.Join(cp.Dir, "RTK.md"))
-	stripRtkRefFromMd(filepath.Join(cp.Dir, "CLAUDE.md"))
 }
 
 func claudeRtkHookCommand(exe string) string {
@@ -792,41 +869,16 @@ func claudeRtkHookManaged(command string) bool {
 	return base == "tokless" || base == "tokless.exe"
 }
 
-// stripRtkRefFromMd removes only the @RTK.md reference line from a markdown
-// file (CLAUDE.md, AGENTS.md, GEMINI.md), preserving all other user content.
-func stripRtkRefFromMd(path string) {
-	raw, ok := util.ReadFileSafe(path)
-	if !ok {
-		return
-	}
-	lines := strings.Split(raw, "\n")
-	var kept []string
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "@") && strings.HasSuffix(t, "RTK.md") {
-			continue
-		}
-		kept = append(kept, l)
-	}
-	result := strings.TrimSpace(strings.Join(kept, "\n"))
-	if result == "" {
-		_ = os.Remove(path)
-		return
-	}
-	_ = util.WriteFile(path, result+"\n")
-}
-
 func rtkWireDroid() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
 			util.L.Sub("[dry-run] would install droid PreToolUse hook (~/.factory/hooks.json) routing Execute commands through rtk")
 			return true, nil
 		}
-		agents.InstallDroidRtkHook()
-		if wd, err := os.Getwd(); err == nil {
-			_ = os.Remove(filepath.Join(wd, ".agents", "rules", "droid-rtk-rules.md"))
+		if !agents.InstallDroidRtkHook() {
+			return false, nil
 		}
-		return true, nil
+		return agents.HasDroidRtkHook(), nil
 	}
 }
 
@@ -836,11 +888,10 @@ func rtkWireAntigravity() core.AgentFn {
 			util.L.Sub("[dry-run] would install agy PreToolUse hook (~/.gemini/config/hooks.json) routing shell commands through rtk")
 			return true, nil
 		}
-		agents.InstallAntigravityRtkHook()
-		if wd, err := os.Getwd(); err == nil {
-			_ = os.Remove(filepath.Join(wd, ".agents", "rules", "antigravity-rtk-rules.md"))
+		if !agents.InstallAntigravityRtkHook() {
+			return false, nil
 		}
-		return true, nil
+		return agents.HasAntigravityRtkHook(), nil
 	}
 }
 
@@ -850,9 +901,10 @@ func rtkWireCodex() core.AgentFn {
 			util.L.Sub("[dry-run] would install codex PreToolUse hook (~/.codex/hooks.json) routing shell commands through rtk, pre-trusted in config.toml")
 			return true, nil
 		}
-		agents.RemoveCodexRtkInstruction()
-		agents.InstallCodexRtkHook()
-		return true, nil
+		if !agents.InstallCodexRtkHook() {
+			return false, nil
+		}
+		return agents.HasCodexRtkHook(), nil
 	}
 }
 
@@ -880,7 +932,7 @@ func rtkWireCopilot() core.AgentFn {
 		}
 		err := withCopilotTransaction(func() error {
 			if os.Getenv("TOKLESS_TEST") == "1" {
-				rtkTestShim("copilot")
+				agents.InstallCopilotRtkHook()
 				if err := agents.InstallCopilotIdeRtkHookSafe(); err != nil {
 					return err
 				}
@@ -898,47 +950,6 @@ func rtkWireCopilot() core.AgentFn {
 	}
 }
 
-func rtkWire(agent string) core.AgentFn {
-	return func(opts core.RunOpts) (bool, error) {
-		args := []string{"init", "-g"}
-		switch agent {
-		case "opencode":
-			args = append(args, "--opencode")
-		case "codex":
-			args = append(args, "--codex")
-		default: // claude
-			args = append(args, "--auto-patch")
-		}
-		if opts.DryRun {
-			util.L.Sub("[dry-run] would run: rtk " + strings.Join(args, " "))
-			return true, nil
-		}
-		if os.Getenv("TOKLESS_TEST") == "1" {
-			rtkTestShim(agent)
-			return true, nil
-		}
-		rtkPath := util.ResolveRtkBin()
-		if rtkPath == "" {
-			util.L.Err("rtk binary not found on PATH or known install dirs")
-			return false, nil
-		}
-		r := util.Run(rtkPath, args, util.RunOptions{Capture: true})
-		if r.Code != 0 {
-			util.L.Debug("rtk init exited " + clip(r.Stderr))
-			return false, nil
-		}
-		if agent == "claude" {
-			overrideClaudeRtkHook()
-		}
-		v := util.Run(rtkPath, []string{"init", "--show"}, util.RunOptions{Capture: true})
-		if v.Code != 0 {
-			util.L.Err("rtk init --show failed: " + clip(v.Stderr))
-			return false, nil
-		}
-		return true, nil
-	}
-}
-
 var rtk = &core.ToolManifest{
 	ID:          "rtk",
 	Label:       "RTK",
@@ -948,8 +959,8 @@ var rtk = &core.ToolManifest{
 	Channel:     core.ChannelGitHub,
 	Install:     rtkEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":   rtkWire("claude"),
-		"opencode": rtkWire("opencode"),
+		"claude":   rtkWireClaude(),
+		"opencode": rtkWireOpenCode(),
 		"codex":    rtkWireCodex(),
 		"cursor": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
@@ -958,8 +969,7 @@ var rtk = &core.ToolManifest{
 			if !agents.InstallCursorRtkHook() || !agents.ConfigureCursorRtkPermissions() {
 				return false, nil
 			}
-			WriteOwner("cursor", "rtk")
-			return agents.HasCursorRtkHook() && agents.HasCursorRtkPermissions() && HasOwner("cursor", "rtk"), nil
+			return agents.HasCursorRtkHook() && agents.HasCursorRtkPermissions(), nil
 		},
 		"antigravity": rtkWireAntigravity(),
 		"copilot":     rtkWireCopilot(),
@@ -972,24 +982,17 @@ var rtk = &core.ToolManifest{
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
-			if os.Getenv("TOKLESS_TEST") != "1" {
-				if p := util.ResolveRtkBin(); p != "" {
-					util.Run(p, []string{"init", "--uninstall", "--agent", "claude"}, util.RunOptions{})
-				}
-			}
 			removeClaudeRtkHookGroup()
 			agents.DisallowClaudeBashPattern("Bash(rtk *)")
 			RemoveOwner("claude", "rtk")
 			return true, nil
 		},
 		"opencode": func(core.RunOpts) (bool, error) {
-			if os.Getenv("TOKLESS_TEST") != "1" {
-				if p := util.ResolveRtkBin(); p != "" {
-					util.Run(p, []string{"init", "--uninstall", "--agent", "opencode"}, util.RunOptions{})
-				}
+			if err := os.Remove(openCodeRtkPluginPath()); err != nil && !os.IsNotExist(err) {
+				return false, err
 			}
 			RemoveOwner("opencode", "rtk")
-			return true, nil
+			return !rtkOpenCodePluginValid(), nil
 		},
 		"codex": func(core.RunOpts) (bool, error) {
 			agents.RemoveCodexRtkHook()
@@ -1003,7 +1006,6 @@ var rtk = &core.ToolManifest{
 			if !agents.RemoveCursorRtkHook() || !agents.RemoveCursorRtkPermissions() {
 				return false, nil
 			}
-			RemoveOwner("cursor", "rtk")
 			return true, nil
 		},
 		"antigravity": func(core.RunOpts) (bool, error) {
@@ -1031,20 +1033,17 @@ var rtk = &core.ToolManifest{
 			return true, nil
 		},
 		"pi": func(core.RunOpts) (bool, error) {
-			if os.Getenv("TOKLESS_TEST") != "1" {
-				if p := util.ResolveRtkBin(); p != "" {
-					util.Run(p, []string{"init", "--uninstall", "--agent", "pi"}, util.RunOptions{})
-				}
+			path := filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return false, err
 			}
-			_ = os.Remove(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"))
 			RemoveOwner("pi", "rtk")
-			return true, nil
+			return !agents.HasPiRtkExtension(), nil
 		},
 		"omp": func(core.RunOpts) (bool, error) {
-			if !agents.HasOmpRtkExtension() {
-				return false, nil
+			if err := os.Remove(ompRtkExtensionPath()); err != nil && !os.IsNotExist(err) {
+				return false, err
 			}
-			_ = os.Remove(ompRtkExtensionPath())
 			return !agents.HasOmpRtkExtension(), nil
 		},
 		"kilo":  kiloRtkUnwire,
@@ -1061,13 +1060,13 @@ var rtk = &core.ToolManifest{
 			return core.BoolPtr(claudeSettingsHasRtkHook(util.ClaudeCodePaths().Settings))
 		},
 		"opencode": func() *bool {
-			return core.BoolPtr(util.Exists(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "rtk.ts")))
+			return core.BoolPtr(rtkOpenCodePluginValid())
 		},
 		"codex": func() *bool {
 			return core.BoolPtr(agents.HasCodexRtkHook())
 		},
 		"cursor": func() *bool {
-			return core.BoolPtr(agents.HasCursorRtkHook() && agents.HasCursorRtkPermissions() && HasOwner("cursor", "rtk"))
+			return core.BoolPtr(agents.HasCursorRtkHook() && agents.HasCursorRtkPermissions())
 		},
 		"antigravity": func() *bool {
 			return core.BoolPtr(agents.HasAntigravityRtkHook())
@@ -1081,11 +1080,11 @@ var rtk = &core.ToolManifest{
 		"pi": func() *bool {
 			return core.BoolPtr(agents.HasPiRtkExtension())
 		},
-		"omp":   func() *bool { return core.BoolPtr(agents.HasOmpRtkExtension()) },
+		"omp":   func() *bool { return core.BoolPtr(ompRtkExtensionValid()) },
 		"kilo":  func() *bool { return core.BoolPtr(kiloRtkVerify()) },
 		"cline": func() *bool { return core.BoolPtr(clineRtkVerify()) },
 		"grok": func() *bool {
-			return core.BoolPtr(agents.HasGrokRtkHook() && agents.HasGrokCodegraphSessionHook())
+			return core.BoolPtr(agents.HasGrokRtkHook())
 		},
 	},
 }

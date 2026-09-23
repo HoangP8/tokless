@@ -263,6 +263,8 @@ func run() int {
 			return commands.RunRtkHookCline()
 		case "grok":
 			return commands.RunRtkHookGrok()
+		case "cursor":
+			return commands.RunRtkHookCursor()
 		}
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "grok-hook" && os.Args[2] == "session-start" {

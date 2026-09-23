@@ -408,6 +408,61 @@ esac`)
 	}
 }
 
+func TestRunRtkHookCodexRewritesAndPreservesInput(t *testing.T) {
+	installFakeRtk(t, `case "$2" in
+  rtk\ *) printf '%s\n' "$2" ;;
+  *) printf 'rtk %s\n' "$2" ;;
+esac`)
+	out := runRtkHookInput(t, `{"tool_name":"Bash","tool_input":{"command":"git status","cwd":"/tmp"}}`, RunRtkHookCodex)
+	var resp struct {
+		HookSpecificOutput struct {
+			HookEventName      string         `json:"hookEventName"`
+			PermissionDecision string         `json:"permissionDecision"`
+			UpdatedInput       map[string]any `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("permission decision = %q", resp.HookSpecificOutput.PermissionDecision)
+	}
+	if resp.HookSpecificOutput.HookEventName != "PreToolUse" {
+		t.Fatalf("hook event = %q", resp.HookSpecificOutput.HookEventName)
+	}
+	if got := resp.HookSpecificOutput.UpdatedInput["command"]; got != "rtk git status" {
+		t.Fatalf("command = %q", got)
+	}
+	if got := resp.HookSpecificOutput.UpdatedInput["cwd"]; got != "/tmp" {
+		t.Fatalf("cwd was not preserved: %q", got)
+	}
+}
+
+func TestRunRtkHookCodexIgnoresNonBashAndMalformedPayloads(t *testing.T) {
+	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
+	for _, payload := range []string{
+		`{"tool_name":"Read","tool_input":{"command":"git status"}}`,
+		`{`,
+	} {
+		if out := runRtkHookInput(t, payload, RunRtkHookCodex); out != "" {
+			t.Fatalf("payload %s: got %q, want empty passthrough", payload, out)
+		}
+	}
+}
+
+func TestRunRtkHookCodexMissingCommandIsPassthrough(t *testing.T) {
+	installFakeRtk(t, `printf 'rtk %s\n' "$2"`)
+	for _, payload := range []string{
+		`{"tool_name":"Bash","tool_input":{}}`,
+		`{"tool_name":"Bash"}`,
+		`{"tool_name":"Bash","tool_input":{"command":""}}`,
+	} {
+		if out := runRtkHookInput(t, payload, RunRtkHookCodex); out != "" {
+			t.Fatalf("payload %s: got %q, want empty passthrough", payload, out)
+		}
+	}
+}
+
 func utilHaveRtk() bool {
 	return util.ResolveRtkBin() != ""
 }
@@ -1150,5 +1205,34 @@ func TestRunRtkHookClineCommandsArrayUnsupportedPreserved(t *testing.T) {
 	}
 	if commands[0] != "rtk git status" || commands[1] != "npm test" || commands[2] != "rtk git diff" {
 		t.Fatalf("mixed array: want [rtk git status, npm test, rtk git diff], got %q", commands)
+	}
+}
+
+func TestRtkRewriteErrorHandling(t *testing.T) {
+	installFakeRtk(t, `exit 1`)
+	if newCmd, changed := rtkRewrite("git status"); changed || newCmd != "" {
+		t.Fatalf("expected no rewrite on exit 1, got (%q, %v)", newCmd, changed)
+	}
+}
+
+func TestHasShellPipe(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"git diff | grep foo", true},
+		{"git status", false},
+		{`git log --format="%h | %s"`, false},
+		{`git log --format='%h | %s'`, false},
+		{"cat file.txt | sort | uniq", true},
+		{`echo "a" | find "b"`, true},
+		{`C:\path\to\tool | grep x`, true},
+		{`echo "hello | world"`, false},
+		{`echo 'hello | world'`, false},
+	}
+	for _, tc := range cases {
+		if got := hasShellPipe(tc.in); got != tc.want {
+			t.Errorf("hasShellPipe(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

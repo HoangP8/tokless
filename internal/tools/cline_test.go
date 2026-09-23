@@ -248,8 +248,7 @@ func TestClineRtkHookEndToEnd(t *testing.T) {
 	}
 	bin := buildClineSimBinary(t)
 	fakeRtk(t, filepath.Dir(bin))
-	// The hook script embeds this binary's quoted path; ensure tokless on PATH
-	// is the one we built so the simulation exercises current code.
+	// The hook script embeds the stable installed path, not the test binary.
 	t.Setenv("PATH", filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	clineToolProject(t)
 	p := clineTestEnv(t)
@@ -261,8 +260,9 @@ func TestClineRtkHookEndToEnd(t *testing.T) {
 	if !ok {
 		t.Fatal("hook not written")
 	}
-	if !strings.Contains(raw, "'"+bin+"'") {
-		t.Fatalf("hook must embed quoted abs binary path %q, got:\n%s", bin, raw)
+	exe := util.ToklessPersistedAbs()
+	if !strings.Contains(raw, "'"+exe+"'") {
+		t.Fatalf("hook must embed quoted persisted binary path %q, got:\n%s", exe, raw)
 	}
 	if strings.Contains(raw, "exec tokless ") && !strings.Contains(raw, "exec '") {
 		t.Fatal("hook fell back to bare tokless instead of quoted path")

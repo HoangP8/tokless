@@ -68,9 +68,7 @@ func rtkUnsafeFind(cmdLine string) bool {
 	return false
 }
 
-func rtkRewrite(cmdLine string) (string, bool) {
-	return rtkRewriteOnce(cmdLine)
-}
+
 
 // RunRtkRewrite is the canonical CLI entry: `tokless rtk-rewrite -- <cmd>`.
 // Prints the rewritten command and exits 0 when changed; exits 1 unchanged.
@@ -119,8 +117,8 @@ func RunRtkHookCursor() int {
 	return 0
 }
 
-func rtkRewriteOnce(cmdLine string) (string, bool) {
-	if cmdLine == "" || rtkUnsafeFind(cmdLine) {
+func rtkRewrite(cmdLine string) (string, bool) {
+	if cmdLine == "" || rtkUnsafeFind(cmdLine) || hasShellPipe(cmdLine) {
 		return "", false
 	}
 	rtkPath := util.ResolveRtkBin()
@@ -131,13 +129,39 @@ func rtkRewriteOnce(cmdLine string) (string, bool) {
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard
-	_ = cmd.Run()
+	err := cmd.Run()
+	if err != nil {
+		if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 3 {
+			return "", false
+		}
+	}
 
 	newCmd := strings.TrimSpace(stdout.String())
 	if newCmd == "" || newCmd == cmdLine {
 		return "", false
 	}
 	return newCmd, true
+}
+
+func hasShellPipe(line string) bool {
+	inSingle, inDouble := false, false
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '|':
+			if !inSingle && !inDouble {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RunRtkHook handles Antigravity PreToolUse for run_command.
@@ -206,8 +230,11 @@ func RunRtkHookCodex() int {
 		return 0
 	}
 
+	cmdLine, _ := req.ToolInput["command"].(string)
+	if cmdLine == "" {
+		return 0
+	}
 	updated := cloneMap(req.ToolInput)
-	cmdLine, _ := updated["command"].(string)
 	if newCmd, changed := rtkRewrite(cmdLine); changed {
 		updated["command"] = newCmd
 	}

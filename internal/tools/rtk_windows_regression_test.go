@@ -24,12 +24,12 @@ func TestClaudeRtkHookCommandWindowsPath(t *testing.T) {
 	}
 }
 
-func TestClaudeRtkHookCommandSpacedPathFallsBackToPATH(t *testing.T) {
+func TestClaudeRtkHookCommandQuotesSpacedPath(t *testing.T) {
 	origIsWin := util.IsWin
 	defer func() { util.IsWin = origIsWin }()
 	util.IsWin = true
 
-	if got := claudeRtkHookCommand(`C:\Program Files\tokless\tokless.exe`); got != "tokless rtk-hook claude" {
+	if got := claudeRtkHookCommand(`C:\Program Files\tokless\tokless.exe`); got != `"C:/Program Files/tokless/tokless.exe" rtk-hook claude` {
 		t.Fatalf("command = %q", got)
 	}
 }
@@ -72,7 +72,7 @@ func TestOverrideClaudeRtkHookMigratesManagedCommandsOnly(t *testing.T) {
 			command, _ := groupHooks.([]any)[0].(*util.OrderedMap).Get("command")
 			got, _ := command.(string)
 			if tt.changed {
-				if got != claudeRtkHookCommand(util.ToklessAbs()) {
+				if got != claudeRtkHookCommand(util.ToklessPersistedAbs()) {
 					t.Fatalf("command = %q", got)
 				}
 			} else if got != tt.command {
