@@ -134,6 +134,78 @@ func TestInstallDroidRtkHook(t *testing.T) {
 	}
 }
 
+func TestDroidMalformedHooksRefuseAllManagedChanges(t *testing.T) {
+	setTestHome(t)
+	if err := util.WriteFile(droidHooksFile(), `{invalid`); err != nil {
+		t.Fatal(err)
+	}
+	if InstallDroidRtkHook() {
+		t.Fatal("malformed hooks must refuse RTK install")
+	}
+	if HasDroidRtkHook() || HasDroidCodegraphIndexHook() || HasDroidCtxModePreToolUse() {
+		t.Fatal("malformed hooks must not report managed hooks")
+	}
+	InstallDroidCodegraphIndexHook()
+	RemoveDroidCodegraphIndexHook()
+	RemoveDroidCtxModePreToolUse()
+	raw, _ := util.ReadFileSafe(droidHooksFile())
+	if raw != `{invalid` {
+		t.Fatalf("malformed hooks changed: %q", raw)
+	}
+}
+
+func TestDroidWrongEventTypesRefuseManagedChanges(t *testing.T) {
+	setTestHome(t)
+	for _, raw := range []string{
+		`{"PreToolUse":{}}`,
+		`{"SessionStart":{}}`,
+		`{"PreToolUse":[{"matcher":"Execute"}]}`,
+	} {
+		if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(raw, "SessionStart") {
+			InstallDroidCodegraphIndexHook()
+			RemoveDroidCodegraphIndexHook()
+		} else {
+			InstallDroidRtkHook()
+			RemoveDroidRtkHook()
+		}
+		got, _ := util.ReadFileSafe(droidHooksFile())
+		before := util.TryParseJsonc(raw)
+		after := util.TryParseJsonc(got)
+		if before == nil || after == nil || util.StringifyJSON(before) != util.StringifyJSON(after) {
+			t.Fatalf("malformed event config changed: before %q after %q", raw, got)
+		}
+	}
+}
+
+func TestDroidMalformedHookElementsRefuseMutation(t *testing.T) {
+	setTestHome(t)
+	raw := `{"PreToolUse":["user-entry"]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if InstallDroidRtkHook() {
+		t.Fatal("malformed hook element must refuse install")
+	}
+	got, _ := util.ReadFileSafe(droidHooksFile())
+	if got != raw {
+		t.Fatalf("malformed hook element changed: %q", got)
+	}
+}
+
+func TestHasDroidRtkHookRequiresExactManagedEntry(t *testing.T) {
+	setTestHome(t)
+	raw := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"custom-wrapper rtk-hook droid"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if HasDroidRtkHook() {
+		t.Fatal("foreign wrapper must not count as managed hook")
+	}
+}
+
 func TestInstallDroidRtkHook_Idempotent(t *testing.T) {
 	setTestHome(t)
 	InstallDroidRtkHook()
@@ -195,6 +267,20 @@ func TestRemoveDroidRtkHookPreservesUserSiblings(t *testing.T) {
 	got, _ := os.ReadFile(droidHooksFile())
 	if strings.Contains(string(got), `"command": "`+managed+`"`) || !strings.Contains(string(got), "echo user") || !strings.Contains(string(got), "custom-wrapper rtk-hook droid") {
 		t.Fatalf("unexpected hooks after remove: %s", got)
+	}
+}
+
+func TestRemoveDroidRtkHookPreservesDifferentMatcher(t *testing.T) {
+	setTestHome(t)
+	managed := toklessCommand("rtk-hook", "droid")
+	raw := `{"PreToolUse":[{"matcher":"Other","hooks":[{"type":"command","command":"` + managed + `"}]}]}`
+	if err := util.WriteFile(droidHooksFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	RemoveDroidRtkHook()
+	got, _ := util.ReadFileSafe(droidHooksFile())
+	if !strings.Contains(got, managed) {
+		t.Fatal("hook with different matcher was removed")
 	}
 }
 

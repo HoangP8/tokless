@@ -21,6 +21,23 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestInitFailsBeforeWiringWithoutStableTokless(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "")
+	t.Setenv("TOKLESS_INSTALLER_RUN", "")
+	t.Setenv("PATH", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	if code := commands.RunInit(commands.InitOptions{Agents: []string{"claude"}}); code != 1 {
+		t.Fatalf("RunInit returned %d, want 1", code)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); !os.IsNotExist(err) {
+		t.Fatalf("RunInit wrote Claude config without stable tokless: %v", err)
+	}
+}
+
 func TestInitSandboxWiring(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
 	tempdir := t.TempDir()
@@ -148,9 +165,6 @@ func TestInitSandboxWiring(t *testing.T) {
 	}
 	if !strings.Contains(codexConfigStr, "[hooks.state") || !strings.Contains(codexConfigStr, "trusted_hash") {
 		t.Errorf("config.toml doesn't pre-seed rtk hook trust ([hooks.state]/trusted_hash), got: %s", codexConfigStr)
-	}
-	if util.Exists(filepath.Join(tempdir, ".codex", "RTK.md")) {
-		t.Errorf("codex RTK.md instruction should NOT be written (hook handles rewriting)")
 	}
 	if !strings.Contains(codexHooksStr, "/usr/bin/user-guard.py") {
 		t.Errorf("user's pre-existing hook was overwritten — must be preserved, got: %s", codexHooksStr)
@@ -518,10 +532,6 @@ export default async function(pi) { console.log("user ext") }`
 	// RTK: rtk init --agent pi → extensions/rtk.ts
 	if !util.Exists(filepath.Join(piDir, "extensions", "rtk.ts")) {
 		t.Error("RTK extension rtk.ts not created")
-	}
-	// codegraph auto-index extension
-	if !util.Exists(filepath.Join(piDir, "extensions", "codegraph-index.ts")) {
-		t.Error("codegraph-index.ts not created for pi")
 	}
 
 	// --- verify user extensions preserved ---

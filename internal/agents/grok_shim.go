@@ -42,16 +42,12 @@ func grokShimPortLine() string {
 	return grokShimMarker + " port=" + strconv.Itoa(util.GrokOAuthProxyPort())
 }
 
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
 func renderGrokShim() string {
 	port := strconv.Itoa(util.GrokOAuthProxyPort())
-	tokless := shQuote(util.ToklessAbsStrict())
+	tokless := util.ShQuote(util.ToklessPersistedAbs())
 	return "#!/bin/sh\n" +
 		grokShimPortLine() + "\n" +
-		"REAL=" + shQuote(grokRealBinFile()) + "\n" +
+		"REAL=" + util.ShQuote(grokRealBinFile()) + "\n" +
 		"TOKLESS=" + tokless + "\n" +
 		"PORT=\"${TOKLESS_GROK_PROXY_PORT:-" + port + "}\"\n" +
 		"if [ -z \"${GROK_MODELS_BASE_URL:-}\" ] && \"$TOKLESS\" __grok-proxy-owned >/dev/null 2>&1 && curl -sfm 1 \"http://127.0.0.1:${PORT}/livez\" 2>/dev/null | grep -q '\"service\":\"headroom-proxy\"'; then\n" +

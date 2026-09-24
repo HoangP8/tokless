@@ -135,7 +135,27 @@ func TestCodexPermissionHookManagedOwnership(t *testing.T) {
 	}
 }
 
-func TestRemoveCodexRtkInstructionPreservesUserContent(t *testing.T) {
+func TestCodexHookInstallRefusesWrongContainerTypes(t *testing.T) {
+	setTestHome(t)
+	for _, raw := range []string{
+		`{"hooks":[]}`,
+		`{"hooks":{"PreToolUse":{}}}`,
+		`{"hooks":{"PermissionRequest":{}}}`,
+	} {
+		if err := util.WriteFile(codexHooksFile(), raw); err != nil {
+			t.Fatal(err)
+		}
+		if InstallCodexRtkHook() {
+			t.Fatalf("installed into malformed config: %s", raw)
+		}
+		got, _ := util.ReadFileSafe(codexHooksFile())
+		if got != raw {
+			t.Fatalf("malformed config changed: before %q after %q", raw, got)
+		}
+	}
+}
+
+func TestCodexRtkHookPreservesUserInstructions(t *testing.T) {
 	setTestHome(t)
 	p := util.CodexPathsResolved()
 	raw := "@" + filepath.Join(p.Dir, "RTK.md") + "\n\n# User instructions\nkeep this\n"
@@ -143,18 +163,44 @@ func TestRemoveCodexRtkInstructionPreservesUserContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	RemoveCodexRtkInstruction()
+	if !InstallCodexRtkHook() {
+		t.Fatal("Codex RTK hook not installed")
+	}
 	got, ok := util.ReadFileSafe(p.Instructions)
 	if !ok {
 		t.Fatal("AGENTS.md removed")
 	}
-	if strings.Contains(got, "RTK.md") || !strings.Contains(got, "keep this") {
-		t.Fatalf("legacy include or user content incorrect: %q", got)
+	if got != raw || !strings.Contains(got, "keep this") {
+		t.Fatalf("user instructions changed: %q", got)
+	}
+}
+
+func TestRemoveCodexFeaturesHookPreservesTablesAndComments(t *testing.T) {
+	raw := "[features]\nhooks = true # managed\nother = true\n\n[features.custom]\nvalue = true\n"
+	next, changed := removeCodexFeaturesHook(raw)
+	if !changed {
+		t.Fatal("expected hooks setting removal")
+	}
+	if strings.Contains(next, "hooks = true") || !strings.Contains(next, "other = true") || !strings.Contains(next, "[features.custom]") {
+		t.Fatalf("features content damaged: %q", next)
 	}
 
-	RemoveCodexRtkInstruction()
-	again, _ := util.ReadFileSafe(p.Instructions)
-	if again != got {
-		t.Fatalf("cleanup is not idempotent: first=%q second=%q", got, again)
+	only := "[features]\nhooks = true # managed\n"
+	next, changed = removeCodexFeaturesHook(only)
+	if !changed || strings.Contains(next, "hooks = true") || strings.Contains(next, "managed") {
+		t.Fatalf("orphan features block not removed cleanly: %q", next)
+	}
+}
+
+func TestCodexCleanupPreservesUserApprovalPolicy(t *testing.T) {
+	setTestHome(t)
+	p := util.CodexPathsResolved()
+	if err := util.WriteFile(p.Config, "approval_policy = \"on-request\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	codexCleanupOrphanedConfig()
+	got, _ := util.ReadFileSafe(p.Config)
+	if !strings.Contains(got, "approval_policy = \"on-request\"") {
+		t.Fatalf("user approval policy removed: %q", got)
 	}
 }

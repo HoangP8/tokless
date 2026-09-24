@@ -593,6 +593,57 @@ func TestInstallAntigravityCodegraphPreInvocationIsFlat(t *testing.T) {
 	}
 }
 
+func TestInstallAntigravityRtkHookRefusesMalformedConfigBeforeCleanup(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
+	hooksFile := filepath.Join(home, ".gemini", "config", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksFile, []byte(`{"hooks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacy := antigravityRewriteScript()
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("user script"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	InstallAntigravityRtkHook()
+	got, _ := os.ReadFile(hooksFile)
+	if string(got) != `{"hooks":[]}` {
+		t.Fatalf("malformed hooks changed: %s", got)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("cleanup ran before validation: %v", err)
+	}
+}
+
+func TestInstallAntigravityRtkHookRefusesMalformedNestedHooks(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	defer util.SetHomeOverride("")
+
+	hooksFile := filepath.Join(home, ".gemini", "config", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"hooks":{"PreToolUse":{}}}`
+	if err := os.WriteFile(hooksFile, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if InstallAntigravityRtkHook() {
+		t.Fatal("wrong-typed nested hooks must refuse install")
+	}
+	got, _ := os.ReadFile(hooksFile)
+	if string(got) != raw {
+		t.Fatalf("malformed hooks changed: %s", got)
+	}
+}
+
 func TestAgyKnownBinDirsPerOS(t *testing.T) {
 	setGoos(t, "windows")
 	t.Setenv("LOCALAPPDATA", `C:\Users\u\AppData\Local`)

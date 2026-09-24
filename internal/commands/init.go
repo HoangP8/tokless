@@ -47,6 +47,11 @@ func RunInit(opts InitOptions) int {
 		MaybeSelfUpdate(opts)
 		util.L.Raw("")
 	}
+	if !opts.DryRun && util.ToklessPersistedAbs() == "" {
+		util.SetQuiet(false)
+		util.L.Err("cannot wire agents: no stable tokless executable found; install tokless or put an absolute tokless binary on PATH")
+		return 1
+	}
 	var failures map[string][]string
 
 	allTools := core.ListTools()

@@ -94,7 +94,10 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 
 	f := droidMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
-	raw, _ := util.ReadFileSafe(f)
+	raw, exists := util.ReadFileSafe(f)
+	if !exists && util.Exists(f) {
+		return false, f
+	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		if strings.TrimSpace(raw) != "" {
@@ -239,22 +242,28 @@ var CodegraphDroidToolNames = []string{
 
 // --- hooks management ---
 
-// droidHooksLoad loads or creates the hooks config.
+// droidHooksLoad loads or creates the hooks config. Returns nil if existing file is malformed.
 func droidHooksLoad() *util.OrderedMap {
-	raw, ok := util.ReadFileSafe(droidHooksFile())
-	if ok {
-		if cfg := util.TryParseJsonc(raw); cfg != nil {
-			return cfg
+	path := droidHooksFile()
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		if util.Exists(path) {
+			return nil
 		}
+		return util.NewOrderedMap()
 	}
-	return util.NewOrderedMap()
+	if strings.TrimSpace(raw) == "" {
+		return util.NewOrderedMap()
+	}
+	return util.TryParseJsonc(raw)
 }
 
 // droidHooksSave writes the hooks config if changed.
-func droidHooksSave(cfg *util.OrderedMap, raw string) {
+func droidHooksSave(cfg *util.OrderedMap, raw string) bool {
 	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(droidHooksFile(), next)
+		return util.WriteFile(droidHooksFile(), next) == nil
 	}
+	return true
 }
 
 // droidRawHooks returns the raw file content for diff comparison.
@@ -264,10 +273,14 @@ func droidRawHooks() string {
 }
 
 // droidAddHookGroup adds or replaces one managed hook in a top-level event array.
-func droidAddHookGroup(cfg *util.OrderedMap, event string, matcher string, managedArgs []string, hookCfg *util.OrderedMap) {
+func droidAddHookGroup(cfg *util.OrderedMap, event string, matcher string, managedArgs []string, hookCfg *util.OrderedMap) bool {
 	var arr []any
 	if v, ok := cfg.Get(event); ok {
-		arr, _ = v.([]any)
+		var valid bool
+		arr, valid = v.([]any)
+		if !valid {
+			return false
+		}
 	}
 
 	found := false
@@ -275,19 +288,23 @@ func droidAddHookGroup(cfg *util.OrderedMap, event string, matcher string, manag
 	for _, existing := range arr {
 		em, ok := existing.(*util.OrderedMap)
 		if !ok {
-			out = append(out, existing)
-			continue
+			return false
 		}
 		emMatcher, _ := em.Get("matcher")
-		hv, _ := em.Get("hooks")
-		ha, _ := hv.([]any)
+		hv, hasHooks := em.Get("hooks")
+		if !hasHooks {
+			return false
+		}
+		ha, valid := hv.([]any)
+		if !valid {
+			return false
+		}
 		if emMatcher == matcher && len(ha) > 0 {
 			kept := make([]any, 0, len(ha))
 			for _, h := range ha {
 				hm, ok := h.(*util.OrderedMap)
 				if !ok {
-					kept = append(kept, h)
-					continue
+					return false
 				}
 				c, _ := hm.Get("command")
 				cs, _ := c.(string)
@@ -315,10 +332,11 @@ func droidAddHookGroup(cfg *util.OrderedMap, event string, matcher string, manag
 		out = append(out, entry)
 	}
 	cfg.Set(event, out)
+	return true
 }
 
 // droidRemoveHookGroup removes managed hooks from a top-level event.
-func droidRemoveHookGroup(cfg *util.OrderedMap, event string, managedArgs ...string) {
+func droidRemoveHookGroup(cfg *util.OrderedMap, event, matcher string, managedArgs ...string) {
 	v, ok := cfg.Get(event)
 	if !ok {
 		return
@@ -331,17 +349,25 @@ func droidRemoveHookGroup(cfg *util.OrderedMap, event string, managedArgs ...str
 	for _, g := range arr {
 		gm, ok := g.(*util.OrderedMap)
 		if !ok {
-			kept = append(kept, g)
+			return
+		}
+		if matcherValue, exists := gm.Get("matcher"); exists && matcherValue != matcher {
+			kept = append(kept, gm)
 			continue
 		}
-		hv, _ := gm.Get("hooks")
-		ha, _ := hv.([]any)
+		hv, hasHooks := gm.Get("hooks")
+		if !hasHooks {
+			return
+		}
+		ha, ok := hv.([]any)
+		if !ok {
+			return
+		}
 		keptHooks := make([]any, 0, len(ha))
 		for _, h := range ha {
 			hm, ok := h.(*util.OrderedMap)
 			if !ok {
-				keptHooks = append(keptHooks, h)
-				continue
+				return
 			}
 			c, _ := hm.Get("command")
 			cs, _ := c.(string)
@@ -364,6 +390,9 @@ func droidRemoveHookGroup(cfg *util.OrderedMap, event string, managedArgs ...str
 // droidHasHook checks if a hook with the given command substring exists in the event.
 func droidHasHook(event string, cmdSubstring string) bool {
 	cfg := droidHooksLoad()
+	if cfg == nil {
+		return false
+	}
 	v, ok := cfg.Get(event)
 	if !ok {
 		return false
@@ -394,57 +423,115 @@ func droidHasHook(event string, cmdSubstring string) bool {
 	return false
 }
 
+func droidHasExactHook(event, matcher, command string) bool {
+	cfg := droidHooksLoad()
+	if cfg == nil {
+		return false
+	}
+	v, ok := cfg.Get(event)
+	if !ok {
+		return false
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	for _, group := range arr {
+		gm, ok := group.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		if got, _ := gm.Get("matcher"); got != matcher {
+			continue
+		}
+		hooks, _ := gm.Get("hooks")
+		hookArr, ok := hooks.([]any)
+		if !ok {
+			continue
+		}
+		for _, hook := range hookArr {
+			hm, ok := hook.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			if typ, _ := hm.Get("type"); typ != "command" {
+				continue
+			}
+			if got, _ := hm.Get("command"); got == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // --- RTK hook ---
 
 // InstallDroidRtkHook installs the PreToolUse hook for Execute tool.
-func InstallDroidRtkHook() {
+func InstallDroidRtkHook() bool {
 	command := toklessCommand("rtk-hook", "droid")
 
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
+	if cfg == nil {
+		return false
+	}
 
 	hookCfg := util.NewOrderedMap()
 	hookCfg.Set("type", "command")
 	hookCfg.Set("command", command)
 
-	droidAddHookGroup(cfg, "PreToolUse", "Execute", []string{"rtk-hook", "droid"}, hookCfg)
-	droidHooksSave(cfg, raw)
+	if !droidAddHookGroup(cfg, "PreToolUse", "Execute", []string{"rtk-hook", "droid"}, hookCfg) {
+		return false
+	}
+	return droidHooksSave(cfg, raw) && HasDroidRtkHook()
 }
 
 // RemoveDroidRtkHook removes the RTK PreToolUse hook from Droid hooks.
 func RemoveDroidRtkHook() {
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
-	droidRemoveHookGroup(cfg, "PreToolUse", "rtk-hook", "droid")
+	if cfg == nil {
+		return
+	}
+	droidRemoveHookGroup(cfg, "PreToolUse", "Execute", "rtk-hook", "droid")
 	droidHooksSave(cfg, raw)
 }
 
 // HasDroidRtkHook reports whether the RTK PreToolUse hook is installed.
 func HasDroidRtkHook() bool {
-	return droidHasHook("PreToolUse", "rtk-hook droid")
+	return droidHasExactHook("PreToolUse", "Execute", toklessCommand("rtk-hook", "droid"))
 }
 
 // --- CodeGraph index hook ---
 
-func InstallDroidCodegraphIndexHook() {
+func InstallDroidCodegraphIndexHook() bool {
 	command := toklessCommand("index", "--auto", "droid")
 
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
+	if cfg == nil {
+		return false
+	}
 
 	hookCfg := util.NewOrderedMap()
 	hookCfg.Set("type", "command")
 	hookCfg.Set("command", command)
 	hookCfg.Set("timeout", 120)
 
-	droidAddHookGroup(cfg, "SessionStart", "", []string{"index", "--auto", "droid"}, hookCfg)
-	droidHooksSave(cfg, raw)
+	if !droidAddHookGroup(cfg, "SessionStart", "", []string{"index", "--auto", "droid"}, hookCfg) {
+		return false
+	}
+	return droidHooksSave(cfg, raw) && HasDroidCodegraphIndexHook()
 }
 
 func RemoveDroidCodegraphIndexHook() {
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
-	droidRemoveHookGroup(cfg, "SessionStart", "index", "--auto", "droid")
+	if cfg == nil {
+		return
+	}
+	droidRemoveHookGroup(cfg, "SessionStart", "", "index", "--auto", "droid")
 	droidHooksSave(cfg, raw)
 }
 
@@ -458,7 +545,10 @@ func HasDroidCodegraphIndexHook() bool {
 func RemoveDroidCtxModePreToolUse() {
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
-	droidRemoveHookGroup(cfg, "PreToolUse", "ctx-hook", "droid")
+	if cfg == nil {
+		return
+	}
+	droidRemoveHookGroup(cfg, "PreToolUse", "", "ctx-hook", "droid")
 	droidHooksSave(cfg, raw)
 }
 

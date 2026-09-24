@@ -325,7 +325,7 @@ func assertCursorRtkHookContract(t *testing.T, raw string) {
 		}
 		command, commandOK := entry.Get("command")
 		matcher, matcherOK := entry.Get("matcher")
-		if commandOK && matcherOK && command == "rtk hook cursor" && matcher == "Shell" {
+		if commandOK && matcherOK && command == cursorRtkHookCommand() && matcher == "Shell" {
 			if entry.Len() != 2 {
 				t.Fatalf("RTK hook has %d keys, want 2: %#v", entry.Len(), entry.Keys())
 			}
@@ -347,7 +347,7 @@ func TestCursorRtkHookFreshHomeAndEmptyCleanup(t *testing.T) {
 	}
 	RemoveCursorRtkHook()
 	raw, ok := util.ReadFileSafe(cursorHooksFile())
-	if !ok || !strings.Contains(raw, `"version"`) || strings.Contains(raw, "rtk hook cursor") {
+	if !ok || !strings.Contains(raw, `"version"`) || strings.Contains(raw, "rtk-hook cursor") {
 		t.Fatalf("unexpected remaining Cursor config: %s", raw)
 	}
 }
@@ -449,6 +449,26 @@ func TestCursorMcpMalformedRefusalAndForeignPreservation(t *testing.T) {
 	raw, _ = util.ReadFileSafe(p)
 	if !strings.Contains(raw, `"foreign"`) || !CursorMcpHas("codegraph") {
 		t.Fatalf("foreign or managed entry missing: %s", raw)
+	}
+}
+
+func TestCursorOwnedRtkHookCommandRecognizesWindowsPathsWithSpaces(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{`"C:/Program Files/tokless/tokless.exe" rtk-hook cursor`, true},
+		{`"C:\Program Files\tokless\tokless.exe" rtk-hook cursor`, true},
+		{`C:/tokless/tokless.exe rtk-hook cursor`, true},
+		{`tokless.exe rtk-hook cursor`, true},
+		{`"C:/Program Files/tokless/tokless.exe" rtk hook cursor`, true},
+		{`rtk hook cursor`, true},
+		{`foreign-tool rtk-hook cursor`, false},
+	}
+	for _, tc := range cases {
+		if got := cursorOwnedRtkHookCommand(tc.cmd); got != tc.want {
+			t.Errorf("cursorOwnedRtkHookCommand(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
 	}
 }
 

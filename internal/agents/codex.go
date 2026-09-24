@@ -1078,28 +1078,6 @@ func codexHooksFile() string {
 	return filepath.Join(util.CodexPathsResolved().Dir, "hooks.json")
 }
 
-// RemoveCodexRtkInstruction removes the legacy RTK include from AGENTS.md.
-func RemoveCodexRtkInstruction() {
-	p := util.CodexPathsResolved()
-	raw, ok := util.ReadFileSafe(p.Instructions)
-	if !ok {
-		return
-	}
-	legacy := "@" + filepath.Join(p.Dir, "RTK.md")
-	var out strings.Builder
-	changed := false
-	for _, line := range strings.SplitAfter(raw, "\n") {
-		if strings.TrimSpace(strings.TrimRight(line, "\r\n")) == legacy {
-			changed = true
-			continue
-		}
-		out.WriteString(line)
-	}
-	if changed {
-		_ = util.WriteFile(p.Instructions, out.String())
-	}
-}
-
 // codexHookCommand is the command Codex runs for every Bash tool call.
 func codexHookCommand() string {
 	return toklessCommand("rtk-hook", "codex")
@@ -1287,30 +1265,68 @@ func codexPermGroup(command string) *util.OrderedMap {
 }
 
 // InstallCodexRtkHook merges the rtk PreToolUse hook into ~/.codex/hooks.json.
-func InstallCodexRtkHook() {
+func InstallCodexRtkHook() bool {
 	p := util.CodexPathsResolved()
-	_ = util.EnsureDir(p.Dir)
+	if err := util.EnsureDir(p.Dir); err != nil {
+		return false
+	}
 	command := codexHookCommand()
 
 	hooksFile := codexHooksFile()
-	raw, _ := util.ReadFileSafe(hooksFile)
+	rulesFile := codexRulesFile()
+	type snapshot struct {
+		path   string
+		raw    string
+		exists bool
+	}
+	snapshots := make([]snapshot, 0, 3)
+	for _, path := range []string{hooksFile, p.Config, rulesFile} {
+		raw, exists := util.ReadFileSafe(path)
+		snapshots = append(snapshots, snapshot{path: path, raw: raw, exists: exists})
+	}
+	rollback := func() {
+		for _, item := range snapshots {
+			if item.exists {
+				_ = util.WriteFile(item.path, item.raw)
+			} else {
+				_ = os.Remove(item.path)
+			}
+		}
+	}
+	fail := func() bool {
+		rollback()
+		return false
+	}
+	raw, ok := util.ReadFileSafe(hooksFile)
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return fail()
+		}
 		cfg = util.NewOrderedMap()
 	}
 	hooks, ok := mapChild(cfg, "hooks")
 	if !ok {
+		if _, exists := cfg.Get("hooks"); exists {
+			return fail()
+		}
 		hooks = util.NewOrderedMap()
 		cfg.Set("hooks", hooks)
 	}
 	var preArr []interface{}
 	if v, ok := hooks.Get("PreToolUse"); ok {
-		preArr, _ = v.([]interface{})
+		var valid bool
+		preArr, valid = v.([]interface{})
+		if !valid {
+			return fail()
+		}
 	}
 	preArr, pos, moved, removed := codexTransformManagedGroups(preArr, codexHookMatcher, []string{"rtk-hook", "codex"}, codexRtkGroup(command))
 	hooks.Set("PreToolUse", preArr)
 	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(hooksFile, next)
+		if err := util.WriteFile(hooksFile, next); err != nil {
+			return fail()
+		}
 	}
 
 	craw, _ := util.ReadFileSafe(p.Config)
@@ -1320,18 +1336,32 @@ func InstallCodexRtkHook() {
 	block := util.NewTomlBlock(codexHookStateHeader(key))
 	block.Set("trusted_hash", codexHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
-	cnext = applyCodexApprovalPolicy(cnext)
+	if util.GetTomlTopKey(cnext, "approval_policy") == "" {
+		cnext = util.SetTomlTopKey(cnext, "approval_policy", "on-request")
+		cnext = codexAddMarker(cnext, codexApprovalPolicyMarker)
+	}
 	features := util.NewTomlBlock("features")
 	features.Set("hooks", true)
-	cnext = util.UpsertBlock(cnext, features, false)
+	cnext = util.UpsertBlock(cnext, features, true)
+	if !strings.Contains(cnext, codexFeaturesHookMarker) {
+		if i := strings.Index(cnext, "[features]"); i >= 0 {
+			lineEnd := strings.IndexByte(cnext[i:], '\n')
+			if lineEnd >= 0 {
+				lineEnd += i + 1
+				cnext = cnext[:lineEnd] + codexFeaturesHookMarker + cnext[lineEnd:]
+			}
+		}
+	}
 	if cnext != craw {
-		_ = util.WriteFile(p.Config, cnext)
+		if err := util.WriteFile(p.Config, cnext); err != nil {
+			return fail()
+		}
 	}
 
-	_ = os.Remove(filepath.Join(p.Dir, "RTK.md"))
-
-	InstallCodexPermissionHook()
-	InstallCodexRulesAllowlist()
+	if !HasCodexRtkHook() || !InstallCodexPermissionHook() || !InstallCodexRulesAllowlist() {
+		return fail()
+	}
+	return true
 }
 
 // RemoveCodexRtkHook removes the rtk group from hooks.json and its trust entry.
@@ -1395,29 +1425,43 @@ func HasCodexRtkHook() bool {
 }
 
 // InstallCodexPermissionHook merges a PermissionRequest group into hooks.json + pre-seeds trust.
-func InstallCodexPermissionHook() {
+func InstallCodexPermissionHook() bool {
 	p := util.CodexPathsResolved()
-	_ = util.EnsureDir(p.Dir)
+	if err := util.EnsureDir(p.Dir); err != nil {
+		return false
+	}
 	command := codexPermHookCommand()
 	hooksFile := codexHooksFile()
-	raw, _ := util.ReadFileSafe(hooksFile)
+	raw, ok := util.ReadFileSafe(hooksFile)
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return false
+		}
 		cfg = util.NewOrderedMap()
 	}
 	hooks, ok := mapChild(cfg, "hooks")
 	if !ok {
+		if _, exists := cfg.Get("hooks"); exists {
+			return false
+		}
 		hooks = util.NewOrderedMap()
 		cfg.Set("hooks", hooks)
 	}
 	var permArr []interface{}
 	if v, ok := hooks.Get("PermissionRequest"); ok {
-		permArr, _ = v.([]interface{})
+		var valid bool
+		permArr, valid = v.([]interface{})
+		if !valid {
+			return false
+		}
 	}
 	permArr, pos, moved, removed := codexTransformManagedGroups(permArr, codexPermHookMatcher, []string{"codex-perm", "codex"}, codexPermGroup(command))
 	hooks.Set("PermissionRequest", permArr)
 	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(hooksFile, next)
+		if err := util.WriteFile(hooksFile, next); err != nil {
+			return false
+		}
 	}
 	craw, _ := util.ReadFileSafe(p.Config)
 	craw = sweepStaleHookStateEntries(craw)
@@ -1427,8 +1471,11 @@ func InstallCodexPermissionHook() {
 	block.Set("trusted_hash", codexPermHookTrustHash(command))
 	cnext := util.UpsertBlock(craw, block, false)
 	if cnext != craw {
-		_ = util.WriteFile(p.Config, cnext)
+		if err := util.WriteFile(p.Config, cnext); err != nil {
+			return false
+		}
 	}
+	return HasCodexPermissionHook()
 }
 
 // RemoveCodexPermissionHook removes the PermissionRequest group and its trust entry.
@@ -1494,13 +1541,15 @@ func codexRulesFile() string {
 
 // InstallCodexRulesAllowlist writes the shell allowlist to ~/.codex/rules/default.rules.
 // Surgical: only writes when the file does not exist — never overwrites user's rules.
-func InstallCodexRulesAllowlist() {
+func InstallCodexRulesAllowlist() bool {
 	rulesFile := codexRulesFile()
 	if util.Exists(rulesFile) {
-		return
+		return true
 	}
-	_ = util.EnsureDir(filepath.Dir(rulesFile))
-	_ = util.WriteFile(rulesFile, `# tokless-managed codex allowlist — our tools pre-approved, everything else prompts.
+	if err := util.EnsureDir(filepath.Dir(rulesFile)); err != nil {
+		return false
+	}
+	if err := util.WriteFile(rulesFile, `# tokless-managed codex allowlist — our tools pre-approved, everything else prompts.
 
 prefix_rule(pattern = ["rtk"], decision = "allow")
 prefix_rule(pattern = ["tokless"], decision = "allow")
@@ -1522,7 +1571,10 @@ prefix_rule(pattern = ["which"], decision = "allow")
 prefix_rule(pattern = ["echo"], decision = "allow")
 prefix_rule(pattern = ["bash"], decision = "allow")
 prefix_rule(pattern = ["sh"], decision = "allow")
-`)
+`); err != nil {
+		return false
+	}
+	return HasCodexRulesAllowlist()
 }
 
 // RemoveCodexRulesAllowlist removes the allowlist file only if it carries our
@@ -1554,6 +1606,39 @@ func applyCodexApprovalPolicy(raw string) string {
 	return raw
 }
 
+func removeCodexFeaturesHook(raw string) (string, bool) {
+	bt, ok := util.BlockText(raw, "features")
+	if !ok {
+		return raw, false
+	}
+	reHook := regexp.MustCompile(`(?m)^[ \t]*hooks[ \t]*=[ \t]*true\b([ \t]*#.*)?([ \t]*\r?\n|$)`)
+	if !reHook.MatchString(bt) {
+		return raw, false
+	}
+	cleaned := reHook.ReplaceAllString(bt, "$1$2")
+	reAnyKey := regexp.MustCompile(`(?m)^[ \t]*[A-Za-z0-9_-]+[ \t]*=`)
+	if !reAnyKey.MatchString(cleaned) {
+		reChildTable := regexp.MustCompile(`(?m)^\[features\.[^\]]+\]`)
+		if !reChildTable.MatchString(bt) {
+			return util.RemoveBlock(raw, "features"), true
+		}
+	}
+	return strings.Replace(raw, bt, cleaned, 1), true
+}
+
+const codexFeaturesHookMarker = "# tokless-managed: features.hooks\n"
+const codexApprovalPolicyMarker = "# tokless-managed: approval_policy\n"
+
+func codexAddMarker(raw, marker string) string {
+	if strings.Contains(raw, marker) {
+		return raw
+	}
+	if i := strings.IndexByte(raw, '\n'); i >= 0 {
+		return raw[:i+1] + marker + raw[i+1:]
+	}
+	return raw + "\n" + marker
+}
+
 // codexCleanupOrphanedConfig removes tokless-injected top-level config keys
 // when no tokless-managed hooks remain in hooks.json.
 func codexCleanupOrphanedConfig() {
@@ -1564,12 +1649,17 @@ func codexCleanupOrphanedConfig() {
 	}
 	changed := false
 	if !codexHasAnyToklessHook() {
-		if util.HasBlock(raw, "features") {
-			raw = util.RemoveBlock(raw, "features")
-			changed = true
+		if strings.Contains(raw, codexFeaturesHookMarker) {
+			if next, ok := removeCodexFeaturesHook(raw); ok {
+				raw = strings.Replace(next, codexFeaturesHookMarker, "", 1)
+				changed = true
+			}
 		}
-		if v := util.GetTomlTopKey(raw, "approval_policy"); v == "on-request" {
-			raw = util.RemoveTomlTopKey(raw, "approval_policy")
+		if strings.Contains(raw, codexApprovalPolicyMarker) {
+			raw = strings.Replace(raw, codexApprovalPolicyMarker, "", 1)
+			if v := util.GetTomlTopKey(raw, "approval_policy"); v == "on-request" {
+				raw = util.RemoveTomlTopKey(raw, "approval_policy")
+			}
 			changed = true
 		}
 	}

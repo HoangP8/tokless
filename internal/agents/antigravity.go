@@ -59,10 +59,39 @@ func cleanAntigravityDeadGuiSettings() {
 		if cfg == nil {
 			continue
 		}
-		if _, ok := cfg.Get("permissions"); !ok {
+		permissions, ok := cfg.Get("permissions")
+		if !ok {
 			continue
 		}
-		cfg.Delete("permissions")
+		pm, ok := permissions.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		allow, ok := pm.Get("allow")
+		if !ok {
+			continue
+		}
+		items, ok := allow.([]any)
+		if !ok {
+			continue
+		}
+		kept := make([]any, 0, len(items))
+		changed := false
+		for _, item := range items {
+			if s, ok := item.(string); ok && (s == "command(rtk)" || s == "command(rtk )") {
+				changed = true
+				continue
+			}
+			kept = append(kept, item)
+		}
+		if !changed {
+			continue
+		}
+		if len(kept) == 0 {
+			cfg.Delete("permissions")
+		} else {
+			pm.Set("allow", kept)
+		}
 		_ = util.WriteFile(f, util.StringifyJSON(cfg))
 	}
 }
@@ -267,7 +296,7 @@ func toklessCommand(args ...string) string {
 }
 
 func toklessManagedCommand(command string, args ...string) bool {
-	fields := strings.Fields(strings.TrimSpace(command))
+	fields := util.SplitCommand(strings.TrimSpace(command))
 	if len(fields) != len(args)+1 {
 		return false
 	}
@@ -282,31 +311,45 @@ func toklessManagedCommand(command string, args ...string) bool {
 }
 
 // InstallAntigravityRtkHook installs the PreToolUse hook for agy.
-func InstallAntigravityRtkHook() {
+func InstallAntigravityRtkHook() bool {
 	command := toklessCommand("rtk-hook", "agy")
-
-	_ = os.Remove(antigravityRewriteScript())
-	_ = os.Remove(antigravityLegacyRewriteScript())
-	cleanAntigravityDeadGuiSettings()
-	RemoveAntigravityCodegraphToolDefs()
-	cleanAntigravityDeadHookGroups()
-	AllowAntigravityEntry("command(rtk)")
-	AllowAntigravityEntry("command(rtk )")
-
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
 	if ok {
 		if util.HasJSONCComments(raw) {
-			return
+			return false
 		}
 		cfg = util.TryParseJsonc(raw)
 	}
 	if cfg == nil {
 		if ok && strings.TrimSpace(raw) != "" {
-			return
+			return false
 		}
 		cfg = util.NewOrderedMap()
+	}
+	if hooks, exists := cfg.Get("hooks"); exists {
+		hooksMap, valid := hooks.(*util.OrderedMap)
+		if !valid {
+			return false
+		}
+		if pre, exists := hooksMap.Get("PreToolUse"); exists {
+			preArr, valid := pre.([]interface{})
+			if !valid {
+				return false
+			}
+			for _, item := range preArr {
+				entry, valid := item.(*util.OrderedMap)
+				if !valid {
+					return false
+				}
+				if nested, exists := entry.Get("hooks"); exists {
+					if _, valid := nested.([]interface{}); !valid {
+						return false
+					}
+				}
+			}
+		}
 	}
 
 	rtkGroup := util.NewOrderedMap()
@@ -324,8 +367,18 @@ func InstallAntigravityRtkHook() {
 	cfg.Set("rtk", rtkGroup)
 
 	if next := util.StringifyJSON(cfg); next != raw {
-		_ = util.WriteFile(hooksFile, next)
+		if err := util.WriteFile(hooksFile, next); err != nil {
+			return false
+		}
 	}
+	_ = os.Remove(antigravityRewriteScript())
+	_ = os.Remove(antigravityLegacyRewriteScript())
+	cleanAntigravityDeadGuiSettings()
+	RemoveAntigravityCodegraphToolDefs()
+	cleanAntigravityDeadHookGroups()
+	AllowAntigravityEntry("command(rtk)")
+	AllowAntigravityEntry("command(rtk )")
+	return HasAntigravityRtkHook()
 }
 
 func RemoveAntigravityRtkHook() {
@@ -340,10 +393,49 @@ func RemoveAntigravityRtkHook() {
 	if cfg == nil {
 		return
 	}
-	if _, ok := cfg.Get("rtk"); ok {
+	if group, ok := cfg.Get("rtk"); ok && antigravityRtkGroupManaged(group) {
 		cfg.Delete("rtk")
 		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
 	}
+}
+
+func antigravityRtkGroupManaged(value any) bool {
+	group, ok := value.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	pre, ok := group.Get("PreToolUse")
+	if !ok {
+		return false
+	}
+	entries, ok := pre.([]interface{})
+	if !ok {
+		return false
+	}
+	want := toklessCommand("rtk-hook", "agy")
+	for _, item := range entries {
+		entry, ok := item.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		hooks, ok := entry.Get("hooks")
+		if !ok {
+			continue
+		}
+		arr, ok := hooks.([]interface{})
+		if !ok {
+			continue
+		}
+		for _, hook := range arr {
+			hm, ok := hook.(*util.OrderedMap)
+			if ok {
+				if command, _ := hm.Get("command"); command == want {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func HasAntigravityRtkHook() bool {
@@ -368,34 +460,37 @@ func HasAntigravityRtkHook() bool {
 		return false
 	}
 	preArr, ok := pre.([]interface{})
-	if !ok || len(preArr) == 0 {
-		return false
-	}
-	entry, ok := preArr[0].(*util.OrderedMap)
 	if !ok {
 		return false
 	}
-	hooksObj, ok := entry.Get("hooks")
-	if !ok {
-		return false
+	want := toklessCommand("rtk-hook", "agy")
+	for _, value := range preArr {
+		entry, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		if matcher, _ := entry.Get("matcher"); matcher != "run_command" {
+			continue
+		}
+		hooksObj, _ := entry.Get("hooks")
+		hooksArr, ok := hooksObj.([]interface{})
+		if !ok {
+			continue
+		}
+		for _, hookValue := range hooksArr {
+			hook, ok := hookValue.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			if typ, _ := hook.Get("type"); typ != "command" {
+				continue
+			}
+			if cmd, _ := hook.Get("command"); cmd == want {
+				return true
+			}
+		}
 	}
-	hooksArr, ok := hooksObj.([]interface{})
-	if !ok || len(hooksArr) == 0 {
-		return false
-	}
-	hook, ok := hooksArr[0].(*util.OrderedMap)
-	if !ok {
-		return false
-	}
-	cmd, ok := hook.Get("command")
-	if !ok {
-		return false
-	}
-	cmdStr, ok := cmd.(string)
-	if !ok {
-		return false
-	}
-	return strings.Contains(cmdStr, "rtk-hook agy")
+	return false
 }
 
 const antigravityContextModeHookCommand = "context-mode hook antigravity-cli pretooluse"
@@ -709,7 +804,7 @@ func RemoveAntigravityEntry(entry string) {
 		out := make([]any, 0, len(arr))
 		dropped := false
 		for _, e := range arr {
-			if s, ok := e.(string); ok && s == want {
+			if s, ok := e.(string); ok && s == want && antigravityPermissionManaged(entry, f) {
 				dropped = true
 				continue
 			}
@@ -720,6 +815,33 @@ func RemoveAntigravityEntry(entry string) {
 			_ = util.WriteFile(f, util.StringifyJSON(cfg))
 		}
 	}
+}
+
+func antigravityPermissionManaged(entry, settingsFile string) bool {
+	if entry == "command(rtk)" || entry == "command(rtk )" {
+		return HasAntigravityRtkHook()
+	}
+	if strings.HasPrefix(entry, "mcp(") {
+		toolID := strings.TrimSuffix(strings.TrimPrefix(entry, "mcp("), "/*)")
+		for _, file := range append(antigravityMcpConfigFiles(), antigravityLegacyMcpFiles()...) {
+			raw, ok := util.ReadFileSafe(file)
+			if !ok {
+				continue
+			}
+			cfg := util.TryParseJsonc(raw)
+			if cfg == nil {
+				continue
+			}
+			if servers, ok := cfg.Get("mcpServers"); ok {
+				if sm, ok := servers.(*util.OrderedMap); ok {
+					if value, ok := sm.Get(toolID); ok && antigravityMcpManaged(toolID, value) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // ConfigureAntigravityMcp upserts mcpServers.<tool> into agy's shared and
@@ -860,7 +982,7 @@ func cleanAntigravityDeadHookGroups() {
 		if !ok {
 			continue
 		}
-		if _, has := gm.Get("hook_event_name"); has {
+		if hookEvent, has := gm.Get("hook_event_name"); has && hookEvent == "PreToolUse" {
 			cfg.Delete(name)
 			changed = true
 		}
@@ -982,8 +1104,8 @@ var antigravity = &core.AgentManifest{
 // RemoveAntigravityMcp deletes mcpServers.<tool> from supported and legacy MCP config surfaces.
 func RemoveAntigravityMcp(toolID string) {
 	files := append(antigravityMcpConfigFiles(), antigravityLegacyMcpFiles()...)
-	removeAntigravityMcpFromFiles(toolID, files)
 	RemoveAntigravityEntry("mcp(" + toolID + "/*)")
+	removeAntigravityMcpFromFiles(toolID, files)
 }
 
 func removeAntigravityMcpFromFiles(toolID string, files []string) {

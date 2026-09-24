@@ -125,7 +125,7 @@ func TestAntigravityShimRoutesPlainCLI(t *testing.T) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "TOKLESS=") {
-			lines[i] = "TOKLESS=" + shQuote(ensure)
+			lines[i] = "TOKLESS=" + util.ShQuote(ensure)
 		}
 	}
 	if err := os.WriteFile(bin, []byte(strings.Join(lines, "\n")), 0o755); err != nil {
@@ -155,7 +155,7 @@ func TestAntigravityShimFailsClosed(t *testing.T) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "TOKLESS=") {
-			lines[i] = "TOKLESS=" + shQuote(ensure)
+			lines[i] = "TOKLESS=" + util.ShQuote(ensure)
 		}
 	}
 	if err := os.WriteFile(bin, []byte(strings.Join(lines, "\n")), 0o755); err != nil {

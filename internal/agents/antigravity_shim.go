@@ -141,9 +141,9 @@ func renderAntigravityShim() string {
 	}
 	return "#!/bin/sh\n" +
 		antigravityShimMarker + "\n" +
-		"REAL=" + shQuote(antigravityRealBinFile()) + "\n" +
-		"TOKLESS=" + shQuote(util.ToklessAbsStrict()) + "\n" +
-		"URL=" + shQuote(u) + "\n" +
+		"REAL=" + util.ShQuote(antigravityRealBinFile()) + "\n" +
+		"TOKLESS=" + util.ShQuote(util.ToklessAbsStrict()) + "\n" +
+		"URL=" + util.ShQuote(u) + "\n" +
 		"if ! \"$TOKLESS\" __proxy-ensure >/dev/null 2>&1; then\n" +
 		"  echo 'agy: Headroom proxy unavailable; run tokless proxy up --agents antigravity' >&2\n" +
 		"  exit 1\n" +

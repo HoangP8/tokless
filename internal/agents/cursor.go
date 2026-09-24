@@ -350,6 +350,7 @@ func ConfigureCursorMcp(toolID string) (bool, string) {
 	type prepared struct {
 		path, before, after string
 		changed             bool
+		exists              bool
 	}
 	preparedFiles := make([]prepared, 0, len(targets))
 	for _, target := range targets {
@@ -374,11 +375,11 @@ func ConfigureCursorMcp(toolID string) (bool, string) {
 			return false, p
 		}
 		if existing, found := servers.Get(toolID); found && cursorEntryMatches(existing, desired) {
-			preparedFiles = append(preparedFiles, prepared{path: p, before: raw, changed: false})
+			preparedFiles = append(preparedFiles, prepared{path: p, before: raw, exists: exists})
 			continue
 		}
 		servers.Set(toolID, desired)
-		preparedFiles = append(preparedFiles, prepared{path: p, before: raw, after: util.StringifyJSON(cfg), changed: true})
+		preparedFiles = append(preparedFiles, prepared{path: p, before: raw, after: util.StringifyJSON(cfg), changed: true, exists: exists})
 	}
 	changed := false
 	for _, file := range preparedFiles {
@@ -391,7 +392,11 @@ func ConfigureCursorMcp(toolID string) (bool, string) {
 					break
 				}
 				if prior.changed {
-					_ = util.WriteFile(prior.path, prior.before)
+					if prior.exists {
+						_ = util.WriteFile(prior.path, prior.before)
+					} else {
+						_ = os.Remove(prior.path)
+					}
 				}
 			}
 			return false, file.path
@@ -402,7 +407,10 @@ func ConfigureCursorMcp(toolID string) (bool, string) {
 }
 
 func RemoveCursorMcp(toolID string) bool {
-	type prepared struct{ path, before, after string }
+	type prepared struct {
+		path, before, after string
+		exists              bool
+	}
 	var files []prepared
 	for _, target := range cursorMcpTargets() {
 		raw, ok := util.ReadFileSafe(target.path)
@@ -431,7 +439,7 @@ func RemoveCursorMcp(toolID string) bool {
 		if servers.Len() == 0 {
 			cfg.Delete("mcpServers")
 		}
-		files = append(files, prepared{target.path, raw, util.StringifyJSON(cfg)})
+		files = append(files, prepared{target.path, raw, util.StringifyJSON(cfg), true})
 	}
 	if len(files) == 0 {
 		return false
@@ -439,7 +447,11 @@ func RemoveCursorMcp(toolID string) bool {
 	for i, file := range files {
 		if err := util.WriteFile(file.path, file.after); err != nil {
 			for _, prior := range files[:i] {
-				_ = util.WriteFile(prior.path, prior.before)
+				if prior.exists {
+					_ = util.WriteFile(prior.path, prior.before)
+				} else {
+					_ = os.Remove(prior.path)
+				}
 			}
 			return false
 		}
@@ -725,13 +737,10 @@ func installCursorCodegraphIndexHook(path string) bool {
 
 func InstallCursorCodegraphIndexHook() bool {
 	paths := cursorHooksFiles()
-	before := make([]string, len(paths))
+	snapshots := cursorFileSnapshots(paths)
 	for i, path := range paths {
-		before[i], _ = util.ReadFileSafe(path)
 		if !installCursorCodegraphIndexHook(path) {
-			for j := 0; j < i; j++ {
-				_ = util.WriteFile(paths[j], before[j])
-			}
+			_ = restoreCursorFiles(snapshots[:i])
 			return false
 		}
 	}
@@ -790,13 +799,10 @@ func removeCursorCodegraphIndexHook(path string) bool {
 
 func RemoveCursorCodegraphIndexHook() bool {
 	paths := cursorHooksFiles()
-	before := make([]string, len(paths))
+	snapshots := cursorFileSnapshots(paths)
 	for i, path := range paths {
-		before[i], _ = util.ReadFileSafe(path)
 		if !removeCursorCodegraphIndexHook(path) {
-			for j := 0; j < i; j++ {
-				_ = util.WriteFile(paths[j], before[j])
-			}
+			_ = restoreCursorFiles(snapshots[:i])
 			return false
 		}
 	}
@@ -907,13 +913,10 @@ func installCursorProjectRulesHook(path string) bool {
 
 func InstallCursorProjectRulesHook() bool {
 	paths := cursorHooksFiles()
-	before := make([]string, len(paths))
+	snapshots := cursorFileSnapshots(paths)
 	for i, path := range paths {
-		before[i], _ = util.ReadFileSafe(path)
 		if !installCursorProjectRulesHook(path) {
-			for j := 0; j < i; j++ {
-				_ = util.WriteFile(paths[j], before[j])
-			}
+			_ = restoreCursorFiles(snapshots[:i])
 			return false
 		}
 	}
@@ -1030,13 +1033,10 @@ func removeCursorProjectRulesHook(path string) bool {
 
 func RemoveCursorProjectRulesHook() bool {
 	paths := cursorHooksFiles()
-	before := make([]string, len(paths))
+	snapshots := cursorFileSnapshots(paths)
 	for i, path := range paths {
-		before[i], _ = util.ReadFileSafe(path)
 		if !removeCursorProjectRulesHook(path) {
-			for j := 0; j < i; j++ {
-				_ = util.WriteFile(paths[j], before[j])
-			}
+			_ = restoreCursorFiles(snapshots[:i])
 			return false
 		}
 	}
@@ -1071,18 +1071,22 @@ func cursorRtkHookEntryMatchesFor(v any, want string) bool {
 }
 
 func cursorToklessLauncher(token string) bool {
-	base := token
+	base := strings.Trim(token, `"'`)
 	if i := strings.LastIndexAny(base, `/\\`); i >= 0 {
 		base = base[i+1:]
 	}
-	return base == "tokless"
+	base = strings.ToLower(base)
+	return base == "tokless" || base == "tokless.exe"
 }
 
 func cursorOwnedRtkHookCommand(command string) bool {
 	if command == "rtk hook cursor" {
 		return true
 	}
-	parts := strings.Fields(command)
+	parts := util.SplitCommand(command)
+	if len(parts) == 3 && cursorToklessLauncher(parts[0]) && parts[1] == "rtk-hook" && parts[2] == "cursor" {
+		return true
+	}
 	if len(parts) == 4 && cursorToklessLauncher(parts[0]) && parts[1] == "rtk" && parts[2] == "hook" && parts[3] == "cursor" {
 		return true
 	}
@@ -1151,22 +1155,19 @@ func installCursorRtkHook(path string) bool {
 	current := cursorRtkHookEntryFor(command)
 	currentCount := 0
 	for _, entry := range entries {
-		if cursorOwnedRtkHookEntryMatches(entry) || cursorRtkHookEntryMatchesFor(entry, command) {
-			if cursorRtkHookEntryMatchesFor(entry, command) {
-				currentCount++
-			}
+		if cursorRtkHookEntryMatchesFor(entry, command) {
+			currentCount++
+			continue
+		}
+		if cursorOwnedRtkHookEntryMatches(entry) {
 			continue
 		}
 		kept = append(kept, entry)
 	}
-	if currentCount == 1 {
-		kept = append(kept, current)
-		if len(kept) == len(entries) {
-			return true
-		}
-	} else {
-		kept = append(kept, current)
+	if currentCount == 1 && len(kept)+1 == len(entries) {
+		return true
 	}
+	kept = append(kept, current)
 	// Cursor hook entries use plain JSON values so existing ordered config remains serializable.
 	hooks.Set("preToolUse", kept)
 	cfg.Set("version", 1)
@@ -1179,13 +1180,10 @@ func installCursorRtkHook(path string) bool {
 
 func InstallCursorRtkHook() bool {
 	paths := cursorHooksFiles()
-	before := make([]string, len(paths))
+	snapshots := cursorFileSnapshots(paths)
 	for i, path := range paths {
-		before[i], _ = util.ReadFileSafe(path)
 		if !installCursorRtkHook(path) {
-			for j := 0; j < i; j++ {
-				_ = util.WriteFile(paths[j], before[j])
-			}
+			_ = restoreCursorFiles(snapshots[:i])
 			return false
 		}
 	}
@@ -1243,13 +1241,10 @@ func removeCursorRtkHook(path string) bool {
 
 func RemoveCursorRtkHook() bool {
 	paths := cursorHooksFiles()
-	before := make([]string, len(paths))
+	snapshots := cursorFileSnapshots(paths)
 	for i, path := range paths {
-		before[i], _ = util.ReadFileSafe(path)
 		if !removeCursorRtkHook(path) {
-			for j := 0; j < i; j++ {
-				_ = util.WriteFile(paths[j], before[j])
-			}
+			_ = restoreCursorFiles(snapshots[:i])
 			return false
 		}
 	}
@@ -1392,6 +1387,34 @@ func HasCursorMcpPermissions(toolID string) bool {
 type cursorPermissionSpec struct {
 	path, key, want string
 	nested          bool
+}
+
+type cursorFileSnapshot struct {
+	path, raw string
+	exists    bool
+}
+
+func cursorFileSnapshots(paths []string) []cursorFileSnapshot {
+	out := make([]cursorFileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		raw, exists := util.ReadFileSafe(path)
+		out = append(out, cursorFileSnapshot{path: path, raw: raw, exists: exists})
+	}
+	return out
+}
+
+func restoreCursorFiles(snapshots []cursorFileSnapshot) bool {
+	ok := true
+	for _, snapshot := range snapshots {
+		if snapshot.exists {
+			if err := util.WriteFile(snapshot.path, snapshot.raw); err != nil {
+				ok = false
+			}
+		} else if err := os.Remove(snapshot.path); err != nil && !os.IsNotExist(err) {
+			ok = false
+		}
+	}
+	return ok
 }
 
 func updateCursorPermissions(specs []cursorPermissionSpec, remove bool) bool {
