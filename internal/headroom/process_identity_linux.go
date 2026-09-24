@@ -24,6 +24,7 @@ func identifyProcess(pid int) (processIdentityInfo, error) {
 	if err != nil {
 		return processIdentityInfo{}, err
 	}
+	executable = strings.TrimSuffix(executable, " (deleted)")
 	executable, err = filepath.Abs(executable)
 	if err != nil {
 		return processIdentityInfo{}, err

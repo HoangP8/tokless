@@ -561,6 +561,8 @@ export default async function MockNativePlugin(input, opts) {
       // Native headroom might set its own headers
       if (hookInput?.nativeHeader) {
         output.headers["x-native-header"] = "native-value";
+        output.headers["x-headroom-base-url"] = "https://oauth.example/v1";
+        output.headers["x-headroom-original-path"] = "/oauth/chat/completions";
       }
     }
   };
@@ -579,8 +581,14 @@ import ToklessBYOKPlugin from "./tokless-byok.js";
 
 async function run() {
   const plugin = await ToklessBYOKPlugin({}, {
-    routes: { "custom-provider": "opencode:custom-provider.tok123" },
-    upstreams: { "custom-provider": "https://api.customprovider.ai/api/v1" },
+    routes: {
+      "byok-a": "opencode:byok-a.route-a",
+      "byok-b": "opencode:byok-b.route-b"
+    },
+    upstreams: {
+      "byok-a": "https://api.provider-a.test/v1",
+      "byok-b": "https://api.provider-b.test/v1"
+    },
     byokGatewayUrl: "http://127.0.0.1:18787"
   });
 
@@ -589,18 +597,41 @@ async function run() {
 
   const sharedOutput = { headers: {} };
 
-  await hook({ model: { providerID: "custom-provider" } }, sharedOutput);
-  assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], "opencode:custom-provider.tok123");
-  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], "https://api.customprovider.ai");
-  assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], "/api/v1/chat/completions");
+  await hook({ model: { providerID: "byok-a" } }, sharedOutput);
+  assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], "opencode:byok-a.route-a");
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], "https://api.provider-a.test");
+  assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], "/v1/chat/completions");
+
+  await hook({ model: { providerID: "byok-b" } }, sharedOutput);
+  assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], "opencode:byok-b.route-b");
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], "https://api.provider-b.test");
+  assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], "/v1/chat/completions");
 
   await hook({ model: { providerID: "openai" } }, sharedOutput);
   assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], undefined);
   assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], undefined);
   assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], undefined);
 
+  const oauthOutput = { headers: {} };
+  await hook({ model: { providerID: "oauth-provider" }, nativeHeader: true }, oauthOutput);
+  assert.strictEqual(oauthOutput.headers["X-Tokless-Route"], undefined);
+  assert.strictEqual(oauthOutput.headers["x-headroom-base-url"], "https://oauth.example/v1");
+  assert.strictEqual(oauthOutput.headers["x-headroom-original-path"], "/oauth/chat/completions");
+
+  const [first, second] = [{ headers: {} }, { headers: {} }];
+  await Promise.all([
+    hook({ model: { providerID: "byok-a" } }, first),
+    hook({ model: { providerID: "byok-b" } }, second)
+  ]);
+  assert.strictEqual(first.headers["X-Tokless-Route"], "opencode:byok-a.route-a");
+  assert.strictEqual(first.headers["x-headroom-base-url"], "https://api.provider-a.test");
+  assert.strictEqual(second.headers["X-Tokless-Route"], "opencode:byok-b.route-b");
+  assert.strictEqual(second.headers["x-headroom-base-url"], "https://api.provider-b.test");
+
   await hook({ model: { providerID: "openai" }, nativeHeader: true }, sharedOutput);
   assert.strictEqual(sharedOutput.headers["x-native-header"], "native-value");
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], "https://oauth.example/v1");
+  assert.strictEqual(sharedOutput.headers["x-headroom-original-path"], "/oauth/chat/completions");
 
   sharedOutput.headers["x-tokless-route"] = "stale-route";
   sharedOutput.headers["X-TOKLESS-ROUTE"] = "stale-upper";
@@ -610,8 +641,8 @@ async function run() {
   assert.strictEqual(sharedOutput.headers["x-tokless-route"], undefined);
   assert.strictEqual(sharedOutput.headers["X-TOKLESS-ROUTE"], undefined);
   assert.strictEqual(sharedOutput.headers["X-Tokless-Route"], undefined);
-  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], undefined);
-  assert.strictEqual(sharedOutput.headers["X-Headroom-Original-Path"], undefined);
+  assert.strictEqual(sharedOutput.headers["x-headroom-base-url"], "https://unknown.random.origin:443/");
+  assert.strictEqual(sharedOutput.headers["X-Headroom-Original-Path"], "/custom/path/chat/completions");
 
   console.log("PASS: Isolation verified");
 }

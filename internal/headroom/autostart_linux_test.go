@@ -44,7 +44,7 @@ func TestStopProxyAutostartUnitPropagatesFailure(t *testing.T) {
 func TestProxyAutostartConfiguredIncludesInactiveManagedUnit(t *testing.T) {
 	config := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", config)
-	if err := util.WriteFile(filepath.Join(config, "systemd", "user", proxyAutostartUnit), proxyAutostartUnitBody(util.ToklessAbs())); err != nil {
+	if err := util.WriteFile(filepath.Join(config, "systemd", "user", proxyAutostartUnit), proxyAutostartUnitBody(util.ToklessPersistedAbs())); err != nil {
 		t.Fatal(err)
 	}
 	if !ProxyAutostartConfigured() {

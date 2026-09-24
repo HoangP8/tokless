@@ -150,6 +150,39 @@ func TestConfigureOpenCodeProxyRoutesBYOKThroughHeadroom(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTransportPluginMapsProvidersByExactID(t *testing.T) {
+
+	opencodeProxyTestHome(t)
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", "8787")
+	configPath := filepath.Join(util.OpenCodePathsResolved().Dir, "config.json")
+	if err := util.EnsureDir(filepath.Dir(configPath)); err != nil {
+		t.Fatal(err)
+	}
+	config := `{"provider":{
+  "oauth-provider":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://oauth.example/v1"}},
+  "byok-a":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://provider-a.example/v1","apiKey":"a"}},
+  "byok-b":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"https://provider-b.example/v1","apiKey":"b"}}
+}}`
+	if err := util.WriteFile(configPath, config); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("OpenCode transport config did not change")
+	}
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	if !ok {
+		t.Fatal("OpenCode transport config missing")
+	}
+	for _, id := range []string{"byok-a", "byok-b"} {
+		if !strings.Contains(raw, `"`+id+`": "opencode:`+id+`.`) {
+			t.Fatalf("missing route for %s: %s", id, raw)
+		}
+	}
+	if strings.Contains(raw, `"oauth-provider": "opencode:`) {
+		t.Fatalf("OAuth provider received BYOK route: %s", raw)
+	}
+}
+
 func TestConfigureOpenCodeProxyNoBYOKNoOp(t *testing.T) {
 	opencodeProxyTestHome(t)
 	cfgPath := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
