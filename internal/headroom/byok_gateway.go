@@ -908,6 +908,7 @@ func byokProxy(id string, target *url.URL) *httputil.ReverseProxy {
 		req.URL.Path = byokTargetPath(target.Path, req.URL.Path)
 		req.URL.RawPath = ""
 		originalDirector(req)
+		req.Host = target.Host
 		req.Header.Del(byokRouteHeader)
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, _ error) {
