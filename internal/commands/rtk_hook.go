@@ -68,8 +68,6 @@ func rtkUnsafeFind(cmdLine string) bool {
 	return false
 }
 
-
-
 // RunRtkRewrite is the canonical CLI entry: `tokless rtk-rewrite -- <cmd>`.
 // Prints the rewritten command and exits 0 when changed; exits 1 unchanged.
 func RunRtkRewrite() int {
@@ -488,29 +486,36 @@ func RunRtkHookCline() int {
 	return 0
 }
 
-func clineRewriteCommands(toolInput map[string]any) ([]any, bool) {
-	commands, ok := toolInput["commands"].([]any)
-	if !ok {
+func clineRewriteCommands(toolInput map[string]any) (any, bool) {
+	switch commands := toolInput["commands"].(type) {
+	case string:
+		newCmd, didChange, approve := copilotRtkDecide(commands)
+		if approve && didChange && newCmd != "" && newCmd != commands {
+			return newCmd, true
+		}
+		return nil, false
+	case []any:
+		updated := make([]any, len(commands))
+		changed := false
+		for i, item := range commands {
+			updated[i] = item
+			cmdLine, ok := item.(string)
+			if !ok {
+				continue
+			}
+			newCmd, didChange, approve := copilotRtkDecide(cmdLine)
+			if approve && didChange && newCmd != "" && newCmd != cmdLine {
+				updated[i] = newCmd
+				changed = true
+			}
+		}
+		if !changed {
+			return nil, false
+		}
+		return updated, true
+	default:
 		return nil, false
 	}
-	updated := make([]any, len(commands))
-	changed := false
-	for i, item := range commands {
-		updated[i] = item
-		cmdLine, ok := item.(string)
-		if !ok {
-			continue
-		}
-		newCmd, didChange, approve := copilotRtkDecide(cmdLine)
-		if approve && didChange && newCmd != "" && newCmd != cmdLine {
-			updated[i] = newCmd
-			changed = true
-		}
-	}
-	if !changed {
-		return nil, false
-	}
-	return updated, true
 }
 
 func clineToolInput(req map[string]json.RawMessage) (string, map[string]any, bool) {

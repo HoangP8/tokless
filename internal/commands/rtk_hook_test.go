@@ -1122,6 +1122,30 @@ func TestRunRtkHookClineCommandsStringArray(t *testing.T) {
 	}
 }
 
+func TestRunRtkHookClineCommandsSingleString(t *testing.T) {
+	if !utilHaveRtk() {
+		t.Skip("rtk binary not installed")
+	}
+	// Exact shape captured from cline 3.0.51: model sends commands as a
+	// single string, not an array.
+	payload := `{"hookName":"tool_call","iteration":1,"tool_call":{"id":"1","name":"run_commands","input":{"commands":"git status"}},"preToolUse":{"toolName":"run_commands","parameters":{"commands":"git status"}}}`
+	_, out := runRtkHookClinePayload(t, payload)
+	var resp struct {
+		OverrideInput map[string]any `json:"overrideInput"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("bad JSON %q: %v", out, err)
+	}
+	if resp.OverrideInput["commands"] != "rtk git status" {
+		t.Fatalf("single-string commands not rewritten: %q", out)
+	}
+
+	_, out = runRtkHookClinePayload(t, `{"tool_call":{"name":"run_commands","input":{"commands":"npm test"}}}`)
+	if out != "{}" {
+		t.Fatalf("unsupported single-string command: got %q; want {}", out)
+	}
+}
+
 func TestRunRtkHookClineCommandsArrayNoOp(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")

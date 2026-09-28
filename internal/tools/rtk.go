@@ -162,7 +162,7 @@ export default function (pi: ExtensionAPI) {
       return
     }
     if (typeof rewritten !== "string") return
-    return { input: { ...event.input, command: rewritten } }
+    event.input.command = rewritten
   })
 }
 `
@@ -596,7 +596,7 @@ export default function (pi: any) {
       if (result.code !== 0 || typeof result.stdout !== "string") return
       const rewritten = result.stdout.trim()
       if (!rewritten || rewritten === command) return
-      return { input: { ...event.input, command: rewritten } }
+      event.input.command = rewritten
     } catch {}
   })
 }
