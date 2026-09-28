@@ -157,6 +157,11 @@ tokless uninstall    Remove everything tokless touched
 tokless self-update  Update the tokless CLI itself
 tokless --version    Print tokless version
 tokless --help       Show all commands and flags
+
+# Optional shared local Headroom proxy
+tokless proxy up     Route selected agents through Headroom
+tokless proxy status Check current routing
+tokless proxy down   Restore Tokless-owned routing
 ```
 
 Flags:
@@ -169,3 +174,5 @@ Flags:
 ```
 
 Restart agents after install so they pick up new config.
+
+Headroom routing diagram and safe OAuth/BYOK rules: [docs/headroom-routing.md](docs/headroom-routing.md).
