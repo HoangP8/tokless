@@ -13,3 +13,4 @@ skills-lock.json
 /tokless
 .refs/
 .claude/
+bin/
