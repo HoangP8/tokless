@@ -623,11 +623,19 @@ func kiloProxyProviderEntry(endpoint string) *util.OrderedMap {
 	return entry
 }
 
-// ConfigureKiloProxy injects provider.tokless-headroom into kilo.jsonc,
-// pointing at the OpenAI-compatible headroom daemon endpoint.
+// ConfigureKiloProxy wires kilo via the headroom transport plugin: BYOK
+// routes plus a plugin entry in the config that owns the plugin array.
 func ConfigureKiloProxy() (changed bool, file string) {
 	if err := withProxyRouteStashLock(func() error {
 		changed, file = configureKiloProxyLocked()
+		pluginChanged, pluginFile, wireErr := configureKiloPluginWiring()
+		if wireErr != nil {
+			util.L.Err("kilo transport plugin: " + wireErr.Error())
+		}
+		if pluginChanged {
+			changed = true
+			file = pluginFile
+		}
 		return nil
 	}); err != nil {
 		util.L.Err("kilo proxy lock failed: " + err.Error())
@@ -667,32 +675,36 @@ func configureKiloProxyLocked() (changed bool, file string) {
 	stash := loadProxyRouteStashLocked("kilo")
 	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("kilo"))
 	prevStashLen := len(stash)
-	if nativeChanged, nativeFound, registeredRoutes := kiloNativeRoutes(cfg, stash); nativeFound {
-		if saveProxyRouteStash("kilo", stash) != nil {
-			for _, route := range registeredRoutes {
-				rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+	// Only configs with legacy stash entries keep their native gateway
+	// rewrites; fresh configs are wired through the transport plugin alone.
+	if prevStashLen > 0 {
+		if nativeChanged, nativeFound, registeredRoutes := kiloNativeRoutes(cfg, stash); nativeFound {
+			if saveProxyRouteStash("kilo", stash) != nil {
+				for _, route := range registeredRoutes {
+					rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+				}
+				return false, file
+			}
+			if !nativeChanged {
+				for _, route := range registeredRoutes {
+					rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+				}
+				return false, file
+			}
+			if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
+				restoreProxyRouteStashLogged("kilo", stashRaw, stashExists)
+				for _, route := range registeredRoutes {
+					rollbackBYOKRouteLogged("kilo", route.id, route.previous)
+				}
+				return false, file
+			}
+			return true, file
+		} else {
+			if saveProxyRouteStash("kilo", stash) != nil {
+				return false, file
 			}
 			return false, file
 		}
-		if !nativeChanged {
-			for _, route := range registeredRoutes {
-				rollbackBYOKRouteLogged("kilo", route.id, route.previous)
-			}
-			return false, file
-		}
-		if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
-			restoreProxyRouteStashLogged("kilo", stashRaw, stashExists)
-			for _, route := range registeredRoutes {
-				rollbackBYOKRouteLogged("kilo", route.id, route.previous)
-			}
-			return false, file
-		}
-		return true, file
-	} else if prevStashLen > 0 {
-		if saveProxyRouteStash("kilo", stash) != nil {
-			return false, file
-		}
-		return false, file
 	}
 	desired := kiloProxyProviderEntry(ProxyEndpointFor("kilo"))
 	if existing, ok := providers.Get(kiloProxyProvider); ok {
@@ -708,8 +720,8 @@ func configureKiloProxyLocked() (changed bool, file string) {
 	return true, file
 }
 
-// RemoveKiloProxy deletes provider.tokless-headroom only while its value still
-// equals what tokless injected.
+// RemoveKiloProxy deletes the transport plugin entry and kilo:<id> routes,
+// plus the reserved provider block only while it matches what tokless wrote.
 func RemoveKiloProxy() bool {
 	removed := false
 	if err := withProxyRouteStashLock(func() error {
@@ -725,6 +737,47 @@ func removeKiloProxyLocked() bool {
 	if !proxyRouteStashValid("kilo") {
 		return false
 	}
+	p := util.KiloPathsResolved()
+	configRaw, configExists := util.ReadFileSafe(p.Config)
+	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("kilo"))
+	legacyRemoved := removeKiloNativeLocked()
+	pluginWired := kiloTransportPluginWired()
+	pluginRemoved := removeKiloTransportPlugin()
+	if pluginWired && !pluginRemoved {
+		if configExists {
+			_ = util.WriteFile(p.Config, configRaw)
+		}
+		restoreProxyRouteStashLogged("kilo", stashRaw, stashExists)
+		return false
+	}
+	routeIDs := map[string]bool{}
+	if routes, err := util.ReadBYOKRoutes(); err == nil || os.IsNotExist(err) {
+		for _, route := range routes {
+			if strings.HasPrefix(route.ID, "kilo:") {
+				routeIDs[route.ID] = true
+			}
+		}
+	} else {
+		return false
+	}
+	for _, provider := range DiscoverKiloBYOK() {
+		routeIDs["kilo:"+provider.ID] = true
+	}
+	for id := range routeIDs {
+		if err := util.DeleteBYOKRoute(id); err != nil {
+			if configExists {
+				_ = util.WriteFile(p.Config, configRaw)
+			}
+			restoreProxyRouteStashLogged("kilo", stashRaw, stashExists)
+			return false
+		}
+	}
+	return legacyRemoved || pluginRemoved
+}
+
+// removeKiloNativeLocked restores legacy gateway rewrites from stash, or
+// deletes provider.tokless-headroom while it matches what tokless injected.
+func removeKiloNativeLocked() bool {
 	p := util.KiloPathsResolved()
 	stash := loadProxyRouteStashLocked("kilo")
 	if len(stash) > 0 {
@@ -835,49 +888,10 @@ func removeKiloProxyLocked() bool {
 	return util.WriteFile(p.Config, util.StringifyJSON(cfg)) == nil
 }
 
-// KiloProxyWired reports whether provider.tokless-headroom points at the
-// headroom daemon endpoint.
+// KiloProxyWired reports whether the headroom transport plugin entry is
+// present in the active kilo config.
 func KiloProxyWired() bool {
-	raw, ok := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if stash := loadProxyRouteStash("kilo"); len(stash) > 0 {
-		providers, ok := mapChild(cfg, "provider")
-		if !ok {
-			return false
-		}
-		for id, entry := range stash {
-			value, exists := providers.Get(id)
-			provider, providerOK := value.(*util.OrderedMap)
-			if !exists || !providerOK {
-				return false
-			}
-			_, base, _, headers, routeOK := kiloProviderRoute(provider)
-			if !routeOK {
-				return false
-			}
-			upstream, headerOK := headers.Get(headroomBaseURLHeader)
-			routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
-			matchesProxy := sameProxyBase(base, ProxyEndpointFor("kilo")) && headerOK && upstream == entry.Upstream
-			route, routeExists := util.ReadBYOKRoute("kilo:" + id)
-			matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
-			if !matchesProxy && !matchesBYOK {
-				return false
-			}
-		}
-		return true
-	}
-	providers, ok := mapChild(cfg, "provider")
-	if !ok {
-		return false
-	}
-	existing, ok := providers.Get(kiloProxyProvider)
-	return ok && jsonEqual(existing, kiloProxyProviderEntry(ProxyEndpointFor("kilo")))
+	return kiloTransportPluginWired()
 }
 
 // jsonEqual compares two JSON values by canonical form.

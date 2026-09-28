@@ -90,6 +90,9 @@ func mixedProxyTestHome(t *testing.T) {
 	t.Setenv("CLINE_DIR", "")
 	t.Setenv("CLINE_DATA_DIR", "")
 	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.WriteFile(openCodeTransportPluginPath(), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func claudeProxyTestHome(t *testing.T) {
@@ -1345,13 +1348,26 @@ func TestKiloProxyPreservesNativeProvider(t *testing.T) {
 		t.Fatal("native Kilo provider not wired")
 	}
 	got, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseURL\": \"http://127.0.0.1:18787\"", "\"x-headroom-base-url\": \"https://provider.example\""} {
+	for _, want := range []string{"\"apiKey\": \"user-key\"", "\"x-user\": \"keep\"", "\"baseURL\": \"https://provider.example/v1\"", "tokless-byok.kilo.js"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("Kilo route missing %q:\n%s", want, got)
+			t.Fatalf("Kilo transport missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, headroomBaseURLHeader) {
+		t.Fatalf("Kilo provider must not be rewritten:\n%s", got)
+	}
+	route, ok := util.ReadBYOKRoute("kilo:provider")
+	if !ok || route.Upstream != "https://provider.example/v1" {
+		t.Fatalf("kilo route = %+v ok=%v", route, ok)
+	}
+	if changed, _ := ConfigureKiloProxy(); changed {
+		t.Fatal("Kilo transport not idempotent")
+	}
 	if !RemoveKiloProxy() || KiloProxyWired() {
-		t.Fatal("native Kilo route not removed")
+		t.Fatal("Kilo transport not removed")
+	}
+	if _, exists := util.ReadBYOKRoute("kilo:provider"); exists {
+		t.Fatal("kilo route not deleted")
 	}
 	got, _ = util.ReadFileSafe(util.KiloPathsResolved().Config)
 	if got != util.StringifyJSON(util.TryParseJsonc(raw)) {
@@ -2785,8 +2801,14 @@ func TestMixedProviderProxyKeepsDistinctUpstreams(t *testing.T) {
 		t.Fatalf("pi header missing:\n%s", piRaw)
 	}
 	kiloRaw, _ := util.ReadFileSafe(util.KiloPathsResolved().Config)
-	if !strings.Contains(kiloRaw, `"x-headroom-base-url": "https://kilo.example"`) {
-		t.Fatalf("kilo header missing:\n%s", kiloRaw)
+	if !strings.Contains(kiloRaw, `"baseURL": "https://kilo.example/v1"`) || !strings.Contains(kiloRaw, "tokless-byok.kilo.js") {
+		t.Fatalf("kilo provider must stay direct with plugin wired:\n%s", kiloRaw)
+	}
+	if strings.Contains(kiloRaw, headroomBaseURLHeader) {
+		t.Fatalf("kilo provider must not be rewritten:\n%s", kiloRaw)
+	}
+	if route, ok := util.ReadBYOKRoute("kilo:provider"); !ok || route.Upstream != "https://kilo.example/v1" {
+		t.Fatalf("kilo route = %+v ok=%v", route, ok)
 	}
 	if os.Getenv("OPENAI_TARGET_API_URL") != "stale-openai" || os.Getenv("ANTHROPIC_TARGET_API_URL") != "stale-anthropic" {
 		t.Fatalf("process-wide targets mutated: openai=%q anthropic=%q", os.Getenv("OPENAI_TARGET_API_URL"), os.Getenv("ANTHROPIC_TARGET_API_URL"))

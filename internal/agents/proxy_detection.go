@@ -121,7 +121,21 @@ func DetectProxy(id string) ProxyDetection {
 		spec := ProviderSpecActive()
 		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(id), spec))
 	case "kilo":
-		return detectProviderProxy(capability, util.KiloPathsResolved().Config, "provider", kiloProxyProvider, kiloProxyProviderEntry(ProxyEndpointFor(id)))
+		if kiloTransportPluginWired() {
+			return proxyDetection(id, "managed transport plugin preserves provider endpoint and credentials", ProxyStateManaged)
+		}
+		target := kiloTransportPluginTarget()
+		raw, err := readProxyConfig(target)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return proxyDetection(id, "config absent", ProxyStateAbsent)
+			}
+			return proxyDetection(id, "config unreadable", ProxyStateUnreadable)
+		}
+		if util.HasJSONCComments(raw) {
+			return proxyDetection(id, "config has JSONC comments", ProxyStateUnreadable)
+		}
+		return proxyDetection(id, "transport plugin not configured", ProxyStateUnconfigured)
 	case "pi":
 		if PiProxyWired() {
 			return proxyDetection(id, "native BYOK providers routed through headroom", ProxyStateManaged)

@@ -20,6 +20,9 @@ func kiloProxyTestHome(t *testing.T) {
 	t.Setenv("KILO_CONFIG_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.WriteFile(openCodeTransportPluginPath(), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func piProxyTestHome(t *testing.T) {
@@ -158,34 +161,34 @@ func TestKiloProxyConfigurators(t *testing.T) {
 			wantAbsent: []string{proxyEndpoint},
 		},
 		{
-			name:         "idempotent when already wired",
+			name:         "seed reserved entry, plugin appended",
 			seed:         injected,
-			wantConfigCh: false,
+			wantConfigCh: true,
 			wantWired:    true,
 			wantRemove:   true,
 		},
 		{
-			name:         "idempotent even with reordered keys",
+			name:         "seed reserved reordered, plugin appended",
 			seed:         reordered,
-			wantConfigCh: false,
+			wantConfigCh: true,
 			wantWired:    true,
 			wantRemove:   true,
 		},
 		{
-			name:         "refuses differing existing entry",
+			name:         "differing reserved kept, plugin appended",
 			seed:         `{"provider":{"tokless-headroom":{"npm":"@ai-sdk/openai-compatible","name":"User","options":{"baseURL":"http://user.example:9999/v1"},"models":{}}}}`,
-			wantConfigCh: false,
-			wantWired:    false,
-			wantRemove:   false,
+			wantConfigCh: true,
+			wantWired:    true,
+			wantRemove:   true,
 			wantRetained: []string{`"http://user.example:9999/v1"`},
 		},
 		{
-			name:         "refuses non-object provider field",
+			name:         "non-object provider untouched, plugin appended",
 			seed:         `{"provider":"user"}`,
-			wantConfigCh: false,
-			wantWired:    false,
-			wantRemove:   false,
-			wantRetained: []string{`"provider":"user"`},
+			wantConfigCh: true,
+			wantWired:    true,
+			wantRemove:   true,
+			wantRetained: []string{`"provider": "user"`},
 		},
 		{
 			name:         "merges under existing provider object",
