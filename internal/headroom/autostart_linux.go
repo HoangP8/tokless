@@ -15,6 +15,8 @@ import (
 
 const proxyAutostartUnit = "tokless-proxy.service"
 
+const byokGatewayAutostartUnit = "tokless-byok-gateway.service"
+
 var stopProxyAutostartUnit = func() error {
 	return exec.Command("systemctl", "--user", "stop", proxyAutostartUnit).Run()
 }
@@ -32,6 +34,27 @@ func proxyAutostartUnitPath() string {
 		cfg = filepath.Join(util.Home(), ".config")
 	}
 	return filepath.Join(cfg, "systemd", "user", proxyAutostartUnit)
+}
+
+func byokGatewayAutostartUnitPath() string {
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" || !filepath.IsAbs(cfg) {
+		cfg = filepath.Join(util.Home(), ".config")
+	}
+	return filepath.Join(cfg, "systemd", "user", byokGatewayAutostartUnit)
+}
+
+// stopByokGatewaySupervisor stops the systemd-managed BYOK gateway so a
+// SIGKILL from StopBYOKGateway does not trigger an on-failure respawn.
+func stopByokGatewaySupervisor() error {
+	if !util.Exists(byokGatewayAutostartUnitPath()) {
+		return nil
+	}
+	out, err := exec.Command("systemctl", "--user", "is-active", byokGatewayAutostartUnit).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "active" {
+		return nil
+	}
+	return exec.Command("systemctl", "--user", "stop", byokGatewayAutostartUnit).Run()
 }
 
 func proxyAutostartUnitBody(toklessBin string) string {

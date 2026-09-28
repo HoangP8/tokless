@@ -123,6 +123,17 @@ func byokGatewayOwned() (byokGatewayOwnership, bool) {
 	return record, true
 }
 
+// persistByokGatewayOwnership records the running gateway process itself so
+// ownership holds whether spawned by the CLI or supervised by a service manager.
+func persistByokGatewayOwnership(identity processIdentityInfo) error {
+	record := byokGatewayOwnership{PID: os.Getpid(), Executable: identity.Executable, Args: identity.Args, Start: identity.Start}
+	b, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return util.WriteFileAtomic(byokGatewayPIDPath(), string(b), 0o600)
+}
+
 func SaveBYOKRoutes(routes []BYOKRoute) error {
 	if err := util.SaveBYOKRoutes(routes); err != nil {
 		return err
@@ -408,6 +419,9 @@ func RunBYOKGatewayServe() error {
 	byokGatewayState.Lock()
 	byokGatewayState.listener, byokGatewayState.server = listener, server
 	byokGatewayState.Unlock()
+	if identity, identityErr := proxyIdentity(os.Getpid()); identityErr == nil {
+		_ = persistByokGatewayOwnership(identity)
+	}
 	defer func() {
 		byokGatewayState.Lock()
 		byokGatewayState.listener, byokGatewayState.server = nil, nil
@@ -592,9 +606,10 @@ func StopBYOKGateway() error {
 	if err != nil {
 		return err
 	}
-	if err := proxyKill(proc); err != nil {
-		return err
+	if err := stopByokGatewaySupervisor(); err != nil {
+		util.L.Warn("stop BYOK gateway supervisor: " + err.Error())
 	}
+	_ = proxyKill(proc)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if proxyGone(proc) && !byokGatewayLive() {

@@ -48,6 +48,8 @@ func stopProxySupervisorForPatch() error {
 	return endProxyAutostartTask()
 }
 
+func stopByokGatewaySupervisor() error { return nil }
+
 func RunProxyWatchdog() error {
 	if !util.ProxyRoutingEnabled() {
 		return nil

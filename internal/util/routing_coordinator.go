@@ -103,9 +103,12 @@ func (coordinator *RoutingCoordinator) heartbeat() {
 			coordinator.mu.RUnlock()
 			renewed, err := renewRoutingOwnership(coordinator.nonce, coordinator.owner, coordinator.leaseTTL, leases)
 			if err != nil {
-				coordinator.fence()
 				coordinator.closeMu.Unlock()
-				return
+				if coordinator.ownershipTakenOver() {
+					coordinator.fence()
+					return
+				}
+				continue
 			}
 			coordinator.mu.Lock()
 			for _, lease := range renewed {
@@ -117,6 +120,29 @@ func (coordinator *RoutingCoordinator) heartbeat() {
 			return
 		}
 	}
+}
+
+// ownershipTakenOver reports whether another coordinator or owner now holds
+// the on-disk claim, i.e. this coordinator must permanently stop renewing.
+func (coordinator *RoutingCoordinator) ownershipTakenOver() bool {
+	routingStoreMu.Lock()
+	defer routingStoreMu.Unlock()
+	release, err := acquireRoutingStoreLock()
+	if err != nil {
+		return false
+	}
+	defer release()
+	claim, err := readRoutingOwnershipUnlocked()
+	if err != nil {
+		return false
+	}
+	if claim.CoordinatorNonce != coordinator.nonce {
+		return true
+	}
+	if claim.OwnerNonce != coordinator.owner {
+		return true
+	}
+	return false
 }
 
 func (coordinator *RoutingCoordinator) fence() {

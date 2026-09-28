@@ -111,6 +111,82 @@ func TestRoutingCoordinatorHeartbeatRenewsEmptyLeaseSet(t *testing.T) {
 	}
 }
 
+func TestRoutingCoordinatorHeartbeatSurvivesTransientRenewalError(t *testing.T) {
+	SetHomeOverride(t.TempDir())
+	state := committedRoutingState()
+	state.PreviousGeneration = state.Generation - 1
+	if err := publishCommittedForCoordinatorTest(state); err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := NewRoutingCoordinator(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coordinator.Close()
+	if err := os.WriteFile(RoutingLeasePath(), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if !coordinator.active.Load() {
+			t.Fatal("transient renewal error fenced the coordinator")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !coordinator.active.Load() {
+		t.Fatal("transient renewal error fenced the coordinator")
+	}
+}
+
+func TestRoutingCoordinatorHeartbeatResurrectsExpiredOwnClaim(t *testing.T) {
+	SetHomeOverride(t.TempDir())
+	state := committedRoutingState()
+	state.PreviousGeneration = state.Generation - 1
+	if err := publishCommittedForCoordinatorTest(state); err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := NewRoutingCoordinator(30 * time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coordinator.Close()
+	routingStoreMu.Lock()
+	release, err := acquireRoutingStoreLock()
+	if err != nil {
+		routingStoreMu.Unlock()
+		t.Fatal(err)
+	}
+	claim, err := readRoutingOwnershipUnlocked()
+	if err != nil {
+		release()
+		routingStoreMu.Unlock()
+		t.Fatal(err)
+	}
+	claim.ExpiresAt = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	for i := range claim.Leases {
+		claim.Leases[i].ExpiresAt = claim.ExpiresAt
+	}
+	err = writeRoutingOwnershipUnlocked(claim)
+	release()
+	routingStoreMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if routingCoordinatorOwned(coordinator.nonce, coordinator.owner) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !coordinator.active.Load() {
+		t.Fatal("expired own claim fenced the coordinator")
+	}
+	if !routingCoordinatorOwned(coordinator.nonce, coordinator.owner) {
+		t.Fatal("expired own claim was not resurrected by the heartbeat")
+	}
+}
+
 func TestRoutingCoordinatorCloseRetriesTransientCleanup(t *testing.T) {
 	SetHomeOverride(t.TempDir())
 	state := committedRoutingState()

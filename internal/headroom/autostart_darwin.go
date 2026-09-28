@@ -202,6 +202,8 @@ func stopProxySupervisorForPatch() error {
 	return bootoutProxyAgent()
 }
 
+func stopByokGatewaySupervisor() error { return nil }
+
 func domain() string {
 	return "gui/" + macCurrentUID()
 }

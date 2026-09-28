@@ -142,7 +142,7 @@ func renewRoutingOwnership(nonce, owner string, ttl time.Duration, expected []Ro
 	}
 	defer release()
 	claim, err := readRoutingOwnershipUnlocked()
-	if err != nil || claim.CoordinatorNonce != nonce || claim.OwnerNonce != owner || !coordinatorLive(claim, time.Now()) {
+	if err != nil || claim.CoordinatorNonce != nonce || claim.OwnerNonce != owner {
 		return nil, fmt.Errorf("coordinator claim is not owned")
 	}
 	if expected != nil {

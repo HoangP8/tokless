@@ -802,3 +802,51 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 	close(stopWatcher2)
 	<-doneWatcher2
 }
+
+func TestPersistByokGatewayOwnershipRoundTrip(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	identity, err := proxyIdentity(os.Getpid())
+	if err != nil {
+		t.Fatalf("proxyIdentity(self): %v", err)
+	}
+	if err := persistByokGatewayOwnership(identity); err != nil {
+		t.Fatalf("persistByokGatewayOwnership: %v", err)
+	}
+	record, ok := byokGatewayOwned()
+	if !ok {
+		t.Fatal("freshly persisted ownership must verify as owned")
+	}
+	if record.PID != os.Getpid() {
+		t.Fatalf("record PID = %d, want %d", record.PID, os.Getpid())
+	}
+	if record.Executable != identity.Executable || record.Start != identity.Start {
+		t.Fatalf("record identity = %+v, want %+v", record, identity)
+	}
+}
+
+func TestByokGatewayOwnedRejectsTamperedStartFingerprint(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	identity, err := proxyIdentity(os.Getpid())
+	if err != nil {
+		t.Fatalf("proxyIdentity(self): %v", err)
+	}
+	if err := persistByokGatewayOwnership(identity); err != nil {
+		t.Fatalf("persistByokGatewayOwnership: %v", err)
+	}
+	raw, ok := util.ReadFileSafe(byokGatewayPIDPath())
+	if !ok {
+		t.Fatal("pidfile missing after persist")
+	}
+	stale := strings.Replace(raw, identity.Start, "0", 1)
+	if stale == raw {
+		t.Fatalf("fingerprint %q not found in pidfile %s", identity.Start, raw)
+	}
+	if err := util.WriteFile(byokGatewayPIDPath(), stale); err != nil {
+		t.Fatal(err)
+	}
+	if _, owned := byokGatewayOwned(); owned {
+		t.Fatal("stale start fingerprint must not verify as owned")
+	}
+}
