@@ -1,0 +1,39 @@
+---
+description: This rule guides recording project events and decisions in projectmem.
+alwaysApply: true
+---
+## Project Memory (projectmem)
+
+MCP tools record what broke, what was tried, and what was decided, across sessions, in `.projectmem/`.
+
+### Rules
+
+| Event | Tool | Rule |
+|-------|------|------|
+| Bug found | `log_issue` | Trigger: bug, unclear behavior, hypothesis, or investigation topic. |
+| Fix tried | `record_attempt` | `outcome`: `worked`, `failed`, or `partial`. One call per attempt. |
+| Fix proven | `record_fix` | Needs evidence: test passes, error gone, or user confirms. Closes issue. |
+| Design choice | `add_decision` | Replaces older decision: set `supersedes` to old event id — the old one retires from the summary, history is never rewritten; two disagreeing decisions corrupt trust. |
+| Gotcha found | `add_note` | Prefix `gotcha:`. Shared across projects. Also use for notes and key files future contributors should read first. |
+
+- Log as soon as a trigger fires — before any other work.
+- One call per event, decisions and gotchas alike; never batch writer calls.
+- Use only the fixed event vocabulary; never invent new event types.
+- Log every fix, small ones too. Keep entries short and specific: file, error, test name.
+- All writers accept `location: "file:line"`.
+- Never log secrets, credentials, customer data, tokens, or large transcripts.
+- Edit `PROJECT_MAP.md` and `plan.md` directly. Never log plans as events — a user's idea or plan belongs in `plan.md`.
+- Never edit `summary.md` (derived) or `events.jsonl` (append-only). Stale detail there → record the correction with a writer tool.
+- Superseding a decision? Get the old event id from `events.jsonl`, pass it as `supersedes`.
+- Trust recorded memory over recall; don't re-derive answers by re-reading `summary.md` or source files.
+- Before exiting: memory must reflect what actually happened.
+
+### Examples
+
+```
+log_issue(summary: "JWT parse fails on expired token", location: "auth/middleware.go:42")
+record_attempt(summary: "Moved expiry check before signature verify", outcome: "failed", issue_id: "0001")
+record_fix(summary: "Use leeway comparison at boundary", issue_id: "0001")
+add_decision(summary: "Use pgx pool over database/sql", supersedes: "<old event id>")
+add_note(summary: "gotcha: local CI skips integration tests without TEST_DB set")
+```

@@ -4,23 +4,23 @@ alwaysApply: true
 ---
 ## Code Index (codegraph)
 
-Prebuilt code index. `codegraph_explore` gives source, call path, and blast radius in one call.
+MCP tool `codegraph_explore` gives source, call path, and blast radius in one call.
 
-```
-.codegraph/ index exists?
-├─ YES → Use CodeGraph FIRST.
-│  ├─ Use for → how X works, flows, architecture, callers, blast radius, symbols.
-│  ├─ Trust results — no re-read/re-grep. Stale banner? Read only listed files.
-│  ├─ Result spilled? Grep the spill for needed symbol; never read whole spill.
-│  └─ Configs/docs/.env/non-indexed → Use normal tools.
-└─ NO  → `git ls-files | wc -l`.
-   ├─ ≤5 files or no git → Use normal tools.
-   └─ Otherwise → Run `tokless index` once.
-      ├─ Ready → Use CodeGraph.
-      └─ Fails/CLI missing → Use normal tools; do not retry.
-```
+### Rules
 
-Examples:
+- `.codegraph/` index exists: use CodeGraph first.
+  - Use for: how X works, flows, architecture, callers, blast radius, symbols.
+  - Trust results — no re-read/re-grep. Stale banner? Read only listed files.
+  - Result spilled? Search only needed symbol; never read whole spill. Use context-mode when spill is large.
+  - Configs/docs/.env/non-indexed: use normal tools.
+- No `.codegraph/`: run `git ls-files | wc -l`.
+  - ≤5 files or no git: use normal tools.
+  - Otherwise: run `tokless index` once.
+    - Ready: use CodeGraph.
+    - Fails/CLI missing: use normal tools; do not retry.
+
+### Examples
+
 - `codegraph_explore("how does auth middleware validate a JWT")`
 - `codegraph_explore("flow from HTTP request to DB query")`
 - `codegraph_explore("OrderService.createOrder callers and blast radius")`
