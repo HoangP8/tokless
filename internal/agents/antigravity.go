@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
+
+var errNoStableTokless = errors.New("cannot resolve a stable tokless executable; refusing to persist an empty hook command")
 
 func antigravityMcpConfigFiles() []string {
 	p := util.AntigravityPathsResolved()
@@ -292,7 +295,18 @@ func antigravityLegacyRewriteScript() string {
 }
 
 func toklessCommand(args ...string) string {
-	return util.PersistedToklessCommand(util.ToklessPersistedAbs(), args...)
+	cmd, _ := toklessCommandOK(args...)
+	return cmd
+}
+
+// toklessCommandOK resolves the persisted tokless command for an agent hook and
+// reports whether a stable executable was found.
+func toklessCommandOK(args ...string) (string, bool) {
+	exe := util.ToklessPersistedAbs()
+	if exe == "" {
+		return "", false
+	}
+	return util.PersistedToklessCommand(exe, args...), true
 }
 
 func toklessManagedCommand(command string, args ...string) bool {
@@ -312,7 +326,10 @@ func toklessManagedCommand(command string, args ...string) bool {
 
 // InstallAntigravityRtkHook installs the PreToolUse hook for agy.
 func InstallAntigravityRtkHook() bool {
-	command := toklessCommand("rtk-hook", "agy")
+	command, ok := toklessCommandOK("rtk-hook", "agy")
+	if !ok {
+		return false
+	}
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
@@ -640,8 +657,10 @@ func RemoveAntigravityCodegraphIndexHook() {
 
 // InstallAntigravityCodegraphIndexHook installs hooks for codegraph auto-init.
 func InstallAntigravityCodegraphIndexHook() {
-	command := toklessCommand("agy-hook", "codegraph-index")
-
+	command, ok := toklessCommandOK("agy-hook", "codegraph-index")
+	if !ok {
+		return
+	}
 	hooksFile := antigravityHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
 	var cfg *util.OrderedMap
@@ -910,6 +929,39 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	return changed, file
 }
 
+// AntigravityMcpBounded reports whether every supported MCP config holds the tokless-bounded entry for toolID.
+func AntigravityMcpBounded(toolID string) bool {
+	files := antigravityMcpConfigFiles()
+	if len(files) == 0 {
+		return false
+	}
+	for _, f := range files {
+		raw, ok := util.ReadFileSafe(f)
+		if !ok {
+			return false
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			return false
+		}
+		s, ok := cfg.Get("mcpServers")
+		sm, isMap := s.(*util.OrderedMap)
+		if !ok || !isMap {
+			return false
+		}
+		existing, found := sm.Get(toolID)
+		if !found || !antigravityMcpManaged(toolID, existing) {
+			return false
+		}
+	}
+	return true
+}
+
+// AntigravityProjectmemMcpBounded reports whether every supported MCP config holds the tokless-bounded projectmem entry.
+func AntigravityProjectmemMcpBounded() bool {
+	return AntigravityMcpBounded("projectmem")
+}
+
 // AntigravityMcpHas reports whether at least one supported global MCP config
 // registers the tool. Unreadable or malformed files are skipped.
 func AntigravityMcpHas(toolID string) bool {
@@ -1170,4 +1222,70 @@ func antigravityMcpManaged(toolID string, existing any) bool {
 		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	}
 	return command == spawn.Command && argsEq(args, spawn.Args) && trust == true
+}
+
+// --- projectmem SessionStart hook ---
+
+const antigravityProjectmemGroup = "projectmem-context"
+
+// InstallAntigravityProjectmemHook pushes project memory into each agy session.
+func InstallAntigravityProjectmemHook() bool {
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if ok && util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return false
+		}
+		cfg = util.NewOrderedMap()
+	}
+	command, _ := toklessCommandOK("projectmem-hook", "agy")
+	if command == "" {
+		return false
+	}
+	hook := util.NewOrderedMap()
+	hook.Set("type", "command")
+	hook.Set("command", command)
+	hook.Set("timeout", 15)
+	group := util.NewOrderedMap()
+	group.Set("SessionStart", []interface{}{hook})
+	cfg.Delete("tokless-projectmem")
+	cfg.Set(antigravityProjectmemGroup, group)
+	if err := util.EnsureDir(filepath.Dir(hooksFile)); err != nil {
+		return false
+	}
+	if next := util.StringifyJSON(cfg); next != raw {
+		if util.WriteFile(hooksFile, next) != nil {
+			return false
+		}
+	}
+	return HasAntigravityProjectmemHook()
+}
+
+func HasAntigravityProjectmemHook() bool {
+	raw, ok := util.ReadFileSafe(antigravityHooksFile())
+	return ok && strings.Contains(raw, `"`+antigravityProjectmemGroup+`"`) && strings.Contains(raw, "projectmem-hook agy")
+}
+
+func RemoveAntigravityProjectmemHook() {
+	hooksFile := antigravityHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	if _, ok := cfg.Get(antigravityProjectmemGroup); ok {
+		cfg.Delete(antigravityProjectmemGroup)
+		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+	}
+	if _, ok := cfg.Get("tokless-projectmem"); ok {
+		cfg.Delete("tokless-projectmem")
+		_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+	}
 }
