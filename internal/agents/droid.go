@@ -82,6 +82,7 @@ var droid = &core.AgentManifest{
 var droidEnabledTools = map[string][]string{
 	"codegraph":    CodegraphDroidToolNames,
 	"context-mode": ContextModeDroidToolNames,
+	"projectmem":   ProjectmemMcpToolNames,
 }
 
 func ConfigureDroidMcp(toolID string) (changed bool, file string) {
@@ -124,15 +125,19 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 	}
 
 	if existing, ok := servers.Get(toolID); ok {
-		if em, ok := existing.(*util.OrderedMap); ok {
-			ec, _ := em.Get("command")
-			ea, _ := em.Get("args")
-			et, _ := em.Get("enabledTools")
-			if ec == spawn.Command && argsEq(ea, spawn.Args) && enabledToolsEq(et, droidEnabledTools[toolID]) {
-				return false, f
-			}
+		em, ok := existing.(*util.OrderedMap)
+		if !ok {
+			return false, f
 		}
-		return false, f
+		ec, _ := em.Get("command")
+		ea, _ := em.Get("args")
+		et, _ := em.Get("enabledTools")
+		if ec == spawn.Command && argsEq(ea, spawn.Args) && enabledToolsEq(et, droidEnabledTools[toolID]) {
+			return false, f
+		}
+		if ec != spawn.Command {
+			return false, f
+		}
 	}
 
 	servers.Set(toolID, entry)
@@ -211,6 +216,41 @@ func RemoveDroidMcp(toolID string) bool {
 	return util.WriteFile(f, util.StringifyJSON(cfg)) == nil
 }
 
+// DroidMcpBounded reports whether the MCP entry for toolID spawns through tokless.
+func DroidMcpBounded(toolID string) bool {
+	raw, ok := util.ReadFileSafe(droidMcpFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	s, ok := cfg.Get("mcpServers")
+	sm, isMap := s.(*util.OrderedMap)
+	if !ok || !isMap {
+		return false
+	}
+	v, found := sm.Get(toolID)
+	em, isMap := v.(*util.OrderedMap)
+	if !found || !isMap {
+		return false
+	}
+	spawn := util.McpSpawnFor(toolID)
+	if toolID == "codegraph" {
+		spawn = util.WrapAutoIndex("droid", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+	}
+	ec, _ := em.Get("command")
+	ea, _ := em.Get("args")
+	et, _ := em.Get("enabledTools")
+	return ec == spawn.Command && argsEq(ea, spawn.Args) && enabledToolsEq(et, droidEnabledTools[toolID])
+}
+
+// DroidProjectmemMcpBounded reports whether the projectmem MCP entry spawns through tokless.
+func DroidProjectmemMcpBounded() bool {
+	return DroidMcpBounded("projectmem")
+}
+
 // DroidMcpHas reports whether ~/.factory/mcp.json registers the tool.
 func DroidMcpHas(toolID string) bool {
 	raw, ok := util.ReadFileSafe(droidMcpFile())
@@ -238,6 +278,11 @@ var ContextModeDroidToolNames = []string{
 
 var CodegraphDroidToolNames = []string{
 	"codegraph_explore",
+}
+
+// ProjectmemMcpToolNames is the projectmem allowlist shared by harness permissions and the bounded proxy.
+var ProjectmemMcpToolNames = []string{
+	"log_issue", "record_attempt", "record_fix", "add_decision", "add_note",
 }
 
 // --- hooks management ---
@@ -470,6 +515,9 @@ func droidHasExactHook(event, matcher, command string) bool {
 // InstallDroidRtkHook installs the PreToolUse hook for Execute tool.
 func InstallDroidRtkHook() bool {
 	command := toklessCommand("rtk-hook", "droid")
+	if command == "" {
+		return false
+	}
 
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
@@ -507,6 +555,9 @@ func HasDroidRtkHook() bool {
 
 func InstallDroidCodegraphIndexHook() bool {
 	command := toklessCommand("index", "--auto", "droid")
+	if command == "" {
+		return false
+	}
 
 	raw := droidRawHooks()
 	cfg := droidHooksLoad()
@@ -538,6 +589,43 @@ func RemoveDroidCodegraphIndexHook() {
 // HasDroidCodegraphIndexHook reports whether the codegraph SessionStart hook is installed.
 func HasDroidCodegraphIndexHook() bool {
 	return droidHasHook("SessionStart", "index --auto droid")
+}
+
+// --- projectmem SessionStart hook ---
+
+// InstallDroidProjectmemHook pushes project memory into each Droid session.
+func InstallDroidProjectmemHook() bool {
+	raw := droidRawHooks()
+	cfg := droidHooksLoad()
+	if cfg == nil {
+		return false
+	}
+	hookCfg := util.NewOrderedMap()
+	hookCfg.Set("type", "command")
+	projectmemCmd := toklessCommand("projectmem-hook", "claude")
+	if projectmemCmd == "" {
+		return false
+	}
+	hookCfg.Set("command", projectmemCmd)
+	hookCfg.Set("timeout", 15)
+	if !droidAddHookGroup(cfg, "SessionStart", "", []string{"projectmem-hook", "claude"}, hookCfg) {
+		return false
+	}
+	return droidHooksSave(cfg, raw) && HasDroidProjectmemHook()
+}
+
+func RemoveDroidProjectmemHook() {
+	raw := droidRawHooks()
+	cfg := droidHooksLoad()
+	if cfg == nil {
+		return
+	}
+	droidRemoveHookGroup(cfg, "SessionStart", "", "projectmem-hook", "claude")
+	droidHooksSave(cfg, raw)
+}
+
+func HasDroidProjectmemHook() bool {
+	return droidHasHook("SessionStart", "projectmem-hook claude")
 }
 
 // --- Context-Mode: MCP + AGENTS.md instruction only, no PreToolUse hook (agy pattern) ---
@@ -653,7 +741,7 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 		}
 		upstream := normalizedHeadroomUpstream(base, "openai-completions")
 		endpoint := ProxyEndpointFor("droid")
-		if sameProxyBase(base, util.BYOKGatewayEndpoint()) {
+		if droidGatewayBase(base) {
 			if route, exists := util.ReadBYOKRoute("droid:" + id); exists {
 				if current, exists := headers.Get("X-Tokless-Route"); exists && current == util.BYOKRouteHeader(route) {
 					routed[id] = true
@@ -731,6 +819,26 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 }
 
 func droidSettingsFile() string { return filepath.Join(droidDir(), "settings.json") }
+
+// droidGatewayBase reports the tokless BYOK gateway (droid stores /v1 form; registry the bare host).
+func droidGatewayBase(base string) bool {
+	gateway := util.BYOKGatewayEndpoint()
+	return sameProxyBase(base, gateway) || sameProxyBase(base, gateway+"/v1")
+}
+
+// droidEntryManaged reports the reserved headroom entry, ignoring droid-rewritten id/index/noImageSupport; other extras mean foreign.
+func droidEntryManaged(em, desired *util.OrderedMap) bool {
+	normalized := util.NewOrderedMap()
+	for _, k := range em.Keys() {
+		switch k {
+		case "id", "index", "noImageSupport":
+			continue
+		}
+		v, _ := em.Get(k)
+		normalized.Set(k, v)
+	}
+	return jsonEqual(normalized, desired)
+}
 
 // droidProxyEntry builds the customModels entry pointing at the headroom daemon.
 func droidProxyEntry(endpoint string) *util.OrderedMap {
@@ -905,7 +1013,7 @@ func removeDroidProxyLocked() bool {
 			routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
 			matchesProxy := sameProxyBase(base, ProxyEndpointFor("droid")) && headerOK
 			route, routeExists := util.ReadBYOKRoute("droid:" + id)
-			matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
+			matchesBYOK := routeExists && droidGatewayBase(base) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
 			if !matchesProxy && !matchesBYOK {
 				remaining[id] = entry
 				continue
@@ -981,7 +1089,7 @@ func removeDroidProxyLocked() bool {
 			kept = append(kept, entry)
 			continue
 		}
-		if jsonEqual(em, droidProxyEntry(endpoint)) {
+		if droidEntryManaged(em, droidProxyEntry(endpoint)) {
 			dropped = true
 			continue
 		}
@@ -1034,7 +1142,7 @@ func DroidProxyWired() bool {
 				routeHeader, routeHeaderOK := headers.Get("X-Tokless-Route")
 				matchesProxy := sameProxyBase(base, ProxyEndpointFor("droid")) && headerOK && upstream == entry.Upstream
 				route, routeExists := util.ReadBYOKRoute("droid:" + id)
-				matchesBYOK := routeExists && sameProxyBase(base, util.BYOKGatewayEndpoint()) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
+				matchesBYOK := routeExists && droidGatewayBase(base) && routeHeaderOK && routeHeader == util.BYOKRouteHeader(route)
 				if matchesProxy || matchesBYOK {
 					found = true
 				}
@@ -1060,7 +1168,7 @@ func DroidProxyWired() bool {
 		if !isMap {
 			continue
 		}
-		if jsonEqual(em, droidProxyEntry(endpoint)) {
+		if droidEntryManaged(em, droidProxyEntry(endpoint)) {
 			return true
 		}
 	}

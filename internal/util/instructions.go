@@ -15,6 +15,7 @@ var ToklessOwners = []string{
 	"ponytail",
 	"codegraph",
 	"context-mode",
+	"projectmem",
 }
 
 // SectionsByOwner maps each owner to its heading marker.
@@ -24,6 +25,7 @@ var SectionsByOwner = map[string]string{
 	"ponytail":     "## Build Discipline (ponytail)",
 	"codegraph":    "## Code Index (codegraph)",
 	"context-mode": "## Context Tools (context-mode)",
+	"projectmem":   "## Project Memory (projectmem)",
 }
 
 // CursorProjectRuleSpec describes one checked-in Cursor project rule.
@@ -39,6 +41,7 @@ var cursorProjectRuleSpecs = []CursorProjectRuleSpec{
 	{Filename: "build-discipline.mdc", Description: "This rule guides simple, focused implementations that reuse existing solutions and avoid unnecessary work.", Owner: "ponytail"},
 	{Filename: "code-index.mdc", Description: "This rule guides codebase exploration through relevant symbols, flows, dependencies, and affected areas.", Owner: "codegraph"},
 	{Filename: "context-tools.mdc", Description: "This rule guides efficient context collection, analysis, and retrieval while keeping raw data focused.", Owner: "context-mode"},
+	{Filename: "project-memory.mdc", Description: "This rule guides recording project events and decisions in projectmem.", Owner: "projectmem"},
 }
 
 // CursorProjectRuleSpecs returns the Cursor project rule specifications.
@@ -172,6 +175,10 @@ func ToklessAgentBody(owners []string) string {
 	}
 	if hasOwner(owners, "context-mode") {
 		b.WriteString(instructionSection("context-mode"))
+		b.WriteString("\n\n")
+	}
+	if hasOwner(owners, "projectmem") {
+		b.WriteString(instructionSection("projectmem"))
 		b.WriteString("\n\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
