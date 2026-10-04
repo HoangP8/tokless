@@ -247,6 +247,7 @@ func RunInit(opts InitOptions) int {
 	}
 
 	if len(wireIDs) == 0 {
+		projectmemSeedProject(opts, tools)
 		if cursorRollback != nil {
 			cursorRollback()
 		}
@@ -338,6 +339,7 @@ func RunInit(opts InitOptions) int {
 	if len(failures) > 0 && cursorRollback != nil {
 		cursorRollback()
 	}
+	projectmemSeedProject(opts, tools)
 	if len(failures) == 0 {
 		toolsPkg.EnsureInstructionSeparators(wireIDs)
 	}
@@ -361,6 +363,35 @@ func RunInit(opts InitOptions) int {
 		return 1
 	}
 	return 0
+}
+
+// projectmemSeedProject creates .projectmem/ during init so the first agent session has state to inject.
+func projectmemSeedProject(opts InitOptions, tools []*core.ToolManifest) {
+	if opts.DryRun || os.Getenv("TOKLESS_TEST") == "1" {
+		return
+	}
+	selected := false
+	for _, t := range tools {
+		if t.ID == "projectmem" {
+			selected = true
+			break
+		}
+	}
+	if !selected {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	root := findProjectDir(cwd)
+	if !looksLikeProject(root) {
+		return
+	}
+	if err := toolsPkg.EnsureProjectmemProject(root); err != nil {
+		util.L.Sub("projectmem: " + err.Error())
+	}
+	toolsPkg.RefreshProjectmemRuleFiles(root)
 }
 
 func initAgentFullyWired(agentID string, tools []*core.ToolManifest) bool {

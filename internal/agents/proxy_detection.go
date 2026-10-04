@@ -299,7 +299,7 @@ func detectDroidProxy(cap ProxyCapability) ProxyDetection {
 		model, _ := m.Get("model")
 		display, _ := m.Get("displayName")
 		if model == proxyWireModel() && display == droidProxyDisplayName {
-			if jsonEqual(m, droidProxyEntry(ProxyEndpointFor(cap.ID))) {
+			if droidEntryManaged(m, droidProxyEntry(ProxyEndpointFor(cap.ID))) {
 				return proxyDetection(cap.ID, "exact reserved custom model", ProxyStateManaged)
 			}
 			return proxyDetection(cap.ID, "reserved custom model differs", ProxyStateConflict)

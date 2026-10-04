@@ -20,6 +20,7 @@ func proxyCmdTestHome(t *testing.T) {
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	sandboxToklessPath(t)
 	bin := util.HeadroomBin()
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
@@ -30,6 +31,16 @@ func proxyCmdTestHome(t *testing.T) {
 	oldGrokRunning := grokProxyRunning
 	grokProxyRunning = func() bool { return false }
 	t.Cleanup(func() { util.SetHomeOverride(""); grokProxyRunning = oldGrokRunning })
+}
+
+// sandboxToklessPath keeps unwire paths off the real ~/.local/bin shim.
+func sandboxToklessPath(t *testing.T) {
+	t.Helper()
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "tokless"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // TestProxyInstructionsEndpointShapes pins the manual/env guidance to the same

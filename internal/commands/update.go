@@ -173,17 +173,26 @@ func RunUpdate(opts InitOptions) int {
 	}
 	bar := util.NewSectionProgress("Upgrading " + joinComma(changed))
 	bar.Start(len(tools))
+	var failed, updated []string
 	for _, tool := range tools {
 		bar.Begin(tool.Label)
 		report := func(phase string, frac float64) { bar.Step(phase, frac) }
+		installed := false
 		err := util.WithSilencedLogs(func() error {
-			_, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, Report: report})
+			ok, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, Report: report})
+			installed = ok
 			return e
 		})
-		if err != nil {
+		switch {
+		case err != nil:
 			bar.Fail(firstLine(err.Error()))
-		} else {
+			failed = append(failed, tool.ID)
+		case !installed:
+			bar.Fail("install failed")
+			failed = append(failed, tool.ID)
+		default:
 			bar.Complete("")
+			updated = append(updated, tool.ID)
 		}
 	}
 	bar.Done("")
@@ -201,6 +210,16 @@ func RunUpdate(opts InitOptions) int {
 	if !opts.DryRun {
 		util.BustVersionCache()
 	}
+	if len(failed) > 0 {
+		msg := joinComma(failed) + " failed"
+		if len(updated) > 0 {
+			msg = "Updated " + joinComma(updated) + "; " + msg
+		}
+		treeStatus(statusWarn(msg + "."))
+		printRepoFooter(true)
+		util.L.Raw("")
+		return 1
+	}
 	treeStatus(statusOK("Updated " + joinComma(changed) + "."))
 	printRepoFooter(true)
 	util.L.Raw("")
@@ -217,7 +236,11 @@ func resyncWiring(tools []*core.ToolManifest) {
 			if !ok || !agent.Detect().Installed {
 				continue
 			}
-			if verify, vok := tool.VerifyFor[agent.ID]; vok {
+			if verify, vok := tool.WiredAnyFor[agent.ID]; vok {
+				if r := verify(); r == nil || !*r {
+					continue
+				}
+			} else if verify, vok := tool.VerifyFor[agent.ID]; vok {
 				if r := verify(); r == nil || !*r {
 					continue
 				}

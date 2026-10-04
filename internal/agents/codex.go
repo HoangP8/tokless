@@ -105,13 +105,37 @@ func codexProxyBlock(endpoint string, byok *openCodeBYOK) *util.TomlBlock {
 		return block
 	}
 	block.Set("env_key", codexByokKeyVar)
-	headers := map[string]string{headroomBaseURLHeader: codexByokURLVar}
+	headers := map[string]string{}
 	if byok.RouteHeader != "" {
 		headers[byokRouteHeaderKey] = codexByokRouteVar
 	}
 	block.Set("env_http_headers", headers)
 	block.Set("supports_websockets", false)
 	return block
+}
+
+// codexBYOKProxyEndpoint returns the BYOK gateway endpoint for codex traffic.
+func codexBYOKProxyEndpoint() string {
+	return util.BYOKGatewayEndpoint() + "/v1"
+}
+
+// codexEndpointsFor lists endpoints a tokless-authored codex block may target.
+func codexEndpointsFor(primary string) []string {
+	byok := codexBYOKProxyEndpoint()
+	if byok == primary {
+		return []string{primary}
+	}
+	return []string{primary, byok}
+}
+
+// codexIsManagedEndpoint reports whether an endpoint was authored by tokless.
+func codexIsManagedEndpoint(have string) bool {
+	for _, ep := range codexEndpointsFor(ProxyEndpointFor("codex")) {
+		if have == ep {
+			return true
+		}
+	}
+	return false
 }
 
 func codexUsesChatGPTAuth() bool {
@@ -264,19 +288,29 @@ func codexMatchedMarkedSection(raw, endpoint string) (string, []string, bool) {
 	section := strings.TrimSpace(raw[start:end])
 	extras := codexRootExtras(section)
 	core := strings.TrimSpace(codexWithoutLines(section, extras))
+	// Legacy BYOK blocks also carried the headroom upstream override header.
+	legacyHeader := `x-headroom-base-url = "` + codexByokURLVar + `"`
+	core = strings.ReplaceAll(core, `, `+legacyHeader, "")
+	core = strings.ReplaceAll(core, legacyHeader+`, `, "")
+	core = strings.ReplaceAll(core, legacyHeader, "")
 	byok := &openCodeBYOK{}
 	if strings.Contains(core, byokRouteHeaderKey) {
 		byok.RouteHeader = codexByokRouteVar
 	}
-	ok := core == strings.TrimSpace(codexProxySection(endpoint, nil)) ||
-		core == strings.TrimSpace(codexProxySection(endpoint, byok)) ||
-		core == strings.TrimSpace(strings.Replace(
-			codexProxySection(endpoint, nil),
-			"supports_websockets = false",
-			"supports_websockets = true",
-			1,
-		))
-	return section, extras, ok
+	for _, ep := range codexEndpointsFor(endpoint) {
+		ok := core == strings.TrimSpace(codexProxySection(ep, nil)) ||
+			core == strings.TrimSpace(codexProxySection(ep, byok)) ||
+			core == strings.TrimSpace(strings.Replace(
+				codexProxySection(ep, nil),
+				"supports_websockets = false",
+				"supports_websockets = true",
+				1,
+			))
+		if ok {
+			return section, extras, true
+		}
+	}
+	return section, extras, false
 }
 
 func codexInjectRootExtras(content string, extras []string) string {
@@ -406,10 +440,11 @@ func insertCodexBlockAtRoot(content, block string) string {
 }
 
 func codexProxyWritable(raw, endpoint string) bool {
-	for _, kv := range [][2]string{{"model_provider", "headroom"}, {"openai_base_url", endpoint}} {
-		if have := codexRootValue(raw, kv[0]); have != "" && have != kv[1] {
-			return false
-		}
+	if have := codexRootValue(raw, "model_provider"); have != "" && have != "headroom" {
+		return false
+	}
+	if have := codexRootValue(raw, "openai_base_url"); have != "" && !codexIsManagedEndpoint(have) {
+		return false
 	}
 	if !util.HasBlock(raw, codexProxyProvider) {
 		return codexRootValue(raw, "model_provider") == "" && codexRootValue(raw, "openai_base_url") == ""
@@ -470,9 +505,6 @@ func codexPickBYOK(raw string) *openCodeBYOK {
 		}
 		return nil
 	}
-	if codexUsesChatGPTAuth() {
-		return nil
-	}
 	if route := codexDotEnvValue(codexByokRouteVar); route != "" {
 		for i := range byoks {
 			if strings.HasPrefix(route, "codex:"+byoks[i].ID+".") {
@@ -486,6 +518,10 @@ func codexPickBYOK(raw string) *openCodeBYOK {
 				return &byoks[i]
 			}
 		}
+	}
+	// Explicit .env wiring beats ChatGPT auth; only the implicit default loses to it.
+	if codexUsesChatGPTAuth() {
+		return nil
 	}
 	if len(byoks) == 1 {
 		return &byoks[0]
@@ -531,11 +567,18 @@ func discoverCodexBYOK() []openCodeBYOK {
 		if !isAbsoluteHTTP(base) || sameProxyBase(base, ProxyEndpointFor("codex")) {
 			continue
 		}
+		if sameProxyBase(base, codexBYOKProxyEndpoint()) {
+			continue
+		}
 		envKey := codexNamedProviderField(raw, match[1], "env_key")
 		apiKey := codexNamedProviderField(raw, match[1], "api_key")
 		wireAPI := codexNamedProviderField(raw, match[1], "wire_api")
 		if envKey != "" {
 			apiKey = strings.TrimSpace(os.Getenv(envKey))
+			if apiKey == "" {
+				// Codex loads CODEX_HOME/.env itself, so discovery must too.
+				apiKey = codexDotEnvValue(envKey)
+			}
 		}
 		if apiKey == "" {
 			continue
@@ -895,7 +938,11 @@ func configureCodexProxyLocked() (changed bool, file string) {
 	if util.HasBlock(raw, codexProxyProvider) {
 		return false, p.Config
 	}
-	next := insertCodexBlockAtRoot(raw, codexProxySection(endpoint, byok))
+	target := endpoint
+	if byok != nil {
+		target = codexBYOKProxyEndpoint()
+	}
+	next := insertCodexBlockAtRoot(raw, codexProxySection(target, byok))
 	if len(rootExtras) > 0 {
 		next = codexInjectRootExtras(next, rootExtras)
 	}
@@ -1059,7 +1106,7 @@ func CodexProxyWired() bool {
 	if codexRootValue(raw, "model_provider") != "headroom" {
 		return false
 	}
-	if codexRootValue(raw, "openai_base_url") != endpoint {
+	if !codexIsManagedEndpoint(codexRootValue(raw, "openai_base_url")) {
 		return false
 	}
 	return codexHasManagedHeadroomBlock(raw, endpoint)
@@ -1182,7 +1229,7 @@ func codexTransformManagedGroups(groups []interface{}, matcher string, args []st
 		for oldHook, h := range hooks {
 			hm, isMap := h.(*util.OrderedMap)
 			managed := false
-			if groupMatcher == matcher && isMap {
+			if gms, _ := groupMatcher.(string); gms == matcher && isMap {
 				cmd, _ := hm.Get("command")
 				command, _ := cmd.(string)
 				managed = toklessManagedCommand(command, args...)
@@ -1271,6 +1318,9 @@ func InstallCodexRtkHook() bool {
 		return false
 	}
 	command := codexHookCommand()
+	if command == "" {
+		return false
+	}
 
 	hooksFile := codexHooksFile()
 	rulesFile := codexRulesFile()
@@ -1431,6 +1481,9 @@ func InstallCodexPermissionHook() bool {
 		return false
 	}
 	command := codexPermHookCommand()
+	if command == "" {
+		return false
+	}
 	hooksFile := codexHooksFile()
 	raw, ok := util.ReadFileSafe(hooksFile)
 	cfg := util.TryParseJsonc(raw)
@@ -1723,4 +1776,179 @@ func Register() {
 	core.RegisterAgent(grok)
 	core.RegisterAgent(kilo)
 	core.RegisterAgent(cline)
+}
+
+// --- projectmem SessionStart hook ---
+
+const codexProjectmemHookTimeout = 15
+
+func codexProjectmemHookCommand() string {
+	return toklessCommand("projectmem-hook", "claude")
+}
+
+// codexProjectmemHookTrustHash reproduces Codex's trust hash for a matcher-less SessionStart group.
+func codexProjectmemHookTrustHash(command string) string {
+	handler := map[string]interface{}{
+		"async":   false,
+		"command": command,
+		"timeout": codexProjectmemHookTimeout,
+		"type":    "command",
+	}
+	identity := map[string]interface{}{
+		"event_name": "session_start",
+		"hooks":      []interface{}{handler},
+	}
+	b, _ := json.Marshal(identity)
+	sum := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func codexProjectmemGroup(command string) *util.OrderedMap {
+	hook := util.NewOrderedMap()
+	hook.Set("type", "command")
+	hook.Set("command", command)
+	hook.Set("timeout", codexProjectmemHookTimeout)
+	group := util.NewOrderedMap()
+	group.Set("hooks", []interface{}{hook})
+	return group
+}
+
+// InstallCodexProjectmemHook merges a projectmem SessionStart group and pre-seeds its trust entry.
+func InstallCodexProjectmemHook() bool {
+	p := util.CodexPathsResolved()
+	if err := util.EnsureDir(p.Dir); err != nil {
+		return false
+	}
+	command := codexProjectmemHookCommand()
+	if command == "" {
+		return false
+	}
+	hooksFile := codexHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		if ok && strings.TrimSpace(raw) != "" {
+			return false
+		}
+		cfg = util.NewOrderedMap()
+	}
+	hooks, ok := mapChild(cfg, "hooks")
+	if !ok {
+		if _, exists := cfg.Get("hooks"); exists {
+			return false
+		}
+		hooks = util.NewOrderedMap()
+		cfg.Set("hooks", hooks)
+	}
+	var arr []interface{}
+	if v, ok := hooks.Get("SessionStart"); ok {
+		var valid bool
+		if arr, valid = v.([]interface{}); !valid {
+			return false
+		}
+	}
+	arr, pos, moved, removed := codexTransformManagedGroups(arr, "", []string{"projectmem-hook", "claude"}, codexProjectmemGroup(command))
+	hooks.Set("SessionStart", arr)
+	if next := util.StringifyJSON(cfg); next != raw {
+		if err := util.WriteFile(hooksFile, next); err != nil {
+			return false
+		}
+	}
+	craw, _ := util.ReadFileSafe(p.Config)
+	craw = sweepStaleHookStateEntries(craw)
+	craw = codexRewriteHookState(craw, hooksFile, "session_start", moved, removed)
+	key := hooksFile + ":session_start:" + strconv.Itoa(pos.group) + ":" + strconv.Itoa(pos.hook)
+	block := util.NewTomlBlock(codexHookStateHeader(key))
+	block.Set("trusted_hash", codexProjectmemHookTrustHash(command))
+	cnext := util.UpsertBlock(craw, block, false)
+	features := util.NewTomlBlock("features")
+	features.Set("hooks", true)
+	cnext = util.UpsertBlock(cnext, features, true)
+	if cnext != craw {
+		if err := util.WriteFile(p.Config, cnext); err != nil {
+			return false
+		}
+	}
+	return HasCodexProjectmemHook()
+}
+
+// RemoveCodexProjectmemHook removes the SessionStart group and its trust entry.
+func RemoveCodexProjectmemHook() {
+	p := util.CodexPathsResolved()
+	hooksFile := codexHooksFile()
+	raw, ok := util.ReadFileSafe(hooksFile)
+	if !ok {
+		return
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return
+	}
+	hooks, ok := mapChild(cfg, "hooks")
+	if !ok {
+		return
+	}
+	v, ok := hooks.Get("SessionStart")
+	if !ok {
+		return
+	}
+	arr, ok := v.([]interface{})
+	if !ok {
+		return
+	}
+	kept, _, moved, removed := codexTransformManagedGroups(arr, "", []string{"projectmem-hook", "claude"}, nil)
+	if len(removed) == 0 {
+		return
+	}
+	if len(kept) == 0 {
+		hooks.Delete("SessionStart")
+	} else {
+		hooks.Set("SessionStart", kept)
+	}
+	_ = util.WriteFile(hooksFile, util.StringifyJSON(cfg))
+	craw, _ := util.ReadFileSafe(p.Config)
+	if cnext := codexRewriteHookState(craw, hooksFile, "session_start", moved, removed); cnext != craw {
+		_ = util.WriteFile(p.Config, cnext)
+	}
+}
+
+// HasCodexProjectmemHook reports whether the SessionStart hook and its trust entry are present.
+func HasCodexProjectmemHook() bool {
+	raw, ok := util.ReadFileSafe(codexHooksFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	hooks, ok := mapChild(cfg, "hooks")
+	if !ok {
+		return false
+	}
+	v, _ := hooks.Get("SessionStart")
+	arr, _ := v.([]interface{})
+	for gi, g := range arr {
+		gm, ok := g.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		hv, _ := gm.Get("hooks")
+		hs, _ := hv.([]interface{})
+		for hi, h := range hs {
+			hm, ok := h.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			c, _ := hm.Get("command")
+			cmd, _ := c.(string)
+			if !toklessManagedCommand(cmd, "projectmem-hook", "claude") {
+				continue
+			}
+			craw, _ := util.ReadFileSafe(util.CodexPathsResolved().Config)
+			key := codexHooksFile() + ":session_start:" + strconv.Itoa(gi) + ":" + strconv.Itoa(hi)
+			return strings.Contains(craw, "["+codexHookStateHeader(key)+"]")
+		}
+	}
+	return false
 }

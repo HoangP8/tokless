@@ -85,7 +85,7 @@ func helpText() string {
 		"  " + cy("tokless proxy") + "      Manage the headroom HTTP proxy: up|down|status\n\n" +
 		util.C.Bold("Flags:") + "\n" +
 		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor\n" +
-		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode,headroom\n" +
+		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode,headroom,projectmem\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
 		"  --verbose           Show every step\n\n" +
 		util.C.Gray("Docs: https://github.com/HoangP8/tokless")
@@ -266,6 +266,9 @@ func run() int {
 		case "cursor":
 			return commands.RunRtkHookCursor()
 		}
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "projectmem-hook" {
+		return commands.RunProjectmemHook(os.Args[2])
 	}
 	if len(os.Args) >= 3 && os.Args[1] == "grok-hook" && os.Args[2] == "session-start" {
 		return commands.RunGrokSessionStartHook()

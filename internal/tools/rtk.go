@@ -754,6 +754,9 @@ func removeClaudeRtkHookGroup() {
 func overrideClaudeRtkHook() {
 	cp := util.ClaudeCodePaths()
 	newCmd := claudeRtkHookCommand(util.ToklessPersistedAbs())
+	if newCmd == "" {
+		return
+	}
 	raw, ok := util.ReadFileSafe(cp.Settings)
 	if !ok {
 		return

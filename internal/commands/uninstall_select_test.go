@@ -88,6 +88,7 @@ func TestUninstallKiloLeavesLegacyProjectArtifactsUntouched(t *testing.T) {
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	sandboxToklessPath(t)
 	t.Cleanup(func() { util.SetHomeOverride("") })
 
 	global := util.KiloPathsResolved().Dir

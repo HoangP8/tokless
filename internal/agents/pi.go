@@ -405,11 +405,56 @@ func PiUpdatePackages() {
 
 // --- MCP (~/.pi/agent/mcp.json) ---
 
+// piMcpSpawn is the command Pi runs for a tokless-managed MCP server; only codegraph takes serve --mcp.
+func piMcpSpawn(toolID string) util.McpSpawn {
+	if toolID == "codegraph" {
+		return util.WrapAutoIndex("pi", util.PickMcpSpawn(toolID, "serve", "--mcp"))
+	}
+	return util.PickMcpSpawn(toolID)
+}
+
+// piMcpEntryMatches reports whether em is exactly the entry tokless writes.
+func piMcpEntryMatches(em *util.OrderedMap, spawn util.McpSpawn) bool {
+	ec, _ := em.Get("command")
+	ea, _ := em.Get("args")
+	ex, _ := em.Get("exposure")
+	_, lc := em.Get("lifecycle")
+	_, dt := em.Get("directTools")
+	return ec == spawn.Command && argsEq(ea, spawn.Args) && ex == "direct" && !lc && !dt
+}
+
+// piStripAdapterFields removes pi-mcp-adapter-only keys; other keys stay untouched.
+func piStripAdapterFields(cfg *util.OrderedMap) {
+	if s, ok := cfg.Get("settings"); ok {
+		if sm, isMap := s.(*util.OrderedMap); isMap {
+			for _, k := range []string{"toolPrefix", "idleTimeout", "directTools"} {
+				sm.Delete(k)
+			}
+			if sm.Len() == 0 {
+				cfg.Delete("settings")
+			}
+		}
+	}
+	if v, ok := cfg.Get("mcpServers"); ok {
+		if sm, isMap := v.(*util.OrderedMap); isMap {
+			for _, k := range sm.Keys() {
+				if child, exists := sm.Get(k); exists {
+					if em, isMap := child.(*util.OrderedMap); isMap {
+						em.Delete("lifecycle")
+						em.Delete("directTools")
+					}
+				}
+			}
+		}
+	}
+}
+
+// ConfigurePiMcp writes the server to ~/.pi/agent/mcp.json, strips adapter leftovers, leaves foreign entries alone.
 func ConfigurePiMcp(toolID string) (changed bool, file string) {
 	if toolID == "headroom" {
 		return false, piMcpFile()
 	}
-	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
+	spawn := piMcpSpawn(toolID)
 	f := piMcpFile()
 	_ = util.EnsureDir(filepath.Dir(f))
 	raw, _ := util.ReadFileSafe(f)
@@ -423,6 +468,7 @@ func ConfigurePiMcp(toolID string) (changed bool, file string) {
 		}
 		cfg = util.NewOrderedMap()
 	}
+	piStripAdapterFields(cfg)
 	servers, ok := mapChild(cfg, "mcpServers")
 	if !ok {
 		if _, exists := cfg.Get("mcpServers"); exists {
@@ -437,22 +483,19 @@ func ConfigurePiMcp(toolID string) (changed bool, file string) {
 	if len(spawn.Args) > 0 {
 		entry.Set("args", spawn.Args)
 	}
-	entry.Set("lifecycle", "lazy")
-	entry.Set("directTools", true)
+	entry.Set("exposure", "direct")
 
 	if existing, ok := servers.Get(toolID); ok {
-		if em, ok := existing.(*util.OrderedMap); ok {
-			ec, _ := em.Get("command")
-			ea, _ := em.Get("args")
-			el, _ := em.Get("lifecycle")
-			ed, _ := em.Get("directTools")
-			if ec == spawn.Command && argsEq(ea, spawn.Args) && el == "lazy" && ed == true {
-				return false, f
+		if em, isMap := existing.(*util.OrderedMap); isMap {
+			if !piMcpEntryMatches(em, spawn) {
+				if ec, _ := em.Get("command"); ec == spawn.Command {
+					servers.Set(toolID, entry)
+				}
 			}
 		}
-		return false, f
+	} else {
+		servers.Set(toolID, entry)
 	}
-	servers.Set(toolID, entry)
 	next := util.StringifyJSON(cfg)
 	if next != raw {
 		if err := util.WriteFile(f, next); err != nil {
@@ -484,20 +527,41 @@ func RemovePiMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	spawn := util.PickMcpSpawn(toolID, "serve", "--mcp")
+	spawn := piMcpSpawn(toolID)
 	em, ok := existing.(*util.OrderedMap)
 	if !ok {
 		return false
 	}
-	ec, _ := em.Get("command")
-	ea, _ := em.Get("args")
-	el, _ := em.Get("lifecycle")
-	ed, _ := em.Get("directTools")
-	if ec != spawn.Command || !argsEq(ea, spawn.Args) || el != "lazy" || ed != true {
+	if ec, _ := em.Get("command"); ec != spawn.Command {
 		return false
 	}
 	sm.Delete(toolID)
 	return util.WriteFile(piMcpFile(), util.StringifyJSON(cfg)) == nil
+}
+
+// PiMcpBounded reports whether the MCP entry for toolID spawns through tokless.
+func PiMcpBounded(toolID string) bool {
+	raw, ok := util.ReadFileSafe(piMcpFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	s, ok := cfg.Get("mcpServers")
+	sm, isMap := s.(*util.OrderedMap)
+	if !ok || !isMap {
+		return false
+	}
+	v, found := sm.Get(toolID)
+	em, isMap := v.(*util.OrderedMap)
+	return found && isMap && piMcpEntryMatches(em, piMcpSpawn(toolID))
+}
+
+// PiProjectmemMcpBounded reports whether the projectmem MCP entry is exactly the tokless-bounded entry.
+func PiProjectmemMcpBounded() bool {
+	return PiMcpBounded("projectmem")
 }
 
 func PiMcpHas(toolID string) bool {
@@ -516,23 +580,6 @@ func PiMcpHas(toolID string) bool {
 		}
 	}
 	return false
-}
-
-func PiMcpHasAny() bool {
-	raw, ok := util.ReadFileSafe(piMcpFile())
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	s, ok := cfg.Get("mcpServers")
-	if !ok {
-		return false
-	}
-	sm, ok := s.(*util.OrderedMap)
-	return ok && sm.Len() > 0
 }
 
 // --- Pi headroom HTTP proxy ---
@@ -902,4 +949,12 @@ func PiProxyWired() bool {
 	}
 	existing, ok := providers.Get(piProxyProvider)
 	return ok && jsonEqual(existing, piProxyProviderEntry(ProxyEndpointFor("pi")))
+}
+
+// PiRemoveMcpAdapter removes pi-mcp-adapter; false only when removal was attempted and failed.
+func PiRemoveMcpAdapter() bool {
+	if !PiSourceHas(PiSrcMcpAdapter) {
+		return true
+	}
+	return PiRemoveSource(PiSrcMcpAdapter)
 }

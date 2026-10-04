@@ -17,6 +17,11 @@ func setupHeadroomHome(t *testing.T) string {
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "tokless"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TOKLESS_TEST", "1")
 	agents.SetIdeProjectRoot(home)
 	ConfigureInstructionConflicts(true)

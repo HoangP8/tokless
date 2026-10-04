@@ -1081,7 +1081,7 @@ func TestRunRtkHookClinePreservesRtkRewrite(t *testing.T) {
 	if !utilHaveRtk() {
 		t.Skip("rtk binary not installed")
 	}
-	_, out := runRtkHookClinePayload(t, `{"workspaceRoots":["/home/hoangp8/tokless"],"tool_call":{"name":"run_commands","input":{"commands":["git -C /home/hoangp8/tokless diff","git -C /tmp diff"]}}}`)
+	_, out := runRtkHookClinePayload(t, `{"workspaceRoots":["/home/user/tokless"],"tool_call":{"name":"run_commands","input":{"commands":["git -C /home/user/tokless diff","git -C /tmp diff"]}}}`)
 	var resp struct {
 		OverrideInput map[string]any `json:"overrideInput"`
 	}
@@ -1089,7 +1089,7 @@ func TestRunRtkHookClinePreservesRtkRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	commands := resp.OverrideInput["commands"].([]any)
-	if commands[0] != "rtk git -C /home/hoangp8/tokless diff" {
+	if commands[0] != "rtk git -C /home/user/tokless diff" {
 		t.Fatalf("RTK rewrite changed by Cline adapter: %q", out)
 	}
 	if !strings.Contains(commands[1].(string), "git -C /tmp") {

@@ -824,7 +824,8 @@ wire_api = "responses"
 		`model_provider = "headroom"`,
 		`wire_api = "responses"`,
 		`env_key = "TOKLESS_CODEX_API_KEY"`,
-		`x-headroom-base-url = "TOKLESS_HEADROOM_BASE_URL"`,
+		`X-Tokless-Route = "TOKLESS_CODEX_ROUTE"`,
+		`base_url = "` + util.BYOKGatewayEndpoint() + `/v1"`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("Codex routed config missing %q:\n%s", want, raw)

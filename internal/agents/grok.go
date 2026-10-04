@@ -89,6 +89,18 @@ func GrokContextModeMcpHas() bool {
 	return ok && enabled && !grokMcpDisabled(raw, "context-mode") && grokToklessCommand(command) && grokContextModeArgs(args)
 }
 
+// GrokProjectmemMcpHas reports whether projectmem uses Tokless's bounded MCP proxy.
+func GrokProjectmemMcpHas() bool {
+	raw, ok := util.ReadFileSafe(grokConfigFile())
+	command, args, enabled, ok := grokMcpFields(raw, "projectmem")
+	return ok && enabled && !grokMcpDisabled(raw, "projectmem") && grokToklessCommand(command) && grokProjectmemArgs(args)
+}
+
+func grokProjectmemArgs(args []string) bool {
+	command, tail, ok := grokMcpCommand(args, []string{"run-mcp", "--tool", "projectmem"})
+	return ok && len(tail) == 0 && grokCommandName(command, "pjm-mcp")
+}
+
 func grokMcpDisabled(raw, toolID string) bool {
 	_, _, servers, ok := grokDisabledServers(raw)
 	if !ok {
@@ -350,6 +362,9 @@ func grokCodegraphSessionHookPath() string {
 // InstallGrokRtkHook writes ~/.grok/hooks/tokless-rtk.json.
 func InstallGrokRtkHook() error {
 	command := toklessCommand("rtk-hook", "grok")
+	if command == "" {
+		return errNoStableTokless
+	}
 	payload := grokRtkHook{}
 	payload.Hooks.PreToolUse = []grokRtkPreToolUse{{Hooks: []grokRtkCommandHook{{
 		Type: "command", Command: command, Timeout: 10,
@@ -390,6 +405,9 @@ type grokSessionStartHook struct {
 // InstallGrokCodegraphSessionHook writes the Grok SessionStart bootstrap hook.
 func InstallGrokCodegraphSessionHook() error {
 	command := toklessCommand("grok-hook", "session-start")
+	if command == "" {
+		return errNoStableTokless
+	}
 	payload := grokSessionStartHook{}
 	payload.Hooks.SessionStart = []grokRtkPreToolUse{{Hooks: []grokRtkCommandHook{{
 		Type: "command", Command: command, Timeout: 120,

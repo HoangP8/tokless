@@ -67,7 +67,7 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 
 // AllowClaudeMcpToolProjectLocal adds MCP permissions to project-local .claude/settings.local.json.
 func AllowClaudeMcpToolProjectLocal(toolID string) {
-	allowClaudeProjectLocalEntries(claudeMcpPermissionEntries(toolID)...)
+	allowClaudeProjectLocalEntries(toolID, claudeMcpPermissionEntries(toolID)...)
 }
 
 func claudeMcpPermissionEntries(toolID string) []string {
@@ -90,11 +90,13 @@ func claudeMcpToolNames(toolID string) []string {
 		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
 	case "codegraph":
 		return []string{"codegraph_explore"}
+	case "projectmem":
+		return ProjectmemMcpToolNames
 	}
 	return nil
 }
 
-func allowClaudeProjectLocalEntries(entries ...string) {
+func allowClaudeProjectLocalEntries(toolID string, entries ...string) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return
@@ -139,14 +141,19 @@ func allowClaudeProjectLocalEntries(entries ...string) {
 			}
 		}
 	}
+	beforeWildcard := len(allow)
 	allow = removeClaudeContextModeWildcard(allow)
+	wildcardRemoved := len(allow) != beforeWildcard
+	before := len(allow)
+	allow = removeClaudeMcpToolEntries(allow, toolID)
+	removed := len(allow) != before
 	seen = map[string]bool{}
 	for _, x := range allow {
 		if s, ok := x.(string); ok {
 			seen[s] = true
 		}
 	}
-	changed := false
+	changed := removed || wildcardRemoved
 	for _, entry := range entries {
 		if seen[entry] {
 			continue
@@ -196,21 +203,26 @@ func AllowClaudeMcpTool(toolID string) {
 		}
 		allow = a
 	}
+	beforeWildcard := len(allow)
 	allow = removeClaudeContextModeWildcard(allow)
+	wildcardChanged := len(allow) != beforeWildcard
+	before := len(allow)
+	allow = removeClaudeMcpToolEntries(allow, toolID)
+	removed := len(allow) != before
 	seen := make(map[string]bool, len(allow))
 	for _, x := range allow {
 		if s, ok := x.(string); ok {
 			seen[s] = true
 		}
 	}
-	changed := false
+	changed := removed || wildcardChanged
 	for _, entry := range claudeMcpPermissionEntries(toolID) {
 		if !seen[entry] {
 			allow = append(allow, entry)
 			changed = true
 		}
 	}
-	if !changed && toolID != "context-mode" {
+	if !changed {
 		return
 	}
 	perms.Set("allow", allow)
@@ -222,6 +234,19 @@ func removeClaudeContextModeWildcard(entries []any) []any {
 	kept := entries[:0]
 	for _, entry := range entries {
 		if s, ok := entry.(string); ok && s == "mcp__context-mode__.*" {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
+// removeClaudeMcpToolEntries drops mcp__<toolID>__* so a rewire resets the allow list.
+func removeClaudeMcpToolEntries(entries []any, toolID string) []any {
+	prefix := "mcp__" + toolID + "__"
+	kept := entries[:0]
+	for _, entry := range entries {
+		if s, ok := entry.(string); ok && strings.HasPrefix(s, prefix) {
 			continue
 		}
 		kept = append(kept, entry)

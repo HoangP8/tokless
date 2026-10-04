@@ -22,11 +22,30 @@ func SetIdeProjectRoot(p string) { ideProjectRoot = p }
 
 func IdeProjectRoot() string { return ideRoot() }
 
+// IdeInProject reports whether cwd is a real project root (Copilot IDE files are project-scoped).
+func IdeInProject() bool { return ideRoot() != "." }
+
 func ideRoot() string {
 	if ideProjectRoot != "" {
 		return ideProjectRoot
 	}
-	return "."
+	// Walk up so checks find the project's IDE files from subdirectories.
+	dir, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	for {
+		for _, marker := range []string{".vscode", ".github", ".git"} {
+			if util.Exists(filepath.Join(dir, marker)) {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "."
+		}
+		dir = parent
+	}
 }
 
 // IDE (VS Code) paths — project-scoped, written relative to cwd.
@@ -127,7 +146,8 @@ func HasCopilotIdeContextModeHook() bool {
 }
 
 func copilotRtkHookCommand() string {
-	return toklessCommand("rtk-hook", "copilot")
+	cmd, _ := toklessCommandOK("rtk-hook", "copilot")
+	return cmd
 }
 
 // InstallCopilotRtkHook writes ~/.copilot/hooks/tokless-rtk.json.
@@ -142,6 +162,9 @@ func InstallCopilotRtkHookSafe() error {
 	}
 
 	cmd := copilotRtkHookCommand()
+	if cmd == "" {
+		return errNoStableTokless
+	}
 
 	// Flat format: {type,command,timeout} — used by both Copilot CLI and VS Code.
 	flat := func() *util.OrderedMap {
@@ -317,6 +340,9 @@ func InstallCopilotCodegraphIndexHookSafe() error {
 		return err
 	}
 	cmd := toklessCommand("copilot-hook", "codegraph-index")
+	if cmd == "" {
+		return errNoStableTokless
+	}
 	hook := util.NewOrderedMap()
 	hook.Set("type", "command")
 	hook.Set("command", cmd)
@@ -346,6 +372,9 @@ func InstallCopilotIdeCodegraphIndexHookSafe() error {
 		return err
 	}
 	cmd := toklessCommand("copilot-hook", "codegraph-index", "--vscode")
+	if cmd == "" {
+		return errNoStableTokless
+	}
 	entry := util.NewOrderedMap()
 	entry.Set("type", "command")
 	entry.Set("command", cmd)
@@ -457,6 +486,14 @@ func copilotHookOwned(cfg *util.OrderedMap, marker string) bool {
 		} else {
 			expected = map[string]bool{"PreToolUse": true, "preToolUse": true, "PostToolUse": true, "postToolUse": true}
 		}
+	case "projectmem-hook flat":
+		// CLI uses lowercase sessionStart, the VS Code surface SessionStart.
+		if _, ok := hooks.Get("SessionStart"); ok {
+			expected = map[string]bool{"SessionStart": true}
+			expectedTimeout = 10
+		} else {
+			expected = map[string]bool{"sessionStart": true}
+		}
 	case "copilot-hook codegraph-index":
 		if strings.Contains(copilotHookCommandMarker(cfg), "--vscode") {
 			expected = map[string]bool{"SessionStart": true}
@@ -527,6 +564,8 @@ func copilotHookCommandOwned(command, marker string) bool {
 		return hasExactHookSuffix(command, marker, []string{"pretooluse", "posttooluse", "sessionstart", "stop"})
 	case "rtk-hook copilot":
 		return toklessManagedCommand(command, "rtk-hook", "copilot")
+	case "projectmem-hook flat":
+		return toklessManagedCommand(command, "projectmem-hook", "flat")
 	case "copilot-hook codegraph-index":
 		return toklessManagedCommand(command, "copilot-hook", "codegraph-index") || toklessManagedCommand(command, "copilot-hook", "codegraph-index", "--vscode")
 	default:
@@ -565,6 +604,71 @@ func HasCopilotCodegraphIndexHook() bool {
 	raw, ok := util.ReadFileSafe(copilotHooksFile("tokless-codegraph-index.json"))
 	cfg := util.TryParseJsonc(raw)
 	return ok && cfg != nil && copilotHookOwned(cfg, "copilot-hook codegraph-index")
+}
+
+// InstallCopilotProjectmemHookSafe pushes project memory into each Copilot CLI session.
+func InstallCopilotProjectmemHookSafe() error {
+	p := util.CopilotPathsResolved()
+	if err := util.EnsureDir(p.HooksDir); err != nil {
+		return err
+	}
+	_ = os.Remove(copilotHooksFile("tokless-projectmem.json"))
+	projectmemCmd := toklessCommand("projectmem-hook", "flat")
+	if projectmemCmd == "" {
+		return errNoStableTokless
+	}
+	hook := util.NewOrderedMap()
+	hook.Set("type", "command")
+	hook.Set("command", projectmemCmd)
+	hooks := util.NewOrderedMap()
+	hooks.Set("sessionStart", []any{hook})
+	root := util.NewOrderedMap()
+	root.Set("version", 1)
+	root.Set("hooks", hooks)
+	return writeOwnedCopilotHook(copilotHooksFile("projectmem-context.json"), util.StringifyJSON(root), "projectmem-hook flat")
+}
+
+func RemoveCopilotProjectmemHookSafe() error {
+	err := removeOwnedCopilotHook(copilotHooksFile("projectmem-context.json"), "projectmem-hook flat")
+	_ = os.Remove(copilotHooksFile("tokless-projectmem.json"))
+	return err
+}
+
+func HasCopilotProjectmemHook() bool {
+	raw, ok := util.ReadFileSafe(copilotHooksFile("projectmem-context.json"))
+	cfg := util.TryParseJsonc(raw)
+	return ok && cfg != nil && copilotHookOwned(cfg, "projectmem-hook flat")
+}
+
+// InstallCopilotIdeProjectmemHook writes the VS Code surface sessionStart hook (.github/hooks/).
+func InstallCopilotIdeProjectmemHookSafe() error {
+	if err := util.EnsureDir(copilotIdeHooksDir()); err != nil {
+		return err
+	}
+	hook := util.NewOrderedMap()
+	hook.Set("type", "command")
+	projectmemCmd := toklessCommand("projectmem-hook", "flat")
+	if projectmemCmd == "" {
+		return errNoStableTokless
+	}
+	hook.Set("command", projectmemCmd)
+	hook.Set("timeout", 10)
+	hooks := util.NewOrderedMap()
+	hooks.Set("SessionStart", []any{hook})
+	root := util.NewOrderedMap()
+	root.Set("version", 1)
+	root.Set("hooks", hooks)
+	return writeOwnedCopilotHook(copilotIdeHooksFile("projectmem-context.json"), util.StringifyJSON(root), "projectmem-hook flat")
+}
+
+func RemoveCopilotIdeProjectmemHookSafe() error {
+	return removeOwnedCopilotHook(copilotIdeHooksFile("projectmem-context.json"), "projectmem-hook flat")
+}
+
+func HasCopilotIdeProjectmemHook() bool {
+	raw, ok := util.ReadFileSafe(copilotIdeHooksFile("projectmem-context.json"))
+	cfg := util.TryParseJsonc(raw)
+	return ok && cfg != nil && copilotHookOwned(cfg, "projectmem-hook flat")
 }
 
 func HasCopilotRtkHook() bool {
@@ -830,6 +934,36 @@ func removeCopilotIdeMcpLocked(toolID string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// CopilotMcpBounded reports whether the MCP entry for toolID is the tokless-bounded spawn.
+func CopilotMcpBounded(toolID string, ide bool) bool {
+	path := util.CopilotPathsResolved().McpConfig
+	child := "mcpServers"
+	if ide {
+		path = copilotIdeMcpFile()
+		child = "servers"
+	}
+	raw, ok := util.ReadFileSafe(path)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	s, ok := cfg.Get(child)
+	sm, isMap := s.(*util.OrderedMap)
+	if !ok || !isMap {
+		return false
+	}
+	existing, found := sm.Get(toolID)
+	return found && copilotMcpEqual(existing, copilotMcpDesired(toolID, ide))
+}
+
+// CopilotProjectmemMcpBounded reports whether the projectmem MCP entry is the tokless-bounded spawn.
+func CopilotProjectmemMcpBounded(ide bool) bool {
+	return CopilotMcpBounded("projectmem", ide)
 }
 
 func CopilotIdeMcpHas(toolID string) bool {

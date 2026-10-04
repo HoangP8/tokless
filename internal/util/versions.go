@@ -267,6 +267,7 @@ func gatherVersions(force bool) map[string]VersionInfo {
 	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm", Present: npmInstalledVersion("@colbymchenry/codegraph") != nil}
 	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm", Present: npmInstalledVersion("context-mode") != nil}
 	out["headroom"] = VersionInfo{Installed: HeadroomInstalledVersion(), Latest: latest["headroom"], Channel: "uv", Present: HeadroomInstalled()}
+	out["projectmem"] = VersionInfo{Installed: ProjectmemInstalledVersion(), Channel: "uv", Present: ProjectmemInstalled()}
 	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm", Present: npmInstalledVersion("tokless") != nil}
 	return out
 }
@@ -287,6 +288,8 @@ func InstalledVersionFor(id string) *string {
 		return npmInstalledVersion("context-mode")
 	case "headroom":
 		return HeadroomInstalledVersion()
+	case "projectmem":
+		return ProjectmemInstalledVersion()
 	case "tokless":
 		return npmInstalledVersion("tokless")
 	}

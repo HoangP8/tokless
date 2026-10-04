@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -326,6 +327,13 @@ func TestDroidProxyConfigurators(t *testing.T) {
 			wantRemove:   true,
 		},
 		{
+			name:         "treats droid-normalized entry as managed",
+			seed:         `{"customModels":[{"model":"headroom","displayName":"Headroom Proxy","id":"custom:Headroom-Proxy-0","index":1,"baseUrl":"http://127.0.0.1:8787/v1","noImageSupport":true,"provider":"generic-chat-completion-api"}]}`,
+			wantConfigCh: false,
+			wantWired:    true,
+			wantRemove:   true,
+		},
+		{
 			name:         "refuses differing existing entry",
 			seed:         `{"customModels":[{"model":"headroom","displayName":"Headroom Proxy","baseUrl":"http://user.example:9999/v1","provider":"generic-chat-completion-api"}]}`,
 			wantConfigCh: false,
@@ -396,6 +404,40 @@ func TestDroidProxyConfigurators(t *testing.T) {
 		wired:      DroidProxyWired,
 		remove:     RemoveDroidProxy,
 	}, cases)
+}
+
+func TestDetectDroidProxyTreatsNormalizedEntryAsManaged(t *testing.T) {
+	droidProxyTestHome(t)
+	seed := `{"customModels":[{"model":"headroom","displayName":"Headroom Proxy","id":"custom:Headroom-Proxy-0","index":1,"baseUrl":"http://127.0.0.1:8787/v1","noImageSupport":true,"provider":"generic-chat-completion-api"}]}`
+	if err := util.WriteFile(droidSettingsFile(), seed); err != nil {
+		t.Fatal(err)
+	}
+	got := DetectProxy("droid")
+	if got.State != ProxyStateManaged {
+		t.Fatalf("state = %s (%s), want managed", got.State, got.Detail)
+	}
+}
+
+func TestDroidProxyWiredStashAcceptsGatewayV1Base(t *testing.T) {
+	droidProxyTestHome(t)
+	route, _, err := util.UpsertBYOKRoute("droid:deepseek-v4.1-flash", "openai-chat", "https://api.provider-a.test/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProxyRouteStash("droid", map[string]proxyRouteStashEntry{
+		"deepseek-v4.1-flash": {File: droidSettingsFile(), Provider: "deepseek-v4.1-flash", BaseURL: "https://api.provider-a.test/api/v1", Upstream: "https://api.provider-a.test/api"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = saveProxyRouteStash("droid", nil) })
+	settings := fmt.Sprintf(`{"customModels":[{"model":"deepseek-v4.1-flash","displayName":"Test Model","baseUrl":"%s/v1","apiKey":"test-key","provider":"generic-chat-completion-api","extraHeaders":{"x-headroom-base-url":"https://api.provider-a.test/api","X-Tokless-Route":"%s"}}]}`,
+		util.BYOKGatewayEndpoint(), util.BYOKRouteHeader(route))
+	if err := util.WriteFile(droidSettingsFile(), settings); err != nil {
+		t.Fatal(err)
+	}
+	if !DroidProxyWired() {
+		t.Fatal("gateway /v1 base must satisfy stash-backed wiring")
+	}
 }
 
 func TestProxyConfiguratorsRefusePersistenceFailure(t *testing.T) {

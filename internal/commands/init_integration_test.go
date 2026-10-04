@@ -155,10 +155,13 @@ func TestInitSandboxWiring(t *testing.T) {
 		t.Fatalf("failed to read hooks.json: %v", err)
 	}
 	codexHooksStr := string(codexHooksData)
-	for _, bad := range []string{"context-mode hook codex", "context-mode-hook codex", "SessionStart", "PreCompact", "PostToolUse", "UserPromptSubmit"} {
+	for _, bad := range []string{"context-mode hook codex", "context-mode-hook codex", "PreCompact", "PostToolUse", "UserPromptSubmit"} {
 		if strings.Contains(codexHooksStr, bad) {
 			t.Errorf("hooks.json should not contain context-mode hook %q, got: %s", bad, codexHooksStr)
 		}
+	}
+	if strings.Contains(codexHooksStr, "SessionStart") && !strings.Contains(codexHooksStr, "projectmem-hook claude") {
+		t.Errorf("hooks.json SessionStart must only hold the projectmem hook, got: %s", codexHooksStr)
 	}
 	if !strings.Contains(codexHooksStr, "rtk-hook codex") {
 		t.Errorf("hooks.json doesn't contain the rtk hook 'rtk-hook codex', got: %s", codexHooksStr)
@@ -496,9 +499,9 @@ export default async function(pi) { console.log("user ext") }`
 	}
 	settings := string(settingsRaw)
 
-	// Only MCP bridge remains as a pi package; tools use skills/MCP.
-	if !strings.Contains(settings, "npm:pi-mcp-adapter") {
-		t.Errorf("settings.json missing pi-mcp-adapter, got:\n%s", settings)
+	// Pi's built-in MCP reads mcp.json.
+	if strings.Contains(settings, "npm:pi-mcp-adapter") {
+		t.Errorf("settings.json must not install pi-mcp-adapter, got:\n%s", settings)
 	}
 	// Must NOT install tools via old pi packages.
 	for _, bad := range []string{
@@ -575,7 +578,7 @@ export default async function(pi) { console.log("user ext") }`
 	if err != nil {
 		t.Fatalf("read settings.json after 2nd run: %v", err)
 	}
-	for _, pkg := range []string{"user-custom-pkg", "another-user-pkg", "npm:pi-mcp-adapter"} {
+	for _, pkg := range []string{"user-custom-pkg", "another-user-pkg"} {
 		if !strings.Contains(string(settingsRaw2), pkg) {
 			t.Errorf("settings.json after 2nd run missing package %q", pkg)
 		}

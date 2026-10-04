@@ -226,9 +226,15 @@ func kiloExpectedCommand(toolID string, command []string) bool {
 		return len(command) >= 4 && command[2] == "--context-mode" && kiloContextServer(command[3:])
 	case "codegraph":
 		return len(command) >= 7 && command[2] == "--agent" && command[3] == "kilo" && kiloCodegraphServer(command[4:])
+	case "projectmem":
+		return len(command) >= 5 && command[2] == "--tool" && command[3] == "projectmem" && kiloProjectmemServer(command[4:])
 	default:
 		return false
 	}
+}
+
+func kiloProjectmemServer(command []string) bool {
+	return len(command) == 1 && kiloCommandBase(command[0]) == "pjm-mcp"
 }
 
 func kiloContextServer(command []string) bool {

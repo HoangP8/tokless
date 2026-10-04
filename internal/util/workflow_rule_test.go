@@ -1,6 +1,8 @@
 package util
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -43,6 +45,18 @@ func TestCursorRulesMatchAgentInstructions(t *testing.T) {
 		}
 	}
 
+}
+
+func TestCheckedInCursorRulesMatchGenerated(t *testing.T) {
+	for _, spec := range CursorProjectRuleSpecs() {
+		raw, err := os.ReadFile(filepath.Join("..", "..", ".cursor", "rules", spec.Filename))
+		if err != nil {
+			t.Fatalf("read %s: %v", spec.Filename, err)
+		}
+		if string(raw) != CursorProjectRuleContent(spec) {
+			t.Errorf("%s is stale; regenerate it from agent_instructions.md", spec.Filename)
+		}
+	}
 }
 
 func TestCursorProjectRuleContentNormalizesEmbeddedCRLF(t *testing.T) {

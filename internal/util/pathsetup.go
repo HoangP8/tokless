@@ -7,7 +7,7 @@ import (
 )
 
 func ExpectedBinDirs() []string {
-	h := resolveHome()
+	h := Home()
 	if IsWin {
 		dirs := []string{filepath.Join(h, ".local", "bin"), filepath.Join(h, ".bun", "bin")}
 		if la := os.Getenv("LOCALAPPDATA"); la != "" {

@@ -201,6 +201,8 @@ func toolVersionDisplayLine(tool *core.ToolManifest, info util.VersionInfo) stri
 			row += paintArrow() + " " + paintVer("v"+*info.Latest)
 		}
 		return util.C.Green(util.Sym.Check) + " " + row
+	case info.Present:
+		return util.C.Green(util.Sym.Check) + " " + name + util.C.Green("installed")
 	default:
 		return util.C.Gray(util.Sym.Bullet+" ") + util.C.Dim(padEnd(tool.ID, 14)) + util.C.Gray("not installed")
 	}
