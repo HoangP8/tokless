@@ -541,11 +541,11 @@ var codegraph = &core.ToolManifest{
 		"grok":        codegraphWire("grok"),
 		"pi": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
-				util.L.Sub("[dry-run] would: purge legacy pi-codegraph pkgs, install pi-mcp-adapter, mcp.json + codegraph-index.ts")
+				util.L.Sub("[dry-run] would: purge legacy pi-codegraph pkgs and pi-mcp-adapter, mcp.json + codegraph-index.ts")
 				return true, nil
 			}
 			agents.PiPurgeCodegraphPackages()
-			if !agents.PiInstallSource(agents.PiSrcMcpAdapter) {
+			if !agents.PiRemoveMcpAdapter() {
 				return false, nil
 			}
 			codegraphConfigureMcp("pi")
@@ -643,9 +643,6 @@ var codegraph = &core.ToolManifest{
 		"pi": func(core.RunOpts) (bool, error) {
 			agents.RemovePiMcp("codegraph")
 			_ = os.Remove(piCodegraphIndexPath())
-			if !agents.PiMcpHasAny() {
-				agents.PiRemoveSource(agents.PiSrcMcpAdapter)
-			}
 			RemoveOwner("pi", "codegraph")
 			return true, nil
 		},

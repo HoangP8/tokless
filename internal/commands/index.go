@@ -14,7 +14,7 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-var projectMarkers = []string{".git", "package.json", "go.mod", "Cargo.toml", "pyproject.toml", "pom.xml", "build.gradle", "tsconfig.json", "requirements.txt"}
+var projectMarkers = []string{".git", "package.json", "go.mod", "Cargo.toml", "pyproject.toml", "pom.xml", "build.gradle", "tsconfig.json", "requirements.txt", ".projectmem"}
 
 func looksLikeProject(dir string) bool {
 	for _, m := range projectMarkers {
@@ -180,6 +180,7 @@ func RunGrokSessionStartHook() int {
 	if dir == "" {
 		return 0
 	}
+	tools.RefreshProjectmemRuleFiles(dir)
 	return runCodegraphAutoIndex(dir)
 }
 
@@ -196,6 +197,7 @@ func RunCursorProjectRulesHook() int {
 				util.L.Err(err.Error())
 			}
 		}
+		tools.RefreshProjectmemRuleFiles(project)
 	}
 	return 0
 }

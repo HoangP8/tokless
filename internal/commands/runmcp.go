@@ -1,10 +1,15 @@
 package commands
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/HoangP8/tokless/internal/core"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
@@ -71,6 +76,27 @@ command:
 		}
 		argv = injectCodegraphPath(argv, workspace)
 	}
+	var projectmemEnv []string
+	if tool == "projectmem" {
+		if util.Which("pjm-mcp") == "" {
+			util.L.Err("projectmem: pjm-mcp not found; install with: uv tool install projectmem")
+			return 1
+		}
+		root := projectmemRoot(workspace)
+		if err := tools.EnsureProjectmemProject(root); err != nil {
+			util.L.Err("projectmem init: " + err.Error())
+		}
+		projectmemEnv = []string{"PROJECTMEM_ROOT=" + root}
+		tools.RefreshProjectmemRuleFiles(root)
+		defer tools.RefreshProjectmemRuleFiles(root)
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-stop
+			tools.RefreshProjectmemRuleFiles(root)
+			os.Exit(0)
+		}()
+	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
 		return 1
@@ -79,7 +105,29 @@ command:
 		util.L.Err("headroom proxy: " + err.Error())
 		return 1
 	}
-	return runMcpProxyAfterStart(agent, path, argv, os.Environ(), tool, nil)
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "PROJECTMEM_ROOT=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, projectmemEnv...)
+	return runMcpProxyAfterStart(agent, path, argv, env, tool, nil)
+}
+
+// projectmemRoot pins the projectmem project root for the MCP child.
+func projectmemRoot(workspace string) string {
+	if root := codegraphWorkspace(workspace); root != "" {
+		return root
+	}
+	if workspace != "" && workspace != "${workspaceFolder}" {
+		return workspace
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
 }
 
 // ensureProxyForAgent silently starts the headroom daemon when an MCP server is
@@ -176,4 +224,31 @@ func injectCodegraphPath(argv []string, workspace ...string) []string {
 func isCodegraphCommand(p string) bool {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(p, "\\", "/")))
 	return base == "codegraph" || base == "codegraph.cmd" || base == "codegraph.exe" || base == "codegraph.bat"
+}
+
+// RunProjectmemHook prints session-start project state in each agent's hook format.
+func RunProjectmemHook(format string) int {
+	input, _ := io.ReadAll(os.Stdin)
+	text := tools.ProjectmemSessionText(resolveHookProjectDirFromInput(input))
+	if text == "" {
+		return 0
+	}
+	switch format {
+	case "claude":
+		out, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
+			"hookEventName": "SessionStart", "additionalContext": text,
+		}})
+		fmt.Println(string(out))
+	case "agy":
+		out, _ := json.Marshal(map[string]any{"injectSteps": []any{map[string]any{
+			"systemMessage": map[string]any{"systemMessage": text},
+		}}})
+		fmt.Println(string(out))
+	case "flat":
+		out, _ := json.Marshal(map[string]any{"additionalContext": text})
+		fmt.Println(string(out))
+	default:
+		fmt.Println(text)
+	}
+	return 0
 }

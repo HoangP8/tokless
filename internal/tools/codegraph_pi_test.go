@@ -32,8 +32,8 @@ func TestCodegraphPiWireUnwire(t *testing.T) {
 	if !agents.PiMcpHas("codegraph") || !piCodegraphIndexExtensionPresent() {
 		t.Fatal("mcp or index missing")
 	}
-	if !agents.PiSourceHas(agents.PiSrcMcpAdapter) {
-		t.Fatal("adapter missing")
+	if agents.PiSourceHas(agents.PiSrcMcpAdapter) {
+		t.Fatal("pi-mcp-adapter must not be installed; it disables built-in MCP")
 	}
 	ext, _ := util.ReadFileSafe(piCodegraphIndexPath())
 	for _, w := range []string{"session_start", "TOKLESS", "void pi.exec", "index", "--auto", ".catch(() => {})"} {
@@ -49,7 +49,6 @@ func TestCodegraphPiWireUnwire(t *testing.T) {
 			t.Fatalf("extension must not contain %q", forbidden)
 		}
 	}
-	// keep second mcp so adapter survives
 	agents.ConfigurePiMcp("context-mode")
 	if _, err := unwire(core.RunOpts{}); err != nil {
 		t.Fatal(err)
@@ -57,8 +56,8 @@ func TestCodegraphPiWireUnwire(t *testing.T) {
 	if agents.PiMcpHas("codegraph") || piCodegraphIndexExtensionPresent() {
 		t.Fatal("codegraph not cleaned")
 	}
-	if !agents.PiSourceHas(agents.PiSrcMcpAdapter) {
-		t.Fatal("adapter should stay with other MCP")
+	if !agents.PiMcpHas("context-mode") {
+		t.Fatal("unwire removed another server")
 	}
 }
 
@@ -72,16 +71,14 @@ func TestPiCodegraphIndexSourceEscapesToklessPath(t *testing.T) {
 	}
 }
 
-func TestCodegraphPiUnwireDropsAdapterWhenLast(t *testing.T) {
+func TestCodegraphPiWireRemovesLegacyAdapter(t *testing.T) {
 	piCgHome(t)
+	agents.PiInstallSource(agents.PiSrcMcpAdapter)
 	if _, err := codegraph.WireFor["pi"](core.RunOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := codegraph.UnwireFor["pi"](core.RunOpts{}); err != nil {
-		t.Fatal(err)
-	}
 	if agents.PiSourceHas(agents.PiSrcMcpAdapter) {
-		t.Fatal("adapter should drop when last MCP")
+		t.Fatal("legacy pi-mcp-adapter should be removed on wire")
 	}
 }
 
