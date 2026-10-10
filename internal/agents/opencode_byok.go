@@ -118,13 +118,18 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 		if a.base == "" || a.key == "" || a.file == "" {
 			continue
 		}
+		routeHeader := ""
+		if route, ok := util.ReadBYOKRoute("opencode:" + id); ok {
+			routeHeader = util.BYOKRouteHeader(route)
+		}
 		out = append(out, openCodeBYOK{
-			ID:       id,
-			File:     a.file,
-			BaseURL:  a.base,
-			APIKey:   a.key,
-			Npm:      a.npm,
-			Protocol: openCodeProtocol(a.npm),
+			ID:          id,
+			File:        a.file,
+			BaseURL:     a.base,
+			APIKey:      a.key,
+			Npm:         a.npm,
+			Protocol:    openCodeProtocol(a.npm),
+			RouteHeader: routeHeader,
 		})
 	}
 	return out
@@ -241,12 +246,14 @@ func wireOpenCodeBYOKLocked() (changed bool, byoks []openCodeBYOK, ok bool) {
 		if openCodeHasOrphanedProxyRoute() {
 			return false, nil, false
 		}
-		return legacyChanged, nil, true
+		v2Changed, v2OK := syncOpenCodeV2BYOK(nil)
+		return legacyChanged || v2Changed, nil, v2OK
 	}
 	if openCodeHasOrphanedProxyRoute() {
 		return false, nil, false
 	}
-	return legacyChanged, byoks, true
+	v2Changed, v2OK := syncOpenCodeV2BYOK(byoks)
+	return legacyChanged || v2Changed, byoks, v2OK
 }
 
 // unwireOpenCodeBYOK restores original baseURLs from stash.
@@ -271,7 +278,8 @@ func unwireOpenCodeBYOKLocked() (removed bool, ok bool) {
 		return false, false
 	}
 	if len(stashed) == 0 {
-		return false, true
+		v2Removed, v2OK := syncOpenCodeV2BYOK(nil)
+		return v2Removed, v2OK
 	}
 	removed = false
 	remaining := map[string]byokStashEntry{}
@@ -301,7 +309,252 @@ func unwireOpenCodeBYOKLocked() (removed bool, ok bool) {
 			return false, restoreOpenCodeProviderFiles(originals)
 		}
 	}
-	return removed, true
+	v2Removed, v2OK := syncOpenCodeV2BYOK(nil)
+	return removed || v2Removed, v2OK
+}
+
+func openCodeV2Package(npm string) string {
+	switch strings.TrimSpace(npm) {
+	case "@ai-sdk/openai-compatible":
+		return "@opencode/ai/providers/openai-compatible"
+	case "@ai-sdk/openai":
+		return "@opencode/ai/providers/openai"
+	case "@ai-sdk/anthropic":
+		return "@opencode/ai/providers/anthropic"
+	default:
+		return "@opencode/ai/providers/openai-compatible"
+	}
+}
+
+func openCodeV2Binary() string {
+	for _, bin := range openCodeBinaryPaths() {
+		if OpenCodeMajorVersion(bin) == 2 {
+			return bin
+		}
+	}
+	return ""
+}
+
+func openCodeV2ProviderRouteMatches(raw, id, endpoint, routeHeader, upstream string) bool {
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	providers, ok := mapChild(cfg, "providers")
+	if !ok {
+		return false
+	}
+	value, ok := providers.Get(id)
+	if !ok {
+		return false
+	}
+	p, ok := value.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	settings, ok := mapChild(p, "settings")
+	if !ok {
+		return false
+	}
+	base, _ := settings.Get("baseURL")
+	if base != endpoint {
+		return false
+	}
+	headers, ok := mapChild(p, "headers")
+	if !ok {
+		return false
+	}
+	route, _ := headers.Get("X-Tokless-Route")
+	headroom, _ := headers.Get(headroomBaseURLHeader)
+	return route == routeHeader && headroom == upstream
+}
+
+func syncOpenCodeV2BYOK(byoks []openCodeBYOK) (changed, ok bool) {
+	actualHome, _ := os.UserHomeDir()
+	if openCodeV2Binary() == "" || util.Home() != actualHome {
+		return false, true
+	}
+	path := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
+	raw, exists := util.ReadFileSafe(path)
+	if !exists {
+		raw = "{}"
+	}
+	if util.HasJSONCComments(raw) {
+		return false, false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false, false
+	}
+	providers, has := mapChild(cfg, "providers")
+	if !has && len(byoks) == 0 {
+		return false, true
+	}
+	if !has {
+		providers = util.NewOrderedMap()
+		cfg.Set("providers", providers)
+	}
+	if len(byoks) == 0 && !has {
+		return false, true
+	}
+	endpoint := util.BYOKGatewayEndpoint()
+	if strings.TrimSpace(ProxyEndpointFor("opencode")) != "" {
+		endpoint = ProxyEndpointFor("opencode")
+	}
+	wanted := map[string]bool{}
+	for _, b := range byoks {
+		if b.RouteHeader == "" {
+			continue
+		}
+		wanted[b.ID] = true
+		if _, present := providers.Get(b.ID); present {
+			if openCodeV2ProviderRouteMatches(raw, b.ID, endpoint, b.RouteHeader, openCodeV2Upstream(b.BaseURL)) {
+				continue
+			}
+			if !openCodeV2OwnedRoute(providers, b.ID) {
+				continue
+			}
+			providers.Set(b.ID, openCodeV2ProviderEntry(b, endpoint))
+			changed = true
+			continue
+		}
+		providers.Set(b.ID, openCodeV2ProviderEntry(b, endpoint))
+		changed = true
+	}
+	if !has && len(wanted) == 0 {
+		return false, true
+	}
+	for _, id := range append([]string(nil), providers.Keys()...) {
+		if wanted[id] {
+			continue
+		}
+		if v, _ := providers.Get(id); v != nil {
+			if m, ok := v.(*util.OrderedMap); ok {
+				h, hasHeaders := mapChild(m, "headers")
+				if !hasHeaders {
+					continue
+				}
+				route, _ := h.Get("X-Tokless-Route")
+				settings, _ := mapChild(m, "settings")
+				base, _ := settings.Get("baseURL")
+				if s, ok := route.(string); ok && strings.HasPrefix(s, "opencode:") && base == endpoint {
+					providers.Delete(id)
+					changed = true
+				}
+			}
+		}
+	}
+	if providers.Len() == 0 && changed {
+		cfg.Delete("providers")
+	}
+	newRaw := util.StringifyJSON(cfg)
+	if newRaw == raw {
+		return changed, true
+	}
+	if err := util.WriteFile(path, newRaw); err != nil {
+		return false, false
+	}
+	return true, true
+}
+
+func openCodeV2OwnedRoute(providers *util.OrderedMap, id string) bool {
+	value, ok := providers.Get(id)
+	if !ok {
+		return false
+	}
+	entry, ok := value.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	headers, ok := mapChild(entry, "headers")
+	if !ok {
+		return false
+	}
+	route, _ := headers.Get("X-Tokless-Route")
+	s, ok := route.(string)
+	return ok && strings.HasPrefix(s, "opencode:")
+}
+
+func openCodeV2Upstream(raw string) string {
+	u, _ := url.Parse(raw)
+	if u != nil && u.Host != "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return raw
+}
+
+func openCodeV2ProviderEntry(b openCodeBYOK, endpoint string) *util.OrderedMap {
+	entry := util.NewOrderedMap()
+	entry.Set("name", b.ID)
+	entry.Set("package", openCodeV2Package(b.Npm))
+	settings := util.NewOrderedMap()
+	settings.Set("baseURL", endpoint)
+	if b.APIKey != "" {
+		settings.Set("apiKey", b.APIKey)
+	}
+	entry.Set("settings", settings)
+	u, _ := url.Parse(b.BaseURL)
+	headers := util.NewOrderedMap()
+	headers.Set("X-Tokless-Route", b.RouteHeader)
+	headers.Set(headroomBaseURLHeader, openCodeV2Upstream(b.BaseURL))
+	if u != nil && strings.Trim(u.EscapedPath(), "/") != "" {
+		headers.Set("x-headroom-original-path", strings.TrimRight(u.EscapedPath(), "/")+"/chat/completions")
+	}
+	entry.Set("headers", headers)
+	entry.Set("models", openCodeV2Models(b.File, b.ID))
+	return entry
+}
+
+func openCodeV2Models(file, id string) *util.OrderedMap {
+	out := util.NewOrderedMap()
+	raw, ok := util.ReadFileSafe(file)
+	if !ok {
+		return out
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return out
+	}
+	ps, ok := mapChild(cfg, "provider")
+	if !ok {
+		return out
+	}
+	v, ok := ps.Get(id)
+	if !ok {
+		return out
+	}
+	p, ok := v.(*util.OrderedMap)
+	if !ok {
+		return out
+	}
+	mv, ok := p.Get("models")
+	if !ok {
+		return out
+	}
+	models, ok := mv.(*util.OrderedMap)
+	if !ok {
+		return out
+	}
+	for _, key := range models.Keys() {
+		value, _ := models.Get(key)
+		m, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		entry := util.NewOrderedMap()
+		modelID, _ := m.Get("modelID")
+		if modelID == nil {
+			modelID = key
+		}
+		entry.Set("modelID", modelID)
+		for _, field := range []string{"name", "limit"} {
+			if v, ok := m.Get(field); ok {
+				entry.Set(field, v)
+			}
+		}
+		out.Set(key, entry)
+	}
+	return out
 }
 
 func restoreOpenCodeProviderFiles(originals map[string]string) bool {

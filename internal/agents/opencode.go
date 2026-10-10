@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
@@ -16,7 +18,80 @@ import (
 //go:embed opencode_byok_plugin.js
 var toklessOpenCodeBYOKPlugin []byte
 
-// ConfigureOpenCodeMcp writes/updates a local MCP entry in opencode config.
+// openCodeMcpCommand returns the canonical spawn command for a tool.
+func openCodeMcpCommand(toolID string) []string {
+	if toolID == "codegraph" {
+		spawn := util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		return append([]string{spawn.Command}, spawn.Args...)
+	}
+	spawn := util.McpSpawnFor(toolID)
+	return append([]string{spawn.Command}, spawn.Args...)
+}
+
+// openCodeMcpEntryEnabled reports enabled != false (v1) and disabled != true (v2).
+func openCodeMcpEntryEnabled(entry *util.OrderedMap) bool {
+	if v, ok := entry.Get("enabled"); ok {
+		if b, ok := v.(bool); ok && !b {
+			return false
+		}
+	}
+	if v, ok := entry.Get("disabled"); ok {
+		if b, ok := v.(bool); ok && b {
+			return false
+		}
+	}
+	return true
+}
+
+func openCodeMcpEntryCommandMatches(entry *util.OrderedMap, command []string) bool {
+	v, _ := entry.Get("command")
+	return anyArrEq(v, command)
+}
+
+// openCodeMcpFind returns the v1 or v2 entry for toolID, whichever exists.
+func openCodeMcpFind(mcp *util.OrderedMap, toolID string) (*util.OrderedMap, bool) {
+	if v, ok := mcp.Get(toolID); ok {
+		if em, ok := v.(*util.OrderedMap); ok {
+			return em, true
+		}
+	}
+	if servers, ok := mapChild(mcp, "servers"); ok {
+		if v, ok := servers.Get(toolID); ok {
+			if em, ok := v.(*util.OrderedMap); ok {
+				return em, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// OpenCodeMcpHas reports whether toolID is enabled in either MCP config shape.
+func OpenCodeMcpHas(cfg *util.OrderedMap, toolID string) bool {
+	if cfg == nil {
+		return false
+	}
+	mcp, ok := mapChild(cfg, "mcp")
+	if !ok {
+		return false
+	}
+	entry, ok := openCodeMcpFind(mcp, toolID)
+	return ok && openCodeMcpEntryEnabled(entry)
+}
+
+// OpenCodeMcpMatches reports whether either MCP config shape has the enabled command.
+func OpenCodeMcpMatches(cfg *util.OrderedMap, toolID string, command []string) bool {
+	if cfg == nil {
+		return false
+	}
+	mcp, ok := mapChild(cfg, "mcp")
+	if !ok {
+		return false
+	}
+	entry, ok := openCodeMcpFind(mcp, toolID)
+	return ok && openCodeMcpEntryEnabled(entry) && openCodeMcpEntryCommandMatches(entry, command)
+}
+
+// ConfigureOpenCodeMcp writes the MCP entry and syncs existing v1/v2 shapes.
 func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
 	_ = util.EnsureDir(p.Dir)
@@ -43,28 +118,49 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 		cfg.Set("mcp", mcp)
 	}
 
-	var spawn util.McpSpawn
-	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-	} else {
-		spawn = util.McpSpawnFor(toolID)
-	}
-	command := append([]string{spawn.Command}, spawn.Args...)
-	desired := util.NewOrderedMap()
-	desired.Set("type", "local")
-	desired.Set("command", toAnySlice(command))
-	desired.Set("enabled", true)
+	command := openCodeMcpCommand(toolID)
 
-	if existing, ok := mcp.Get(toolID); ok {
-		if em, ok := existing.(*util.OrderedMap); ok {
-			ec, _ := em.Get("command")
-			if anyArrEq(ec, command) && notDisabled(em) {
-				return false, p.Config
+	v1NeedsUpdate := true
+	if entry, has := mcp.Get(toolID); has {
+		if em, isMap := entry.(*util.OrderedMap); isMap &&
+			openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
+			v1NeedsUpdate = false
+		}
+	}
+
+	var servers *util.OrderedMap
+	serversExists := false
+	if s, has := mapChild(mcp, "servers"); has {
+		servers, serversExists = s, true
+	}
+	v2NeedsUpdate := serversExists
+	if serversExists {
+		if entry, has := servers.Get(toolID); has {
+			if em, isMap := entry.(*util.OrderedMap); isMap &&
+				openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
+				v2NeedsUpdate = false
 			}
 		}
+	}
+
+	if !v1NeedsUpdate && !v2NeedsUpdate {
 		return false, p.Config
 	}
-	mcp.Set(toolID, desired)
+
+	if v1NeedsUpdate {
+		v1 := util.NewOrderedMap()
+		v1.Set("type", "local")
+		v1.Set("command", toAnySlice(command))
+		v1.Set("enabled", true)
+		mcp.Set(toolID, v1)
+	}
+	if serversExists && v2NeedsUpdate {
+		v2 := util.NewOrderedMap()
+		v2.Set("type", "local")
+		v2.Set("command", toAnySlice(command))
+		v2.Set("disabled", false)
+		servers.Set(toolID, v2)
+	}
 	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
 		return false, p.Config
 	}
@@ -121,22 +217,28 @@ func RemoveOpenCodeMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	existing, ok := mcp.Get(toolID)
-	if !ok {
+	command := openCodeMcpCommand(toolID)
+	removed := false
+
+	if existing, has := mcp.Get(toolID); has {
+		if em, isMap := existing.(*util.OrderedMap); isMap && openCodeMcpEntryCommandMatches(em, command) {
+			mcp.Delete(toolID)
+			removed = true
+		}
+	}
+
+	if servers, ok := mapChild(mcp, "servers"); ok {
+		if existing, has := servers.Get(toolID); has {
+			if em, isMap := existing.(*util.OrderedMap); isMap && openCodeMcpEntryCommandMatches(em, command) {
+				servers.Delete(toolID)
+				removed = true
+			}
+		}
+	}
+
+	if !removed {
 		return false
 	}
-	spawn := util.McpSpawnFor(toolID)
-	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-	}
-	desired := util.NewOrderedMap()
-	desired.Set("type", "local")
-	desired.Set("command", toAnySlice(append([]string{spawn.Command}, spawn.Args...)))
-	desired.Set("enabled", true)
-	if !jsonEqual(existing, desired) {
-		return false
-	}
-	mcp.Delete(toolID)
 	return util.WriteFile(p.Config, util.StringifyJSON(cfg)) == nil
 }
 
@@ -296,12 +398,11 @@ func removeOpenCodeProxyLocked() (bool, error) {
 			providerFiles[route.File] = raw
 		}
 	}
-	if len(stashed) > 0 {
-		if _, ok := unwireOpenCodeBYOKLocked(); !ok {
-			return false, fmt.Errorf("restore OpenCode BYOK providers")
-		}
-		byokRemoved = true
+	removed, ok := unwireOpenCodeBYOKLocked()
+	if !ok {
+		return false, fmt.Errorf("restore OpenCode BYOK providers")
 	}
+	byokRemoved = removed
 	pluginRemoved := removeOpenCodeTransportPlugin()
 	if pluginWired && !pluginRemoved {
 		var errs []error
@@ -666,15 +767,6 @@ func openCodeRetrieveToolDisabled() bool {
 	return ok && value == false
 }
 
-func notDisabled(m *util.OrderedMap) bool {
-	if v, ok := m.Get("enabled"); ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return true
-}
-
 func anyArrEq(a any, b []string) bool {
 	arr, ok := a.([]any)
 	if !ok || len(arr) != len(b) {
@@ -692,8 +784,14 @@ func anyArrEq(a any, b []string) bool {
 func opencodeKnownBinDirs() []string {
 	dirs := []string{
 		filepath.Join(util.Home(), ".opencode", "bin"),
-		filepath.Join(util.Home(), ".local", "bin"),
+		filepath.Join(util.Home(), ".opencode2", "bin"),
 	}
+	for _, name := range []string{"opencode", "opencode2"} {
+		if p := util.FindBinary(name, nil); p != "" {
+			dirs = append(dirs, filepath.Dir(p))
+		}
+	}
+	dirs = append(dirs, filepath.Join(util.Home(), ".local", "bin"))
 	if util.IsWin {
 		dirs = append(dirs, filepath.Join(util.Home(), "scoop", "shims"))
 		if pd := os.Getenv("ProgramData"); pd != "" {
@@ -701,6 +799,60 @@ func opencodeKnownBinDirs() []string {
 		}
 	}
 	return dirs
+}
+
+var openCodeVersionPattern = regexp.MustCompile(`(?:^|\s)v?(\d+)\.`)
+
+// OpenCodeMajorVersion returns the major version reported by <bin> --version.
+func OpenCodeMajorVersion(bin string) int {
+	out, err := exec.Command(bin, "--version").Output()
+	if err != nil {
+		return 0
+	}
+	m := openCodeVersionPattern.FindStringSubmatch(strings.TrimSpace(string(out)))
+	if len(m) != 2 {
+		return 0
+	}
+	var major int
+	if _, err := fmt.Sscanf(m[1], "%d", &major); err != nil {
+		return 0
+	}
+	return major
+}
+
+// openCodeBinaryPaths returns real binary candidates, including the v2 install path and PATH.
+func openCodeBinaryPaths() []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	names := []string{"opencode2", "opencode"}
+	if util.IsWin {
+		names = []string{"opencode2.exe", "opencode.exe", "opencode2", "opencode"}
+	}
+	for _, dir := range opencodeKnownBinDirs() {
+		for _, name := range names {
+			add(filepath.Join(dir, name))
+		}
+	}
+	for _, name := range []string{"opencode2", "opencode"} {
+		add(util.FindBinary(name, nil))
+	}
+	return out
+}
+
+// OpenCodeInstalledMajor probes installed binaries and returns 0 if none reports a version.
+func OpenCodeInstalledMajor() int {
+	for _, bin := range openCodeBinaryPaths() {
+		if major := OpenCodeMajorVersion(bin); major != 0 {
+			return major
+		}
+	}
+	return 0
 }
 
 // opencodeDesktopPaths probes the OpenCode Desktop (Electron) install.
@@ -725,6 +877,10 @@ var opencode = &core.AgentManifest{
 	CLIBin:    "opencode",
 	ConfigDir: func() string { return util.OpenCodePathsResolved().Dir },
 	Detect: func() core.Detection {
-		return detectAgent("opencode", util.OpenCodePathsResolved().Dir, opencodeKnownBinDirs(), opencodeDesktopPaths())
+		bins := opencodeKnownBinDirs()
+		if OpenCodeInstalledMajor() == 2 {
+			return core.Detection{Installed: true, Source: "cli"}
+		}
+		return detectAgent("opencode", util.OpenCodePathsResolved().Dir, bins, opencodeDesktopPaths())
 	},
 }
