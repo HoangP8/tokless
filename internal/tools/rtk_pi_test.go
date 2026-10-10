@@ -56,6 +56,28 @@ func TestRtkPiDryRun(t *testing.T) {
 	}
 }
 
+func TestRtkOpenCodeWritesV1AndV2Plugins(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("TOKLESS_TEST", "1")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if _, err := rtkWireOpenCode()(core.RunOpts{}); err != nil { t.Fatal(err) }
+	for path, markers := range map[string][]string{openCodeRtkPluginPath(): {"TOKLESS_BIN", "tool.execute.before"}, openCodeRtkV2PluginPath(): {"export default", "async setup", `ctx.tool.hook("execute.before"`}} {
+		raw, ok := util.ReadFileSafe(path); if !ok { t.Fatalf("missing plugin %s", path) }
+		for _, marker := range markers { if !strings.Contains(raw, marker) { t.Errorf("%s missing %q", path, marker) } }
+	}
+	if ok, err := rtk.UnwireFor["opencode"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("unwire = %v, %v", ok, err)
+	}
+	for _, path := range []string{openCodeRtkPluginPath(), openCodeRtkV2PluginPath()} {
+		if util.Exists(path) {
+			t.Fatalf("plugin survived unwire: %s", path)
+		}
+	}
+}
+
 func TestNormalizePiRtkExtension(t *testing.T) {
 	piRtkTestHome(t)
 	path := filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts")

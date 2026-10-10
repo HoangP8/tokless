@@ -224,7 +224,7 @@ func RunRtkHookCodex() int {
 	if err := json.Unmarshal(input, &req); err != nil {
 		return 0
 	}
-	if req.ToolName != "Bash" && req.ToolName != "bash" {
+	if !isBashLikeToolName(req.ToolName) {
 		return 0
 	}
 
@@ -706,9 +706,13 @@ func commandUsesRtk(cmdLine string) bool {
 }
 
 func segmentStartsWithRtk(seg string) bool {
+	return segmentBinary(seg) == "rtk"
+}
+
+func segmentBinary(seg string) string {
 	trimmed := strings.TrimSpace(seg)
 	if trimmed == "" {
-		return false
+		return ""
 	}
 	bin := firstRawToken(trimmed)
 	if len(bin) >= 2 {
@@ -716,12 +720,10 @@ func segmentStartsWithRtk(seg string) bool {
 			bin = bin[1 : len(bin)-1]
 		}
 	}
-	base := bin
 	if i := strings.LastIndexAny(bin, "/\\"); i >= 0 {
-		base = bin[i+1:]
+		bin = bin[i+1:]
 	}
-	lower := strings.ToLower(base)
-	return lower == "rtk" || strings.TrimSuffix(lower, ".exe") == "rtk"
+	return strings.TrimSuffix(strings.ToLower(bin), ".exe")
 }
 
 func firstRawToken(s string) string {
@@ -796,6 +798,66 @@ func isAlreadyRtk(cmdLine string) bool {
 
 func rtkRewriteIfNeeded(cmdLine string) (string, bool) {
 	return rtkRewrite(cmdLine)
+}
+
+// RunRtkHookDsh denies raw git in DSH's PreToolUse hook.
+func RunRtkHookDsh() int {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil || len(input) == 0 {
+		return 0
+	}
+	var req struct {
+		ToolName  string         `json:"tool_name"`
+		ToolInput map[string]any `json:"tool_input"`
+	}
+	if json.Unmarshal(input, &req) != nil {
+		return 0
+	}
+	if !isBashLikeToolName(req.ToolName) {
+		return 0
+	}
+	cmdLine, _ := req.ToolInput["command"].(string)
+	if cmdLine == "" || !commandHasRawGit(cmdLine) {
+		return 0
+	}
+
+	resp := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":            "PreToolUse",
+			"permissionDecision":       "deny",
+			"permissionDecisionReason": "raw git is filtered by tokless: use `rtk git ...` instead",
+		},
+	}
+	if out, err := json.Marshal(resp); err == nil {
+		fmt.Println(string(out))
+	}
+	return 0
+}
+
+// RunRtkHookCmdKimi delegates to RunRtkHookDsh.
+func RunRtkHookCmdKimi() int {
+	return RunRtkHookDsh()
+}
+
+// isBashLikeToolName reports whether the tool name refers to a shell execution tool.
+func isBashLikeToolName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bash", "shell":
+		return true
+	}
+	return false
+}
+
+func commandHasRawGit(cmdLine string) bool {
+	for _, seg := range shellCommandSegments(cmdLine) {
+		if segmentStartsWithRtk(seg) {
+			continue
+		}
+		if segmentBinary(seg) == "git" {
+			return true
+		}
+	}
+	return false
 }
 
 func copilotToolName(req map[string]json.RawMessage) string {

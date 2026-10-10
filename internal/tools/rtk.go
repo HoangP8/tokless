@@ -493,6 +493,33 @@ func openCodeRtkPluginPath() string {
 	return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts")
 }
 
+func openCodeRtkV2PluginPath() string {
+	return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk-v2.ts")
+}
+
+const openCodeRtkV2Plugin = `const TOKLESS_BIN = %s
+
+export default { id: "tokless-rtk", async setup(ctx: any) {
+  ctx.tool.hook("execute.before", async (event: any) => {
+    if (String(event?.tool ?? "").toLowerCase() !== "shell") return
+    const command = event?.input?.command
+    if (typeof command !== "string") return
+    try {
+      const { spawn } = await import("node:child_process")
+      const rewritten = await new Promise<string>((resolve) => {
+        const child = spawn(TOKLESS_BIN, ["rtk-rewrite", "--", command], { stdio: ["ignore", "pipe", "ignore"] })
+        let stdout = ""
+        child.stdout.setEncoding("utf8")
+        child.stdout.on("data", (chunk) => { stdout += chunk })
+        child.once("error", () => resolve(""))
+        child.once("close", (code) => resolve(code === 0 ? stdout.trim() : ""))
+      })
+      if (rewritten && rewritten !== command) event.input.command = rewritten
+    } catch {}
+  })
+} }
+`
+
 func rtkWireClaude() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -574,6 +601,9 @@ func rtkWireOpenCode() core.AgentFn {
 			return false, err
 		}
 		if err := util.WriteFile(path, fmt.Sprintf(openCodeRtkPlugin, strconv.Quote(exe))); err != nil {
+			return false, err
+		}
+		if err := util.WriteFile(openCodeRtkV2PluginPath(), fmt.Sprintf(openCodeRtkV2Plugin, strconv.Quote(exe))); err != nil {
 			return false, err
 		}
 		return rtkOpenCodePluginValid(), nil
@@ -747,6 +777,270 @@ func removeClaudeRtkHookGroup() {
 		cfg.Delete("hooks")
 	}
 	_ = util.WriteFile(cp.Settings, util.StringifyJSON(cfg))
+}
+
+// zcodeRtkHookManaged reports whether an entry is the managed ZCode hook.
+func zcodeRtkHookManaged(hook *util.OrderedMap) bool {
+	argsV, ok := hook.Get("args")
+	if !ok {
+		return false
+	}
+	arr, ok := argsV.([]any)
+	if !ok || len(arr) != 2 {
+		return false
+	}
+	a, _ := arr[0].(string)
+	b, _ := arr[1].(string)
+	commandV, ok := hook.Get("command")
+	command, okCommand := commandV.(string)
+	if !ok || !okCommand || a != "rtk-hook" || b != "zcode" {
+		return false
+	}
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(strings.ReplaceAll(command, "\\", "/")), ".exe"))
+	return base == "tokless"
+}
+
+// zcodeWireRtk installs the managed PreToolUse hook in ZCode config.
+func zcodeWireRtk() (bool, error) {
+	exe := util.ToklessPersistedAbs()
+	if exe == "" {
+		return false, nil
+	}
+	p := util.ZcodePathsResolved().Config
+	cfg := util.NewOrderedMap()
+	if raw, ok := util.ReadFileSafe(p); ok {
+		cfg = util.TryParseJsonc(raw)
+		if cfg == nil {
+			return false, nil
+		}
+	}
+	hooks := getOrCreateMapT(cfg, "hooks")
+	events := getOrCreateMapT(hooks, "events")
+	preV, _ := events.Get("PreToolUse")
+	arr, _ := preV.([]any)
+	managed := false
+	for _, value := range arr {
+		group, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		matcher, _ := group.Get("matcher")
+		if matcher != "Bash" {
+			continue
+		}
+		hooksV, _ := group.Get("hooks")
+		hookArr, _ := hooksV.([]any)
+		for _, hookValue := range hookArr {
+			hook, ok := hookValue.(*util.OrderedMap)
+			if !ok || !zcodeRtkHookManaged(hook) {
+				continue
+			}
+			hook.Set("type", "process")
+			hook.Set("command", exe)
+			hook.Set("args", []string{"rtk-hook", "zcode"})
+			hook.Set("enabled", true)
+			hook.Set("timeoutMs", 10000)
+			managed = true
+		}
+	}
+	if !managed {
+		hook := util.NewOrderedMap()
+		hook.Set("type", "process")
+		hook.Set("command", exe)
+		hook.Set("args", []string{"rtk-hook", "zcode"})
+		hook.Set("enabled", true)
+		hook.Set("timeoutMs", 10000)
+		group := util.NewOrderedMap()
+		group.Set("matcher", "Bash")
+		group.Set("hooks", []any{hook})
+		arr = append(arr, group)
+		events.Set("PreToolUse", arr)
+	}
+	hooks.Set("enabled", true)
+	if err := util.WriteFile(p, util.StringifyJSON(cfg)); err != nil {
+		return false, err
+	}
+	return zcodeRtkVerify(), nil
+}
+
+// zcodeUnwireRtk removes the managed PreToolUse hook and empty containers.
+func zcodeUnwireRtk() (bool, error) {
+	p := util.ZcodePathsResolved().Config
+	raw, ok := util.ReadFileSafe(p)
+	if !ok {
+		return true, nil
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false, nil
+	}
+	hooksV, ok := cfg.Get("hooks")
+	if !ok {
+		return true, nil
+	}
+	hooks, ok := hooksV.(*util.OrderedMap)
+	if !ok {
+		return false, nil
+	}
+	eventsV, ok := hooks.Get("events")
+	if !ok {
+		return true, nil
+	}
+	events, ok := eventsV.(*util.OrderedMap)
+	if !ok {
+		return false, nil
+	}
+	preV, ok := events.Get("PreToolUse")
+	if !ok {
+		return true, nil
+	}
+	arr, ok := preV.([]any)
+	if !ok {
+		return false, nil
+	}
+	changed := false
+	out := make([]any, 0, len(arr))
+	for _, value := range arr {
+		group, ok := value.(*util.OrderedMap)
+		if !ok {
+			out = append(out, value)
+			continue
+		}
+		hooksV, ok := group.Get("hooks")
+		hookArr, _ := hooksV.([]any)
+		groupChanged := false
+		kept := make([]any, 0, len(hookArr))
+		for _, hookValue := range hookArr {
+			hook, ok := hookValue.(*util.OrderedMap)
+			if ok && zcodeRtkHookManaged(hook) {
+				changed = true
+				groupChanged = true
+				continue
+			}
+			kept = append(kept, hookValue)
+		}
+		if !groupChanged {
+			out = append(out, group)
+			continue
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		group.Set("hooks", kept)
+		out = append(out, group)
+	}
+	if !changed {
+		return true, nil
+	}
+	if len(out) == 0 {
+		events.Delete("PreToolUse")
+	} else {
+		events.Set("PreToolUse", out)
+	}
+	if events.Len() == 0 {
+		hooks.Delete("events")
+	}
+	if hooks.Len() == 0 {
+		cfg.Delete("hooks")
+	} else if hooks.Len() == 1 {
+		if _, hasEnabled := hooks.Get("enabled"); hasEnabled {
+			cfg.Delete("hooks")
+		}
+	}
+	return util.WriteFile(p, util.StringifyJSON(cfg)) == nil, nil
+}
+
+// zcodeRtkVerify reports whether ZCode config carries the managed hook.
+func zcodeRtkVerify() bool {
+	raw, ok := util.ReadFileSafe(util.ZcodePathsResolved().Config)
+	if !ok {
+		return false
+	}
+	var s struct {
+		Hooks struct {
+			Enabled bool `json:"enabled"`
+			Events  struct {
+				PreToolUse []struct {
+					Matcher string `json:"matcher"`
+					Hooks   []struct {
+						Command string   `json:"command"`
+						Args    []string `json:"args"`
+					} `json:"hooks"`
+				} `json:"PreToolUse"`
+			} `json:"events"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal([]byte(raw), &s) != nil {
+		return false
+	}
+	if !s.Hooks.Enabled {
+		return false
+	}
+	for _, g := range s.Hooks.Events.PreToolUse {
+		if g.Matcher != "Bash" {
+			continue
+		}
+		for _, h := range g.Hooks {
+			if len(h.Args) == 2 && h.Args[0] == "rtk-hook" && h.Args[1] == "zcode" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+const ampRtkPlugin = `// tokless-rtk
+const TOKLESS_BIN = %s
+
+export default function (amp: any) {
+  amp.on("tool.call", async (event: any) => {
+    const cmd = amp.helpers?.shellCommandFromToolCall?.(event)
+    const command = typeof cmd === "string" ? cmd : cmd?.command
+    if (typeof command !== "string" || command.length === 0) return
+    try {
+      const { spawnSync } = await import("node:child_process")
+      const r = spawnSync(TOKLESS_BIN, ["rtk-rewrite", "--", command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      if (r.status !== 0 || typeof r.stdout !== "string") return
+      const rewritten = r.stdout.trim()
+      if (!rewritten || rewritten === command) return
+      const key = typeof event.input?.cmd === "string" ? "cmd" : "command"
+      return { action: "modify", input: { ...event.input, [key]: rewritten } }
+    } catch {}
+  })
+}
+`
+
+func ampRtkPluginPath() string {
+	return filepath.Join(util.AmpPathsResolved().Dir, "plugins", "tokless-rtk.ts")
+}
+func ampRtkWire(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would install Amp RTK shell rewrite plugin")
+		return true, nil
+	}
+	exe := util.ToklessPersistedAbs()
+	if exe == "" {
+		return false, nil
+	}
+	p := ampRtkPluginPath()
+	want := fmt.Sprintf(ampRtkPlugin, strconv.Quote(exe))
+	if raw, err := os.ReadFile(p); err == nil && string(raw) != want && !strings.HasPrefix(string(raw), "// tokless-rtk") {
+		util.L.Sub("[amp] plugins/tokless-rtk.ts has foreign content; refusing to overwrite")
+		return false, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := util.EnsureDir(filepath.Dir(p)); err != nil {
+		return false, err
+	}
+	if err := util.WriteFile(p, want); err != nil {
+		return false, err
+	}
+	return ampRtkVerify(), nil
+}
+func ampRtkVerify() bool {
+	raw, ok := util.ReadFileSafe(ampRtkPluginPath())
+	return ok && raw == fmt.Sprintf(ampRtkPlugin, strconv.Quote(util.ToklessPersistedAbs()))
 }
 
 // overrideClaudeRtkHook replaces rtk's own "rtk hook claude" PreToolUse hook command
@@ -982,8 +1276,46 @@ var rtk = &core.ToolManifest{
 		"kilo":        kiloRtkWire,
 		"cline":       clineRtkWire,
 		"grok":        rtkWireGrok(),
+		"amp": func(opts core.RunOpts) (bool, error) {
+			ok, err := ampRtkWire(opts)
+			if err != nil || !ok {
+				return ok, err
+			}
+			changed, _ := agents.ConfigureAmpRtkPermissions()
+			return changed || agents.AmpRtkPermissionsWired(), nil
+		},
+		"zcode": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would install zcode PreToolUse hook (~/.zcode/cli/config.json hooks.events.PreToolUse)")
+				return true, nil
+			}
+			return zcodeWireRtk()
+		},
+		"dsh": func(opts core.RunOpts) (bool, error) {
+			if opts.DryRun {
+				util.L.Sub("[dry-run] would install dsh RTK rewrite plugin (~/.dsh/plugins/tokless-rtk.mjs + cordis.patch.yml insert row)")
+				return true, nil
+			}
+			exe := util.ToklessPersistedAbs()
+			changed, _, err := agents.ConfigureDshRtk(exe)
+			return changed || agents.DshRtkWired(), err
+		},
 	},
 	UnwireFor: map[string]core.AgentFn{
+		"amp": func(core.RunOpts) (bool, error) {
+			p := ampRtkPluginPath()
+			want := fmt.Sprintf(ampRtkPlugin, strconv.Quote(util.ToklessPersistedAbs()))
+			if raw, ok := util.ReadFileSafe(p); ok && (raw == want || strings.HasPrefix(raw, "// tokless-rtk")) {
+				err := os.Remove(p)
+				if err != nil && !os.IsNotExist(err) {
+					return false, err
+				}
+			}
+			agents.RemoveAmpRtkPermissions()
+			return true, nil
+		},
+		"zcode": func(core.RunOpts) (bool, error) { return zcodeUnwireRtk() },
+		"dsh":   func(core.RunOpts) (bool, error) { return agents.RemoveDshRtk(), nil },
 		"claude": func(core.RunOpts) (bool, error) {
 			removeClaudeRtkHookGroup()
 			agents.DisallowClaudeBashPattern("Bash(rtk *)")
@@ -991,8 +1323,10 @@ var rtk = &core.ToolManifest{
 			return true, nil
 		},
 		"opencode": func(core.RunOpts) (bool, error) {
-			if err := os.Remove(openCodeRtkPluginPath()); err != nil && !os.IsNotExist(err) {
-				return false, err
+			for _, p := range []string{openCodeRtkPluginPath(), openCodeRtkV2PluginPath()} {
+				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+					return false, err
+				}
 			}
 			RemoveOwner("opencode", "rtk")
 			return !rtkOpenCodePluginValid(), nil
@@ -1059,6 +1393,13 @@ var rtk = &core.ToolManifest{
 		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
+		"amp":  func() *bool { return core.BoolPtr(ampRtkVerify()) },
+		"zcode": func() *bool {
+			return core.BoolPtr(zcodeRtkVerify())
+		},
+		"dsh": func() *bool {
+			return core.BoolPtr(agents.DshRtkWired())
+		},
 		"claude": func() *bool {
 			return core.BoolPtr(claudeSettingsHasRtkHook(util.ClaudeCodePaths().Settings))
 		},

@@ -1260,3 +1260,92 @@ func TestHasShellPipe(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRtkHookDshDeniesRawGit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+		deny    bool
+	}{
+		{"raw git", `{"tool_name":"bash","tool_input":{"command":"git status"}}`, true},
+		{"compound raw git", `{"tool_name":"bash","tool_input":{"command":"ls && git log"}}`, true},
+		{"rtk git passes", `{"tool_name":"bash","tool_input":{"command":"rtk git status"}}`, false},
+		{"non-git passes", `{"tool_name":"bash","tool_input":{"command":"ls -la"}}`, false},
+		{"uppercase Bash tool", `{"tool_name":"Bash","tool_input":{"command":"git diff"}}`, true},
+		{"non-bash tool", `{"tool_name":"read","tool_input":{"path":"x"}}`, false},
+		{"empty command", `{"tool_name":"bash","tool_input":{}}`, false},
+		{"malformed", `not json`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runRtkHookInput(t, tc.payload, RunRtkHookDsh)
+			if tc.deny {
+				var resp struct {
+					HookSpecificOutput struct {
+						HookEventName             string `json:"hookEventName"`
+						PermissionDecision       string `json:"permissionDecision"`
+						PermissionDecisionReason string `json:"permissionDecisionReason"`
+					} `json:"hookSpecificOutput"`
+				}
+				if json.Unmarshal([]byte(out), &resp) != nil {
+					t.Fatalf("deny payload not JSON: %s", out)
+				}
+				if resp.HookSpecificOutput.PermissionDecision != "deny" {
+					t.Fatalf("decision = %q, want deny", resp.HookSpecificOutput.PermissionDecision)
+				}
+				if resp.HookSpecificOutput.HookEventName != "PreToolUse" {
+					t.Fatalf("hookEventName = %q, want PreToolUse", resp.HookSpecificOutput.HookEventName)
+				}
+				if resp.HookSpecificOutput.PermissionDecisionReason == "" {
+					t.Fatal("deny without reason")
+				}
+				return
+			}
+			if out != "" {
+				t.Fatalf("expected passthrough, got: %s", out)
+			}
+		})
+	}
+}
+
+func TestRunRtkHookCmdKimiDeniesRawGit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+		deny    bool
+	}{
+		{"raw git", `{"tool_name":"shell","tool_input":{"command":"git status"}}`, true},
+		{"compound raw git", `{"tool_name":"shell","tool_input":{"command":"ls && git log"}}`, true},
+		{"kimi Bash key", `{"tool_name":"Bash","tool_input":{"command":"git diff"}}`, true},
+		{"rtk git passes", `{"tool_name":"shell","tool_input":{"command":"rtk git status"}}`, false},
+		{"non-git passes", `{"tool_name":"shell","tool_input":{"command":"ls -la"}}`, false},
+		{"non-bash tool", `{"tool_name":"read","tool_input":{"path":"x"}}`, false},
+		{"empty command", `{"tool_name":"shell","tool_input":{}}`, false},
+		{"malformed", `not json`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runRtkHookInput(t, tc.payload, RunRtkHookCmdKimi)
+			if tc.deny {
+				var resp struct {
+					HookSpecificOutput struct {
+						HookEventName             string `json:"hookEventName"`
+						PermissionDecision       string `json:"permissionDecision"`
+						PermissionDecisionReason string `json:"permissionDecisionReason"`
+					} `json:"hookSpecificOutput"`
+				}
+				if json.Unmarshal([]byte(out), &resp) != nil {
+					t.Fatalf("deny payload not JSON: %s", out)
+				}
+				if resp.HookSpecificOutput.PermissionDecision != "deny" {
+					t.Fatalf("decision = %q, want deny", resp.HookSpecificOutput.PermissionDecision)
+				}
+				if resp.HookSpecificOutput.PermissionDecisionReason == "" {
+					t.Fatal("deny without reason")
+				}
+				return
+			}
+			if out != "" {
+				t.Fatalf("expected passthrough, got: %s", out)
+			}
+		})
+	}
+}
