@@ -244,6 +244,58 @@ func TestCtxVerifyCodexRejectsProjectLegacyPreToolUseHook(t *testing.T) {
 	}
 }
 
+func TestWireCodexManual_CleansLegacyPreToolUseHook(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	defer util.SetHomeOverride("")
+
+	if !wireCodexManual() {
+		t.Fatal("wireCodexManual returned false")
+	}
+	hooks := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"context-mode hook codex pretooluse"}]}]}}`
+	if err := os.WriteFile(filepath.Join(tmp, ".codex", "hooks.json"), []byte(hooks), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !wireCodexManual() {
+		t.Fatal("second wireCodexManual returned false")
+	}
+	data, err := os.ReadFile(filepath.Join(tmp, ".codex", "hooks.json"))
+	if err == nil && strings.Contains(string(data), "context-mode hook codex pretooluse") {
+		t.Fatal("context-mode PreToolUse hook not cleaned on re-wire")
+	}
+}
+
+func TestWireCodexManual_CleansProjectLegacyPreToolUseHook(t *testing.T) {
+	tmp := t.TempDir()
+	project := filepath.Join(tmp, "project")
+	util.SetHomeOverride(filepath.Join(tmp, "home"))
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	defer util.SetHomeOverride("")
+	if err := os.MkdirAll(filepath.Join(project, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldwd, _ := os.Getwd()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldwd) }()
+	if !wireCodexManual() {
+		t.Fatal("wireCodexManual returned false")
+	}
+	hooks := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"context-mode hook codex pretooluse"}]}]}}`
+	if err := os.WriteFile(filepath.Join(project, ".codex", "hooks.json"), []byte(hooks), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !wireCodexManual() {
+		t.Fatal("second wireCodexManual returned false")
+	}
+	data, err := os.ReadFile(filepath.Join(project, ".codex", "hooks.json"))
+	if err == nil && strings.Contains(string(data), "context-mode hook codex pretooluse") {
+		t.Fatal("project-local context-mode PreToolUse hook not cleaned on re-wire")
+	}
+}
+
 func TestRemoveCodexContextModeHooks_RemovesLegacyContextModeEvents(t *testing.T) {
 	existing := util.TryParseJsonc(`{
 		"hooks":{

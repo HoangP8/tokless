@@ -39,6 +39,7 @@ type AgentManifest struct {
 	CLIBin    string
 	ConfigDir func() string
 	Detect    func() Detection
+	Mcp       McpAdapter
 }
 
 // AgentFn wires/unwires one tool for one agent.
@@ -64,9 +65,9 @@ type ToolManifest struct {
 	WireFor         map[string]AgentFn
 	UnwireFor       map[string]AgentFn
 	VerifyFor       map[string]VerifyFn
-	WiredAnyFor  map[string]VerifyFn
-	IndexProject func(dir string, opts RunOpts) (bool, error)
-	IndexReady   func() bool
+	WiredAnyFor     map[string]VerifyFn
+	IndexProject    func(dir string, opts RunOpts) (bool, error)
+	IndexReady      func() bool
 }
 
 // registries are global and populated at startup by agents/tools packages.

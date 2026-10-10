@@ -770,50 +770,11 @@ func projectmemEnsureInstalled(opts core.RunOpts) (bool, error) {
 
 // projectmemConfigureMcp writes the MCP entry spawning through `tokless run-mcp --tool projectmem`.
 func projectmemConfigureMcp(agent string) bool {
-	switch agent {
-	case "claude":
-		agents.ConfigureClaudeMcp("projectmem")
-	case "opencode":
-		agents.ConfigureOpenCodeMcp("projectmem")
-	case "codex":
-		agents.ConfigureCodexMcp("projectmem")
-	case "antigravity":
-		agents.ConfigureAntigravityMcp("projectmem")
-	case "copilot":
-		agents.ConfigureCopilotMcp("projectmem")
-		agents.ConfigureCopilotIdeMcp("projectmem")
-	case "droid":
-		agents.ConfigureDroidMcp("projectmem")
-	case "pi":
-		if !agents.PiRemoveMcpAdapter() {
-			return false
-		}
-		agents.ConfigurePiMcp("projectmem")
-	case "omp":
-		agents.ConfigureOmpMcp("projectmem")
-	case "grok":
-		if _, _, err := agents.ConfigureGrokMcp("projectmem"); err != nil {
-			return false
-		}
-	case "cursor":
-		agents.ConfigureCursorMcp("projectmem")
-		if !agents.CursorMcpHas("projectmem") {
-			return false
-		}
-		return agents.ConfigureCursorMcpPermissions("projectmem")
-	case "kilo":
-		spawn := util.PickMcpSpawn("projectmem")
-		expected := append([]string{spawn.Command}, spawn.Args...)
-		if _, _, err := agents.ConfigureKiloMcpSafe("projectmem", expected); err != nil {
-			return false
-		}
+	if !mcpConfigure(agent, "projectmem") {
+		return false
+	}
+	if agent == "kilo" {
 		kiloWriteOwner("projectmem")
-	case "cline":
-		spawn := util.PickMcpSpawn("projectmem")
-		expected := append([]string{spawn.Command}, spawn.Args...)
-		if _, _, err := agents.ConfigureClineMcpSafe("projectmem", expected); err != nil {
-			return false
-		}
 	}
 	return true
 }
@@ -866,6 +827,26 @@ const server = async ({ directory }: any) => ({
 export default server
 `
 
+const openCodeProjectmemV2Plugin = `import { execFileSync } from "node:child_process"
+
+// projectmem-context-v1
+const HOOK = %s
+const cache = new Map<string, string>()
+
+export default { id: "projectmem-context", async setup(ctx: any) {
+  ctx.session.hook("context", async (event: any) => {
+    const key = event?.sessionID ?? "no-session"
+    let content = cache.get(key)
+    if (content === undefined) {
+      try { content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd: process.cwd(), input: "", encoding: "utf8", timeout: 15000 }).trim() }
+      catch { content = "" }
+      cache.set(key, content)
+    }
+    if (content) event.system.push({ type: "text", text: content })
+  })
+} }
+`
+
 const projectmemExtensionMarker = "projectmem-context-v1"
 
 func projectmemExtensionPath(agent string) string {
@@ -893,7 +874,13 @@ func writeProjectmemExtension(agent string) bool {
 	if agent == "kilo" || agent == "opencode" {
 		tmpl = kiloProjectmemPlugin
 	}
-	return util.WriteFile(path, fmt.Sprintf(tmpl, strconv.Quote(exe))) == nil
+	if util.WriteFile(path, fmt.Sprintf(tmpl, strconv.Quote(exe))) != nil {
+		return false
+	}
+	if agent == "opencode" {
+		return util.WriteFile(filepath.Join(filepath.Dir(path), "projectmem-context-v2.ts"), fmt.Sprintf(openCodeProjectmemV2Plugin, strconv.Quote(exe))) == nil
+	}
+	return true
 }
 
 func hasProjectmemExtension(agent string) bool {
@@ -907,6 +894,9 @@ func removeProjectmemExtension(agent string) {
 	}
 	if path := projectmemExtensionPath(agent); path != "" {
 		_ = os.Remove(filepath.Join(filepath.Dir(path), "tokless-projectmem.ts"))
+		if agent == "opencode" {
+			_ = os.Remove(filepath.Join(filepath.Dir(path), "projectmem-context-v2.ts"))
+		}
 	}
 }
 
@@ -1179,46 +1169,18 @@ func projectmemRemoveSessionPush(agent string) {
 }
 
 func projectmemVerify(agent string) bool {
-	switch agent {
-	case "claude":
-		return claudeMcpBounded("projectmem")
-	case "opencode":
-		return openCodeMcpBounded("projectmem")
-	case "codex":
-		cx := util.CodexPathsResolved()
-		raw, ok := util.ReadFileSafe(cx.Config)
-		if !ok {
-			return false
-		}
-		blockText, hasBlock := util.BlockText(raw, "mcp_servers.projectmem")
-		if !hasBlock {
-			return false
-		}
-		b := parseCodexContextModeBlock(blockText)
-		spawn := util.McpSpawnFor("projectmem")
-		return b.command == spawn.Command && mcpStrArrEq(b.args, spawn.Args)
-	case "antigravity":
-		return agents.AntigravityProjectmemMcpBounded()
-	case "copilot":
-		return agents.CopilotProjectmemMcpBounded(false) && agents.CopilotProjectmemMcpBounded(true)
-	case "droid":
-		return agents.DroidProjectmemMcpBounded()
-	case "pi":
-		return agents.PiProjectmemMcpBounded()
-	case "omp":
-		return agents.OmpMcpHas("projectmem")
-	case "grok":
-		return agents.GrokProjectmemMcpHas() && HasOwner("grok", "projectmem")
-	case "cursor":
-		return agents.CursorMcpHas("projectmem") && agents.HasCursorMcpPermissions("projectmem")
-	case "kilo":
-		spawn := util.PickMcpSpawn("projectmem")
-		return agents.KiloMcpMatches("projectmem", append([]string{spawn.Command}, spawn.Args...)) && kiloHasOwner("projectmem")
-	case "cline":
-		spawn := util.PickMcpSpawn("projectmem")
-		return agents.ClineMcpMatches("projectmem", append([]string{spawn.Command}, spawn.Args...)) && HasOwner("cline", "projectmem")
+	if !mcpHas(agent, "projectmem", false) {
+		return false
 	}
-	return false
+	switch agent {
+	case "grok":
+		return HasOwner("grok", "projectmem")
+	case "kilo":
+		return kiloHasOwner("projectmem")
+	case "cline":
+		return HasOwner("cline", "projectmem")
+	}
+	return true
 }
 
 func claudeMcpBounded(toolID string) bool {
@@ -1241,35 +1203,6 @@ func claudeMcpBounded(toolID string) bool {
 			cmd, _ := em.Get("command")
 			args, _ := em.Get("args")
 			return cmd == spawn.Command && mcpStrArrEq(args, spawn.Args)
-		}
-	}
-	return false
-}
-
-func openCodeMcpBounded(toolID string) bool {
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if m, ok := cfg.Get("mcp"); ok {
-		if mm, ok := m.(*util.OrderedMap); ok {
-			v, has := mm.Get(toolID)
-			em, isMap := v.(*util.OrderedMap)
-			if !has || !isMap {
-				return false
-			}
-			if en, exists := em.Get("enabled"); exists {
-				if b, isBool := en.(bool); isBool && !b {
-					return false
-				}
-			}
-			spawn := util.McpSpawnFor(toolID)
-			cmd, _ := em.Get("command")
-			return mcpStrArrEq(cmd, append([]string{spawn.Command}, spawn.Args...))
 		}
 	}
 	return false
@@ -1303,6 +1236,7 @@ var projectmem = &core.ToolManifest{
 	WireFor:      map[string]core.AgentFn{},
 	UnwireFor:    map[string]core.AgentFn{},
 	VerifyFor:    map[string]core.VerifyFn{},
+	WiredAnyFor:  map[string]core.VerifyFn{},
 }
 
 func projectmemIndexProject(dir string, opts core.RunOpts) (bool, error) {
@@ -1320,7 +1254,7 @@ func projectmemIndexProject(dir string, opts core.RunOpts) (bool, error) {
 }
 
 func init() {
-	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline"} {
+	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "amp", "kimi", "cmd", "dsh", "zcode"} {
 		a := agent
 		projectmem.WireFor[a] = func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
@@ -1346,38 +1280,7 @@ func init() {
 			if opts.DryRun {
 				return true, nil
 			}
-			switch a {
-			case "claude":
-				agents.RemoveClaudeMcp("projectmem")
-			case "opencode":
-				agents.RemoveOpenCodeMcp("projectmem")
-			case "codex":
-				cx := util.CodexPathsResolved()
-				raw, _ := util.ReadFileSafe(cx.Config)
-				if next := util.RemoveBlock(raw, "mcp_servers.projectmem"); next != raw {
-					_ = util.WriteFile(cx.Config, next)
-				}
-			case "antigravity":
-				agents.RemoveAntigravityMcp("projectmem")
-			case "copilot":
-				agents.RemoveCopilotMcp("projectmem")
-				agents.RemoveCopilotIdeMcp("projectmem")
-			case "droid":
-				agents.RemoveDroidMcp("projectmem")
-			case "pi":
-				agents.RemovePiMcp("projectmem")
-			case "omp":
-				agents.RemoveOmpMcp("projectmem")
-			case "grok":
-				_, _ = agents.RemoveGrokMcp("projectmem")
-			case "cursor":
-				agents.RemoveCursorMcp("projectmem")
-				agents.RemoveCursorMcpPermissions("projectmem")
-			case "kilo":
-				agents.RemoveKiloMcp("projectmem")
-			case "cline":
-				agents.RemoveClineMcp("projectmem")
-			}
+			mcpRemove(a, "projectmem")
 			projectmemRemoveSessionPush(a)
 			projectmemRemoveAgentRuleFile(a)
 			if a == "kilo" {
@@ -1397,6 +1300,13 @@ func init() {
 				return core.BoolPtr(agents.CopilotProjectmemMcpBounded(false) && agents.HasCopilotProjectmemHook())
 			}
 			return core.BoolPtr(projectmemVerify(agentID) && projectmemHasSessionPush(agentID))
+		}
+		agentIDForHas := agentID
+		projectmem.WiredAnyFor[agentIDForHas] = func() *bool {
+			if agentIDForHas == "opencode" {
+				return core.BoolPtr(mcpHas("opencode", "projectmem", true))
+			}
+			return core.BoolPtr(projectmemVerify(agentIDForHas))
 		}
 	}
 }

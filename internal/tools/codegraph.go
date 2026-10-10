@@ -81,93 +81,40 @@ func codegraphRealInstall(opts core.RunOpts, agent string) bool {
 
 // codegraphConfigureMcp writes the MCP entry tokless-side.
 func codegraphConfigureMcp(agent string) bool {
-	switch agent {
-	case "claude":
-		agents.ConfigureClaudeMcp("codegraph")
-	case "opencode":
-		agents.ConfigureOpenCodeMcp("codegraph")
-	case "codex":
-		agents.ConfigureCodexMcp("codegraph")
-	case "antigravity":
-		agents.ConfigureAntigravityMcp("codegraph")
-	case "copilot":
-		agents.ConfigureCopilotMcp("codegraph")
-	case "droid":
-		agents.ConfigureDroidMcp("codegraph")
-	case "pi":
-		agents.ConfigurePiMcp("codegraph")
-	case "omp":
-		changed, _ := agents.ConfigureOmpMcp("codegraph")
-		return changed || agents.OmpMcpHas("codegraph")
-	case "grok":
-		_, _, err := agents.ConfigureGrokMcp("codegraph")
-		return err == nil
-	}
-	return true
+	return mcpConfigure(agent, "codegraph")
 }
 
 func codegraphVerify(agent string) bool {
+	if !mcpHas(agent, "codegraph", false) {
+		return false
+	}
+	return codegraphVerifyExtras(agent)
+}
+
+// codegraphVerifyExtras checks index hooks and owners beyond the MCP entry.
+func codegraphVerifyExtras(agent string) bool {
 	switch agent {
-	case "claude":
-		cp := util.ClaudeCodePaths()
-		raw, ok := util.ReadFileSafe(cp.GlobalJSON)
-		if !ok {
-			return false
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			return false
-		}
-		if s, ok := cfg.Get("mcpServers"); ok {
-			if sm, ok := s.(*util.OrderedMap); ok {
-				_, has := sm.Get("codegraph")
-				return has
-			}
-		}
-		return false
-	case "opencode":
-		op := util.OpenCodePathsResolved()
-		raw, ok := util.ReadFileSafe(op.Config)
-		if !ok {
-			return false
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			return false
-		}
-		if m, ok := cfg.Get("mcp"); ok {
-			if mm, ok := m.(*util.OrderedMap); ok {
-				_, has := mm.Get("codegraph")
-				return has
-			}
-		}
-		return false
-	case "codex":
-		cx := util.CodexPathsResolved()
-		raw, _ := util.ReadFileSafe(cx.Config)
-		return strings.Contains(raw, "[mcp_servers.codegraph]")
 	case "antigravity":
 		agents.CleanupDeadIdeHooks()
-		return agents.AntigravityMcpHas("codegraph") && agents.HasAntigravityCodegraphIndexHook()
+		return agents.HasAntigravityCodegraphIndexHook()
 	case "copilot":
-		return agents.CopilotMcpHas("codegraph") && agents.HasCopilotCodegraphIndexHook() &&
-			agents.CopilotIdeMcpHas("codegraph") && agents.HasCopilotIdeCodegraphIndexHook()
+		return agents.HasCopilotCodegraphIndexHook() && agents.HasCopilotIdeCodegraphIndexHook()
 	case "droid":
-		return agents.DroidMcpHas("codegraph") && agents.HasDroidCodegraphIndexHook()
+		return agents.HasDroidCodegraphIndexHook()
 	case "pi":
-		return agents.PiMcpHas("codegraph") && piCodegraphIndexExtensionPresent()
+		return piCodegraphIndexExtensionPresent()
 	case "omp":
-		return agents.OmpMcpHas("codegraph") && HasOwner("omp", "codegraph")
+		return HasOwner("omp", "codegraph")
 	case "grok":
-		return agents.GrokMcpHas("codegraph") && HasOwner("grok", "codegraph")
+		return HasOwner("grok", "codegraph")
 	case "kilo":
-		expected := util.WrapAutoIndex("kilo", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-		return agents.KiloMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && kiloHasOwner("codegraph")
+		return kiloHasOwner("codegraph")
 	case "cline":
-		expected := util.WrapAutoIndex("cline", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-		return agents.ClineMcpMatches("codegraph", append([]string{expected.Command}, expected.Args...)) && HasOwner("cline", "codegraph")
+		return HasOwner("cline", "codegraph")
+	case "cursor":
+		return agents.HasCursorCodegraphIndexHook()
 	}
-	return false
+	return true
 }
 
 func codegraphIndexProject(dir string, opts core.RunOpts) (bool, error) {
@@ -494,6 +441,17 @@ func writeCodegraphBlock(agent string) bool {
 	return WriteOwner(agent, "codegraph")
 }
 
+func unwireMcpOwner(agent, tool string) core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			return true, nil
+		}
+		mcpRemove(agent, tool)
+		RemoveOwner(agent, tool)
+		return true, nil
+	}
+}
+
 func unwireAutoIndex(agent string) {
 	switch agent {
 	case "claude":
@@ -556,6 +514,7 @@ var codegraph = &core.ToolManifest{
 		"omp":   codegraphWire("omp"),
 		"kilo":  codegraphWire("kilo"),
 		"cline": codegraphWire("cline"),
+		"amp":   codegraphWire("amp"), "kimi": codegraphWire("kimi"), "cmd": codegraphWire("cmd"), "dsh": codegraphWire("dsh"), "zcode": codegraphWire("zcode"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude": func(core.RunOpts) (bool, error) {
@@ -667,14 +626,13 @@ var codegraph = &core.ToolManifest{
 			RemoveOwner("cline", "codegraph")
 			return true, nil
 		},
+		"amp": unwireMcpOwner("amp", "codegraph"), "kimi": unwireMcpOwner("kimi", "codegraph"), "cmd": unwireMcpOwner("cmd", "codegraph"), "dsh": unwireMcpOwner("dsh", "codegraph"), "zcode": unwireMcpOwner("zcode", "codegraph"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
-		"claude":   func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
-		"opencode": func() *bool { return core.BoolPtr(codegraphVerify("opencode")) },
-		"codex":    func() *bool { return core.BoolPtr(codegraphVerify("codex")) },
-		"cursor": func() *bool {
-			return core.BoolPtr(agents.CursorMcpHas("codegraph") && agents.HasCursorMcpPermissions("codegraph") && agents.HasCursorCodegraphIndexHook())
-		},
+		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
+		"opencode":    func() *bool { return core.BoolPtr(codegraphVerify("opencode")) },
+		"codex":       func() *bool { return core.BoolPtr(codegraphVerify("codex")) },
+		"cursor":      func() *bool { return core.BoolPtr(codegraphVerify("cursor")) },
 		"antigravity": func() *bool { return core.BoolPtr(codegraphVerify("antigravity")) },
 		"copilot":     func() *bool { return core.BoolPtr(codegraphVerify("copilot")) },
 		"droid":       func() *bool { return core.BoolPtr(codegraphVerify("droid")) },
@@ -683,5 +641,12 @@ var codegraph = &core.ToolManifest{
 		"omp":         func() *bool { return core.BoolPtr(codegraphVerify("omp")) },
 		"kilo":        func() *bool { return core.BoolPtr(codegraphVerify("kilo")) },
 		"cline":       func() *bool { return core.BoolPtr(codegraphVerify("cline")) },
+		"amp":         func() *bool { return core.BoolPtr(codegraphVerify("amp")) }, "kimi": func() *bool { return core.BoolPtr(codegraphVerify("kimi")) }, "cmd": func() *bool { return core.BoolPtr(codegraphVerify("cmd")) }, "dsh": func() *bool { return core.BoolPtr(codegraphVerify("dsh")) }, "zcode": func() *bool { return core.BoolPtr(codegraphVerify("zcode")) },
+	},
+	WiredAnyFor: map[string]core.VerifyFn{
+		"claude":   func() *bool { return core.BoolPtr(mcpHas("claude", "codegraph", true)) },
+		"opencode": func() *bool { return core.BoolPtr(mcpHas("opencode", "codegraph", true)) },
+		"codex":    func() *bool { return core.BoolPtr(mcpHas("codex", "codegraph", true)) }, "cursor": func() *bool { return core.BoolPtr(mcpHas("cursor", "codegraph", true)) }, "antigravity": func() *bool { return core.BoolPtr(mcpHas("antigravity", "codegraph", true)) }, "copilot": func() *bool { return core.BoolPtr(mcpHas("copilot", "codegraph", true)) }, "droid": func() *bool { return core.BoolPtr(mcpHas("droid", "codegraph", true)) }, "grok": func() *bool { return core.BoolPtr(mcpHas("grok", "codegraph", true)) }, "pi": func() *bool { return core.BoolPtr(mcpHas("pi", "codegraph", true)) }, "omp": func() *bool { return core.BoolPtr(mcpHas("omp", "codegraph", true)) }, "kilo": func() *bool { return core.BoolPtr(mcpHas("kilo", "codegraph", true)) }, "cline": func() *bool { return core.BoolPtr(mcpHas("cline", "codegraph", true)) },
+		"amp": func() *bool { return core.BoolPtr(mcpHas("amp", "codegraph", true)) }, "kimi": func() *bool { return core.BoolPtr(mcpHas("kimi", "codegraph", true)) }, "cmd": func() *bool { return core.BoolPtr(mcpHas("cmd", "codegraph", true)) }, "dsh": func() *bool { return core.BoolPtr(mcpHas("dsh", "codegraph", true)) }, "zcode": func() *bool { return core.BoolPtr(mcpHas("zcode", "codegraph", true)) },
 	},
 }

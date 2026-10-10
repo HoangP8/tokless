@@ -53,7 +53,7 @@ func TestContextModeForeignMcpEntryFailsVerify(t *testing.T) {
 			agent:   "codex",
 			paths:   []string{util.CodexPathsResolved().Config},
 			foreign: "[mcp_servers.context_mode]\ncommand = \"context-mode\"\nargs = []\n",
-			verify:  ctxVerifyCodex,
+			verify:  func() bool { return mcpHas("codex", "context-mode", false) },
 			wire:    func() bool { ok, _ := ctxWireCodex(core.RunOpts{}); return ok },
 		},
 		{
@@ -219,17 +219,6 @@ func TestContextModeCodexLegacyHyphenFailsVerify(t *testing.T) {
 	}
 	if !ctxVerifyCodex() {
 		t.Fatal("after wire, hyphen block removed but verify still fails")
-	}
-}
-
-// TestParseCodexContextModeBlock covers the small raw TOML parser.
-func TestParseCodexContextModeBlock(t *testing.T) {
-	b := parseCodexContextModeBlock("[mcp_servers.context_mode]\ncommand = \"tokless\"\nargs = [\"run-mcp\", \"--context-mode\", \"npx\"]\nenabled = true # keep\n")
-	if b.command != "tokless" {
-		t.Fatalf("command = %q", b.command)
-	}
-	if !mcpStrArrEq(b.args, []string{"run-mcp", "--context-mode", "npx"}) {
-		t.Fatalf("args = %#v", b.args)
 	}
 }
 

@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,7 +109,7 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		WriteOwner("claude", "context-mode")
 		return ctxVerifyClaude(), nil
 	}
-	agents.ConfigureClaudeMcp("context-mode")
+	mcpConfigure("claude", "context-mode")
 	agents.AllowClaudeMcpToolProjectLocal("context-mode")
 	WriteOwner("claude", "context-mode")
 	util.L.Sub(util.C.Dim("tip: to enable slash commands, type inside Claude Code: /plugin marketplace add mksglu/context-mode && /plugin install context-mode@context-mode"))
@@ -129,7 +128,7 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	cfg := loadOrdered(op.Config)
 	removeContextModePlugin(cfg)
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
-	agents.ConfigureOpenCodeMcp("context-mode")
+	mcpConfigure("opencode", "context-mode")
 	WriteOwner("opencode", "context-mode")
 	if isTest() {
 		return ctxVerifyOpenCode(), nil
@@ -143,17 +142,15 @@ func ctxWireKilo(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	spawn := util.PickMcpSpawn("context-mode")
-	expected := append([]string{spawn.Command}, spawn.Args...)
-	if _, _, err := agents.ConfigureKiloMcpSafe("context-mode", expected); err != nil {
-		return false, err
+	if !mcpConfigure("kilo", "context-mode") {
+		return false, nil
 	}
 	kiloWriteOwner("context-mode")
-	return agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode"), nil
+	return mcpHas("kilo", "context-mode", false) && kiloHasOwner("context-mode"), nil
 }
 
 func ctxUnwireKilo(core.RunOpts) (bool, error) {
-	if !agents.RemoveKiloMcp("context-mode") {
+	if !mcpRemove("kilo", "context-mode") {
 		return false, nil
 	}
 	kiloRemoveOwner("context-mode")
@@ -164,17 +161,15 @@ func ctxWireCline(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	spawn := util.PickMcpSpawn("context-mode")
-	expected := append([]string{spawn.Command}, spawn.Args...)
-	if _, _, err := agents.ConfigureClineMcpSafe("context-mode", expected); err != nil {
-		return false, err
+	if !mcpConfigure("cline", "context-mode") {
+		return false, nil
 	}
 	WriteOwner("cline", "context-mode")
-	return agents.ClineMcpMatches("context-mode", expected) && HasOwner("cline", "context-mode"), nil
+	return mcpHas("cline", "context-mode", false) && HasOwner("cline", "context-mode"), nil
 }
 
 func ctxUnwireCline(core.RunOpts) (bool, error) {
-	if !agents.RemoveClineMcp("context-mode") {
+	if !mcpRemove("cline", "context-mode") {
 		return false, nil
 	}
 	RemoveOwner("cline", "context-mode")
@@ -247,23 +242,20 @@ func ctxWireCodex(opts core.RunOpts) (bool, error) {
 func wireCodexManual() bool {
 	cx := util.CodexPathsResolved()
 	_ = util.EnsureDir(cx.Dir)
-	raw, _ := util.ReadFileSafe(cx.Config)
-	raw = util.RemoveBlock(raw, "mcp_servers.context-mode")
-	spawn := util.PickMcpSpawn("context-mode")
-	block := util.NewTomlBlock("mcp_servers.context_mode")
-	block.Set("command", spawn.Command)
-	if len(spawn.Args) > 0 {
-		block.Set("args", spawn.Args)
+	if raw, ok := util.ReadFileSafe(cx.Config); ok {
+		if next := util.RemoveBlock(raw, "mcp_servers.context-mode"); next != raw {
+			_ = util.WriteFile(cx.Config, next)
+		}
 	}
-	block.Set("enabled", true)
-	block.Set("default_tools_approval_mode", "approve")
-	_ = util.WriteFile(cx.Config, util.UpsertBlock(raw, block, false))
+	if !mcpConfigure("codex", "context-mode") {
+		return false
+	}
 
 	cleanupCodexContextModeHooks()
 	cleanupWorkspaceCodexContextModeMcp(cx.Dir)
 	writeCodexAgentsMd()
 
-	return ctxVerifyCodex()
+	return mcpHas("codex", "context-mode", false)
 }
 
 // writeCodexAgentsMd writes the unified TOKLESS block with context-mode as one owner.
@@ -393,7 +385,7 @@ func ctxUnwireClaude(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	agents.RemoveClaudeMcp("context-mode")
+	mcpRemove("claude", "context-mode")
 	RemoveOwner("claude", "context-mode")
 	return true, nil
 }
@@ -405,6 +397,7 @@ func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) {
 	op := util.OpenCodePathsResolved()
 	raw, ok := util.ReadFileSafe(op.Config)
 	if !ok {
+		mcpRemove("opencode", "context-mode")
 		RemoveOwner("opencode", "context-mode")
 		return true, nil
 	}
@@ -429,6 +422,7 @@ func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) {
 		}
 	}
 	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	mcpRemove("opencode", "context-mode")
 	RemoveOwner("opencode", "context-mode")
 	return true, nil
 }
@@ -437,14 +431,7 @@ func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	cx := util.CodexPathsResolved()
-	if raw, ok := util.ReadFileSafe(cx.Config); ok {
-		next := util.RemoveBlock(raw, "mcp_servers.context-mode")
-		next = util.RemoveBlock(next, "mcp_servers.context_mode")
-		if next != raw {
-			_ = util.WriteFile(cx.Config, next)
-		}
-	}
+	mcpRemove("codex", "context-mode")
 	cleanupCodexContextModeHooks()
 	RemoveOwner("codex", "context-mode")
 	return true, nil
@@ -457,12 +444,12 @@ func ctxWireGrok(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would add bounded context-mode MCP to Grok")
 		return true, nil
 	}
-	if _, _, err := agents.ConfigureGrokMcp("context-mode"); err != nil {
-		return false, err
+	if !mcpConfigure("grok", "context-mode") {
+		return false, nil
 	}
 	WriteOwner("grok", "context-mode")
 	if !HasOwner("grok", "context-mode") {
-		_, _ = agents.RemoveGrokMcp("context-mode")
+		mcpRemove("grok", "context-mode")
 		return false, nil
 	}
 	return ctxVerifyGrok(), nil
@@ -472,8 +459,8 @@ func ctxUnwireGrok(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	if _, err := agents.RemoveGrokMcp("context-mode"); err != nil {
-		return false, err
+	if !mcpRemove("grok", "context-mode") {
+		return false, nil
 	}
 	RemoveOwner("grok", "context-mode")
 	return true, nil
@@ -486,14 +473,14 @@ func ctxWireDroid(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would: add context-mode MCP to ~/.factory/mcp.json + AGENTS.md")
 		return true, nil
 	}
-	agents.ConfigureDroidMcp("context-mode")
+	mcpConfigure("droid", "context-mode")
 	agents.RemoveDroidCtxModePreToolUse()
 	WriteOwner("droid", "context-mode")
 	return ctxVerifyDroid(), nil
 }
 
 func ctxUnwireDroid(opts core.RunOpts) (bool, error) {
-	agents.RemoveDroidMcp("context-mode")
+	mcpRemove("droid", "context-mode")
 	agents.RemoveDroidCtxModePreToolUse()
 	RemoveOwner("droid", "context-mode")
 	return true, nil
@@ -560,6 +547,13 @@ func ctxWiredAnyOpenCode() bool {
 			if _, has := mm.Get("context-mode"); has {
 				return true
 			}
+			if servers, ok := mm.Get("servers"); ok {
+				if sm, ok := servers.(*util.OrderedMap); ok {
+					if _, has := sm.Get("context-mode"); has {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false
@@ -574,8 +568,6 @@ func ctxWiredAnyCodex() bool {
 	return strings.Contains(raw, "[mcp_servers.context_mode]") || strings.Contains(raw, "[mcp_servers.context-mode]")
 }
 
-// --- Antigravity (MCP + GEMINI.md, no PreToolUse hook) ---
-
 const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
@@ -583,7 +575,7 @@ func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would add context-mode MCP and GEMINI.md for antigravity")
 		return true, nil
 	}
-	agents.ConfigureAntigravityMcp("context-mode")
+	mcpConfigure("antigravity", "context-mode")
 	agents.CleanupLegacyAntigravityContextMode()
 	agents.CleanupDeadIdeHooks()
 	agents.RemoveAntigravityEntry("command(echo)")
@@ -597,7 +589,7 @@ func ctxUnwireAntigravity(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would remove context-mode MCP and GEMINI.md")
 		return true, nil
 	}
-	agents.RemoveAntigravityMcp("context-mode")
+	mcpRemove("antigravity", "context-mode")
 	agents.CleanupLegacyAntigravityContextMode()
 	agents.CleanupDeadIdeHooks()
 	agents.RemoveAntigravityContextModeHook()
@@ -623,11 +615,8 @@ func ctxWireCopilot(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	err := withCopilotTransaction(func() error {
-		if _, _, err := agents.ConfigureCopilotMcpSafe("context-mode"); err != nil {
-			return err
-		}
-		if _, _, err := agents.ConfigureCopilotIdeMcpSafe("context-mode"); err != nil {
-			return err
+		if reply := mcpAdapter("copilot").ConfigureMcp("context-mode"); reply.Err != nil {
+			return reply.Err
 		}
 		if err := agents.InstallCopilotContextModeHookSafe(); err != nil {
 			return err
@@ -654,11 +643,8 @@ func ctxUnwireCopilot(opts core.RunOpts) (bool, error) {
 		return true, nil
 	}
 	err := withCopilotTransaction(func() error {
-		if _, err := agents.RemoveCopilotMcpSafe("context-mode"); err != nil {
-			return err
-		}
-		if _, err := agents.RemoveCopilotIdeMcpSafe("context-mode"); err != nil {
-			return err
+		if reply := mcpAdapter("copilot").RemoveMcp("context-mode"); reply.Err != nil {
+			return reply.Err
 		}
 		if err := agents.RemoveCopilotContextModeHookSafe(); err != nil {
 			return err
@@ -683,50 +669,16 @@ func ctxVerifyClaude() bool {
 	return claudeMcpBounded("context-mode")
 }
 
-func ctxVerifyOpenCode() bool {
-	op := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(op.Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	// Wire path removes the plugin and writes bounded MCP entry, so plugin
-	// presence = bypass = fail.
-	if pv, ok := cfg.Get("plugin"); ok {
-		if arr, ok := pv.([]any); ok {
-			for _, p := range arr {
-				if s, ok := p.(string); ok && pluginIsContextMode(s) {
-					return false
-				}
-			}
-		}
-	}
-	return openCodeMcpBounded("context-mode")
-}
-
 func ctxVerifyCodex() bool {
 	cx := util.CodexPathsResolved()
 	raw, ok := util.ReadFileSafe(cx.Config)
 	if !ok {
 		return false
 	}
-	// Legacy hyphen block must not exist — wire path writes the underscore block only.
 	if strings.Contains(raw, "[mcp_servers.context-mode]") {
 		return false
 	}
-	spawn := util.McpSpawnFor("context-mode")
-	blockText, hasBlock := util.BlockText(raw, "mcp_servers.context_mode")
-	if !hasBlock {
-		return false
-	}
-	b := parseCodexContextModeBlock(blockText)
-	if b.command != spawn.Command {
-		return false
-	}
-	if !mcpStrArrEq(b.args, spawn.Args) {
+	if !mcpHas("codex", "context-mode", false) {
 		return false
 	}
 	agentsRaw, ok := util.ReadFileSafe(cx.Instructions)
@@ -751,80 +703,28 @@ func ctxVerifyCodex() bool {
 	return true
 }
 
-// codexCtxModeBlock holds the parsed command/args from a [mcp_servers.context_mode] block.
-type codexCtxModeBlock struct {
-	command string
-	args    any
-}
-
-// parseCodexContextModeBlock extracts command and args fields from a TOML block text.
-func parseCodexContextModeBlock(blockText string) codexCtxModeBlock {
-	var b codexCtxModeBlock
-	for _, line := range strings.Split(blockText, "\n") {
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "#") || t == "" {
-			continue
-		}
-		if k, v, ok := strings.Cut(t, "="); ok {
-			k = strings.TrimSpace(k)
-			v = strings.TrimSpace(stripTomlCommentLocal(v))
-			switch k {
-			case "command":
-				if s, err := strconv.Unquote(v); err == nil {
-					b.command = s
-				}
-			case "args":
-				if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
-					if elems := parseTomlArgsArray(v); elems != nil {
-						b.args = toAny(elems)
-					}
+func ctxVerifyOpenCode() bool {
+	op := util.OpenCodePathsResolved()
+	raw, ok := util.ReadFileSafe(op.Config)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	if pv, ok := cfg.Get("plugin"); ok {
+		if arr, ok := pv.([]any); ok {
+			for _, p := range arr {
+				if s, ok := p.(string); ok && pluginIsContextMode(s) {
+					return false
 				}
 			}
 		}
 	}
-	return b
-}
-
-// parseTomlArgsArray parses a double-quoted TOML array string into []string.
-func parseTomlArgsArray(v string) []string {
-	var arr []string
-	if err := json.Unmarshal([]byte(v), &arr); err != nil {
-		return nil
-	}
-	return arr
-}
-
-// stripTomlCommentLocal strips a trailing # comment, respecting quoted strings.
-func stripTomlCommentLocal(t string) string {
-	inStr, inLiteral, esc := false, false, false
-	for i := 0; i < len(t); i++ {
-		c := t[i]
-		if inStr {
-			if esc {
-				esc = false
-			} else if c == '\\' {
-				esc = true
-			} else if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		if inLiteral {
-			if c == '\'' {
-				inLiteral = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-		case '\'':
-			inLiteral = true
-		case '#':
-			return strings.TrimRight(t[:i], " \t")
-		}
-	}
-	return t
+	spawn := util.PickMcpSpawn("context-mode")
+	command := append([]string{spawn.Command}, spawn.Args...)
+	return agents.OpenCodeMcpMatches(cfg, "context-mode", command)
 }
 
 func codexHookDirs(activeCodexDir string) []string {
@@ -872,13 +772,10 @@ var contextMode = &core.ToolManifest{
 			if opts.DryRun {
 				return true, nil
 			}
-			if changed, _ := agents.ConfigureCursorMcp("context-mode"); !changed && !agents.CursorMcpHas("context-mode") {
+			if !mcpConfigure("cursor", "context-mode") {
 				return false, nil
 			}
-			if !agents.ConfigureCursorMcpPermissions("context-mode") {
-				return false, nil
-			}
-			return agents.CursorMcpHas("context-mode") && agents.HasCursorMcpPermissions("context-mode"), nil
+			return mcpHas("cursor", "context-mode", false), nil
 		},
 		"antigravity": ctxWireAntigravity,
 		"copilot":     ctxWireCopilot,
@@ -890,10 +787,9 @@ var contextMode = &core.ToolManifest{
 				return true, nil
 			}
 			agents.PiPurgeContextModePackages()
-			if !agents.PiRemoveMcpAdapter() {
+			if !mcpConfigure("pi", "context-mode") {
 				return false, nil
 			}
-			agents.ConfigurePiMcp("context-mode")
 			WriteOwner("pi", "context-mode")
 			return ctxVerifyPi(), nil
 		},
@@ -902,8 +798,7 @@ var contextMode = &core.ToolManifest{
 				util.L.Sub("[dry-run] would add Context-Mode MCP to ~/.omp/agent/mcp.json")
 				return true, nil
 			}
-			agents.ConfigureOmpMcp("context-mode")
-			if !agents.OmpMcpHas("context-mode") {
+			if !mcpConfigure("omp", "context-mode") {
 				return false, nil
 			}
 			WriteOwner("omp", "context-mode")
@@ -911,6 +806,7 @@ var contextMode = &core.ToolManifest{
 		},
 		"kilo":  ctxWireKilo,
 		"cline": ctxWireCline,
+		"amp":   ctxWireHarness("amp"), "kimi": ctxWireHarness("kimi"), "cmd": ctxWireHarness("cmd"), "dsh": ctxWireHarness("dsh"), "zcode": ctxWireHarness("zcode"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":   ctxUnwireClaude,
@@ -920,7 +816,7 @@ var contextMode = &core.ToolManifest{
 			if opts.DryRun {
 				return true, nil
 			}
-			if !agents.RemoveCursorMcp("context-mode") || !agents.RemoveCursorMcpPermissions("context-mode") {
+			if !mcpRemove("cursor", "context-mode") {
 				return false, nil
 			}
 			RemoveOwner("cursor", "context-mode")
@@ -932,12 +828,12 @@ var contextMode = &core.ToolManifest{
 		"grok":        ctxUnwireGrok,
 		"pi": func(opts core.RunOpts) (bool, error) {
 			agents.PiPurgeContextModePackages()
-			agents.RemovePiMcp("context-mode")
+			mcpRemove("pi", "context-mode")
 			RemoveOwner("pi", "context-mode")
 			return true, nil
 		},
 		"omp": func(core.RunOpts) (bool, error) {
-			if !agents.RemoveOmpMcp("context-mode") {
+			if !mcpRemove("omp", "context-mode") {
 				return false, nil
 			}
 			RemoveOwner("omp", "context-mode")
@@ -945,6 +841,7 @@ var contextMode = &core.ToolManifest{
 		},
 		"kilo":  ctxUnwireKilo,
 		"cline": ctxUnwireCline,
+		"amp":   ctxUnwireHarness("amp"), "kimi": ctxUnwireHarness("kimi"), "cmd": ctxUnwireHarness("cmd"), "dsh": ctxUnwireHarness("dsh"), "zcode": ctxUnwireHarness("zcode"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":   func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
@@ -971,16 +868,52 @@ var contextMode = &core.ToolManifest{
 			expected := append([]string{spawn.Command}, spawn.Args...)
 			return core.BoolPtr(agents.ClineMcpMatches("context-mode", expected) && HasOwner("cline", "context-mode"))
 		},
+		"amp": func() *bool {
+			return core.BoolPtr(mcpHas("amp", "context-mode", false) && HasOwner("amp", "context-mode"))
+		}, "kimi": func() *bool {
+			return core.BoolPtr(mcpHas("kimi", "context-mode", false) && HasOwner("kimi", "context-mode"))
+		}, "cmd": func() *bool {
+			return core.BoolPtr(mcpHas("cmd", "context-mode", false) && HasOwner("cmd", "context-mode"))
+		}, "dsh": func() *bool {
+			return core.BoolPtr(mcpHas("dsh", "context-mode", false) && HasOwner("dsh", "context-mode"))
+		}, "zcode": func() *bool {
+			return core.BoolPtr(mcpHas("zcode", "context-mode", false) && HasOwner("zcode", "context-mode"))
+		},
 	},
 	WiredAnyFor: map[string]core.VerifyFn{
-		"claude":      func() *bool { return core.BoolPtr(ctxWiredAnyClaude()) },
-		"opencode":    func() *bool { return core.BoolPtr(ctxWiredAnyOpenCode()) },
-		"codex":       func() *bool { return core.BoolPtr(ctxWiredAnyCodex()) },
+		"claude":   func() *bool { return core.BoolPtr(ctxWiredAnyClaude()) },
+		"opencode": func() *bool { return core.BoolPtr(ctxWiredAnyOpenCode()) },
+		"codex":    func() *bool { return core.BoolPtr(ctxWiredAnyCodex()) },
+		"cursor":   func() *bool { return core.BoolPtr(mcpHas("cursor", "context-mode", true)) }, "grok": func() *bool { return core.BoolPtr(mcpHas("grok", "context-mode", true)) }, "omp": func() *bool { return core.BoolPtr(mcpHas("omp", "context-mode", true)) }, "kilo": func() *bool { return core.BoolPtr(mcpHas("kilo", "context-mode", true)) }, "cline": func() *bool { return core.BoolPtr(mcpHas("cline", "context-mode", true)) },
 		"droid":       func() *bool { return core.BoolPtr(agents.DroidMcpHas("context-mode")) },
 		"pi":          func() *bool { return core.BoolPtr(agents.PiMcpHas("context-mode")) },
 		"antigravity": func() *bool { return core.BoolPtr(agents.AntigravityMcpHas("context-mode")) },
 		"copilot":     func() *bool { return core.BoolPtr(agents.CopilotMcpHas("context-mode")) },
+		"amp":         func() *bool { return core.BoolPtr(mcpHas("amp", "context-mode", true)) }, "kimi": func() *bool { return core.BoolPtr(mcpHas("kimi", "context-mode", true)) }, "cmd": func() *bool { return core.BoolPtr(mcpHas("cmd", "context-mode", true)) }, "dsh": func() *bool { return core.BoolPtr(mcpHas("dsh", "context-mode", true)) }, "zcode": func() *bool { return core.BoolPtr(mcpHas("zcode", "context-mode", true)) },
 	},
+}
+
+func ctxWireHarness(agent string) core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			return true, nil
+		}
+		if !mcpConfigure(agent, "context-mode") {
+			return false, nil
+		}
+		WriteOwner(agent, "context-mode")
+		return mcpHas(agent, "context-mode", false) && HasOwner(agent, "context-mode"), nil
+	}
+}
+func ctxUnwireHarness(agent string) core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			return true, nil
+		}
+		mcpRemove(agent, "context-mode")
+		RemoveOwner(agent, "context-mode")
+		return true, nil
+	}
 }
 
 // Register wires all tools into the core registry, in canonical order.
@@ -993,6 +926,8 @@ func Register() {
 	core.RegisterTool(headroom)
 	core.RegisterTool(ponytail)
 	core.RegisterTool(projectmem)
+	core.RegisterTool(principles)
+	WireHeadroomTools()
 }
 
 // helpers shared in tools package

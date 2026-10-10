@@ -181,17 +181,64 @@ func TestInjectCodegraphPathSkipsNonProjectDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty := t.TempDir()
+	empty, cleanup := createTempOutsideTmpDir(t)
 	if err := os.Chdir(empty); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chdir(oldDir) })
+	t.Cleanup(func() {
+		_ = os.Chdir(oldDir)
+		cleanup()
+	})
 
 	argv := []string{"codegraph", "serve", "--mcp"}
 	got := injectCodegraphPath(argv)
 	if len(got) != len(argv) {
 		t.Fatalf("argv mutated in non-project dir: got %v, want %v", got, argv)
 	}
+}
+
+func createTempOutsideTmpDir(t *testing.T) (dir string, cleanup func()) {
+	t.Helper()
+	candidates := []string{
+		filepath.Join(os.TempDir(), "tokless-test-nonproject"),
+		filepath.Join(os.Getenv("HOME"), ".cache", "tokless-test-nonproject"),
+		filepath.Join(os.Getenv("HOME"), ".local", "share", "tokless-test-nonproject"),
+	}
+	var root string
+	for _, c := range candidates {
+		if !isCleanAncestor(c) {
+			continue
+		}
+		if err := os.MkdirAll(c, 0o755); err != nil {
+			continue
+		}
+		root = c
+		break
+	}
+	if root == "" {
+		t.Skipf("no clean writable temp base found (ancestor .projectmem/.git pollution or permissions)")
+	}
+	sub, err := os.MkdirTemp(root, "empty-*")
+	if err != nil {
+		os.RemoveAll(root)
+		t.Fatal(err)
+	}
+	return sub, func() { os.RemoveAll(root) }
+}
+
+func isCleanAncestor(path string) bool {
+	dir := filepath.Clean(path)
+	for {
+		if looksLikeProject(dir) {
+			return false
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return true
 }
 
 func TestRunMcpDoesNotSyncExistingCodegraph(t *testing.T) {

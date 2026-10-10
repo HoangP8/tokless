@@ -601,6 +601,26 @@ func TestProjectmemSessionPushWiring(t *testing.T) {
 	}
 }
 
+func TestProjectmemOpenCodeWritesV1AndV2Plugins(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("TOKLESS_TEST", "1")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if !writeProjectmemExtension("opencode") { t.Fatal("write projectmem extension") }
+	for path, markers := range map[string][]string{projectmemExtensionPath("opencode"): {projectmemExtensionMarker}, filepath.Join(util.OpenCodePathsResolved().PluginsDir, "projectmem-context-v2.ts"): {"export default", "async setup", `ctx.session.hook("context"`, "event.system.push"}} {
+		raw, ok := util.ReadFileSafe(path); if !ok { t.Fatalf("missing plugin %s", path) }
+		for _, marker := range markers { if !strings.Contains(raw, marker) { t.Errorf("%s missing %q", path, marker) } }
+	}
+	projectmemRemoveSessionPush("opencode")
+	for _, path := range []string{projectmemExtensionPath("opencode"), filepath.Join(util.OpenCodePathsResolved().PluginsDir, "projectmem-context-v2.ts")} {
+		if util.Exists(path) {
+			t.Fatalf("plugin survived session-push removal: %s", path)
+		}
+	}
+}
+
 func TestProjectmemGitExcludeAddsOnce(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
@@ -640,7 +660,6 @@ func TestProjectmemForeignMcpEntryFailsVerify(t *testing.T) {
 		config string
 	}{
 		{"claude", []string{util.ClaudeCodePaths().GlobalJSON}, `{"mcpServers":{"projectmem":{"command":"/usr/bin/foreign-mcp","args":["--stdio"]}}}`},
-		{"opencode", []string{util.OpenCodePathsResolved().Config}, `{"mcp":{"projectmem":{"command":["/usr/bin/foreign-mcp","--stdio"]}}}`},
 		{"copilot", []string{util.CopilotPathsResolved().McpConfig}, `{"mcpServers":{"projectmem":{"command":"/usr/bin/foreign-mcp","args":["--stdio"]}}}`},
 		{"antigravity", []string{util.AntigravityPathsResolved().McpConfigCLI, filepath.Join(util.Home(), ".gemini", "antigravity-cli", "mcp_config.json")}, `{"mcpServers":{"projectmem":{"command":"/usr/bin/foreign-mcp","trust":true}}}`},
 		{"droid", []string{filepath.Join(tmp, ".factory", "mcp.json")}, `{"mcpServers":{"projectmem":{"command":"/usr/bin/foreign-mcp","args":["--stdio"]}}}`},
