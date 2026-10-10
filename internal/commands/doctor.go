@@ -90,6 +90,9 @@ func doctorMissingTools(tools []*core.ToolManifest, agentID string) []string {
 		}
 		verify, ok := tool.VerifyFor[agentID]
 		if !ok {
+			if tool.ID == "codegraph" || tool.ID == "context-mode" || tool.ID == "projectmem" {
+				missing = append(missing, tool.Label)
+			}
 			continue
 		}
 		if r := verify(); r != nil && !*r {

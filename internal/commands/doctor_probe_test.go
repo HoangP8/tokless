@@ -171,10 +171,8 @@ func TestProbeMcpSpawnMissingOuter(t *testing.T) {
 }
 
 func TestProbeMcpSpawnCmdBatchMissing(t *testing.T) {
-	if _, err := exec.LookPath("cmd"); err != nil {
-		if _, err2 := exec.LookPath("cmd.exe"); err2 != nil {
-			t.Skip("cmd not available")
-		}
+	if runtime.GOOS != "windows" {
+		t.Skip("cmd batch probe is Windows-only; non-Windows 'cmd' may be a different binary")
 	}
 	detail := probeMcpSpawn("cmd", []string{"/c", "/no/such/dir/codegraph.CMD", "serve", "--mcp"})
 	if detail == "" || !strings.Contains(detail, "not found") {
@@ -405,7 +403,7 @@ func TestManagedRuntimeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := managedRuntimeFiles("opencode")
-	if len(files) != 1 || files[0].path != path {
+	if len(files) < 1 || files[0].path != path {
 		t.Fatalf("files = %+v", files)
 	}
 	if detail := probeRuntimeFile(files[0]); detail != "" {
@@ -413,6 +411,22 @@ func TestManagedRuntimeFiles(t *testing.T) {
 	}
 	if detail := probeRuntimeFile(runtimeFile{path: path, markers: []string{"missing"}}); !strings.Contains(detail, "invalid") {
 		t.Fatalf("invalid detail = %q", detail)
+	}
+}
+
+func TestManagedRuntimeFilesInstructionAgents(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	for _, agentID := range []string{"amp", "kimi", "dsh", "zcode"} {
+		for _, file := range managedRuntimeFiles(agentID) {
+			for _, marker := range file.markers {
+				if strings.Contains(marker, "tokless:owners=") {
+					t.Fatalf("agent %s probes stale marker %q", agentID, marker)
+				}
+			}
+		}
 	}
 }
 
@@ -489,9 +503,8 @@ func TestProbeAgentRuntimeOpenCodeMcpMissingBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := exec.LookPath("cmd"); err != nil {
-		if _, err2 := exec.LookPath("cmd.exe"); err2 != nil {
-		}
+	if runtime.GOOS != "windows" {
+		t.Skip("cmd batch probe is Windows-only")
 	}
 
 	issues := probeAgentRuntime("opencode")

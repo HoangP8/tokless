@@ -510,6 +510,68 @@ func CursorPathsResolved() CursorPaths {
 
 func CursorGlobalMcpPath() string { return CursorPathsResolved().McpConfig }
 
+// ZcodePaths holds ZCode CLI paths.
+type ZcodePaths struct {
+	Dir, Config, Instructions, McpConfig string
+}
+
+func ZcodePathsResolved() ZcodePaths {
+	home := os.Getenv("ZCODE_DIST_HOME")
+	if strings.HasPrefix(home, "~/") {
+		home = filepath.Join(Home(), strings.TrimPrefix(home, "~/"))
+	}
+	if home == "" {
+		home = filepath.Join(Home(), ".zcode", "runtime")
+	}
+	return ZcodePaths{
+		Dir:          home,
+		Config:       filepath.Join(Home(), ".zcode", "cli", "config.json"),
+		Instructions: filepath.Join(Home(), ".zcode", "AGENTS.md"),
+		McpConfig:    filepath.Join(Home(), ".zcode", "cli", "config.json"),
+	}
+}
+
+// KimiPaths holds Kimi Code CLI paths.
+type KimiPaths struct {
+	Dir, Config, Instructions, McpConfig string
+}
+
+func KimiPathsResolved() KimiPaths {
+	home := os.Getenv("KIMI_CODE_HOME")
+	if strings.HasPrefix(home, "~/") {
+		home = filepath.Join(Home(), strings.TrimPrefix(home, "~/"))
+	}
+	if home == "" {
+		home = filepath.Join(Home(), ".kimi-code")
+	}
+	return KimiPaths{
+		Dir:          home,
+		Config:       filepath.Join(home, "config.toml"),
+		Instructions: filepath.Join(home, "AGENTS.md"),
+		McpConfig:    filepath.Join(home, "mcp.json"),
+	}
+}
+
+// AmpPaths holds Amp CLI paths.
+type AmpPaths struct {
+	Dir, Config, Instructions string
+}
+
+func AmpPathsResolved() AmpPaths {
+	dir := os.Getenv("AMP_CONFIG_DIR")
+	if strings.HasPrefix(dir, "~/") {
+		dir = filepath.Join(Home(), strings.TrimPrefix(dir, "~/"))
+	}
+	if dir == "" {
+		dir = filepath.Join(Home(), ".config", "amp")
+	}
+	return AmpPaths{
+		Dir:          dir,
+		Config:       filepath.Join(dir, "settings.json"),
+		Instructions: filepath.Join(dir, "AGENTS.md"),
+	}
+}
+
 // CopyDirMerge recursively copies src into dst, overwriting files.
 func CopyDirMerge(src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {

@@ -84,7 +84,7 @@ func helpText() string {
 		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n" +
 		"  " + cy("tokless proxy") + "      Manage the headroom HTTP proxy: up|down|status\n\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor\n" +
+		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor,amp,kimi,dsh,zcode\n" +
 		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode,headroom,projectmem\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
 		"  --verbose           Show every step\n\n" +
@@ -137,7 +137,7 @@ func proxyHelpText() string {
 		"  If you edit a managed setting, down refuses to overwrite it.\n\n" +
 		"  down --agents <list> leaves shared Headroom running for other agents.\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agents <list>    Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity (default: all; --agent alias)\n" +
+		"  --agents <list>    Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity,amp,kimi,dsh,zcode (default: all; --agent alias)\n" +
 		"  --dry-run          Show what would be wired without changing anything\n" +
 		"  --help             Show this help\n"
 }
@@ -253,8 +253,10 @@ func run() int {
 		switch os.Args[2] {
 		case "agy":
 			return commands.RunRtkHook()
-		case "codex", "claude", "omp":
+		case "codex", "claude", "omp", "zcode":
 			return commands.RunRtkHookCodex()
+		case "dsh":
+			return commands.RunRtkHookDsh()
 		case "copilot":
 			return commands.RunRtkHookCopilot()
 		case "droid":

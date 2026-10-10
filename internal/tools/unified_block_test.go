@@ -13,8 +13,8 @@ import (
 
 // Keep tests independent of package init order.
 func init() {
-	Register()
 	agents.Register()
+	Register()
 }
 
 func TestUnifiedBody_WiresAllOwnersAcrossAllAgents(t *testing.T) {

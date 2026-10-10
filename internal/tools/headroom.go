@@ -175,14 +175,13 @@ var headroom = &core.ToolManifest{
 	WireFor: map[string]core.AgentFn{}, UnwireFor: map[string]core.AgentFn{}, VerifyFor: map[string]core.VerifyFn{},
 }
 
-func init() {
-	// All registered agents are wired, but Register() runs from main after
-	// package init, so core.AgentIDs() is incomplete here. Enumerate the proxy-
-	// supported set explicitly; unregistered-but-supported agents are filtered
-	// by ProxyEndpointFor at wire time.
-	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline"} {
+// WireHeadroomTools wires proxy config after agents register.
+func WireHeadroomTools() {
+	for _, agent := range core.AgentIDs() {
 		headroom.WireFor[agent] = headroomWire(agent)
 		headroom.UnwireFor[agent] = headroomUnwire(agent)
-		headroom.VerifyFor[agent] = func(agent string) core.VerifyFn { return func() *bool { return core.BoolPtr(headroomVerify(agent)) } }(agent)
+		headroom.VerifyFor[agent] = func(agent string) core.VerifyFn {
+			return func() *bool { return core.BoolPtr(headroomVerify(agent)) }
+		}(agent)
 	}
 }

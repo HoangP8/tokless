@@ -13,7 +13,7 @@ import (
 // wired agents first (config-file injection), then manual/env agents.
 func ProxyAgentIDs() []string {
 	return []string{
-		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", // wired
+		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", "kimi", "cmd", "zcode", "dsh", // wired
 		"cursor", // manual / launch-env
 	}
 }

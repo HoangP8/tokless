@@ -91,6 +91,11 @@ var ponytail = &core.ToolManifest{
 		"omp":         ponytailWireFor("omp"),
 		"kilo":        ponytailKiloWire(),
 		"cline":       ponytailWireFor("cline"),
+		"amp":         ponytailWireFor("amp"),
+		"kimi":        ponytailWireFor("kimi"),
+		"cmd":         ponytailWireFor("cmd"),
+		"dsh":         ponytailWireFor("dsh"),
+		"zcode":       ponytailWireFor("zcode"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireFor("claude"),

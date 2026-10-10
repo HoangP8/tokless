@@ -19,15 +19,19 @@ type ProxyAgentSpec struct {
 }
 
 var proxyAgentSpecs = map[string]ProxyAgentSpec{
-	"claude":      {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired},
-	"omp":         {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
-	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired},
-	"opencode":    {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired},
-	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
-	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
-	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
-	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired},
-	"cline":       {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
+	"claude":   {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired},
+	"omp":      {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
+	"codex":    {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired},
+	"opencode": {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired},
+	"kilo":     {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
+	"pi":       {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
+	"droid":    {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
+	"copilot":  {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired},
+	"cline":    {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
+	"kimi":     {"kimi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKimiProxy, RemoveKimiProxy, KimiProxyWired},
+	"zcode": {"zcode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureZcodeProxy, RemoveZcodeProxy, ZcodeProxyWired},
+	"dsh":   {"dsh", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDshProxy, RemoveDshProxy, DshProxyWired},
+	"amp":         {"amp", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
 	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
 	"antigravity": {"antigravity", ProxyProtocolGeminiNative, ProxyWireManagedRoute, ConfigureAntigravityProxy, RemoveAntigravityProxy, AntigravityProxyWired},
 }
@@ -63,7 +67,11 @@ func ProxyAgentApplicable(id string) bool {
 // agent through the shared Headroom daemon. Grok owns its OAuth context in its
 // native CLI and must not share the generic OpenAI-compatible auth path.
 func ProxyAgentUsesHeadroom(id string) bool {
-	return id != "grok" && id != "cursor"
+	switch id {
+	case "grok", "cursor", "amp":
+		return false
+	}
+	return true
 }
 
 // ConfigureProxyAgent wires id to the headroom proxy. Returns true when the

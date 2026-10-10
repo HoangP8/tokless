@@ -33,6 +33,14 @@ func instructionPath(agent string) string {
 		return agents.GrokInstructionsFile()
 	case "cline":
 		return agents.ClineInstructionsPath()
+	case "kimi":
+		return util.KimiPathsResolved().Instructions
+	case "zcode":
+		return util.ZcodePathsResolved().Instructions
+	case "dsh":
+		return agents.DshInstructionsFile()
+	case "amp":
+		return util.AmpPathsResolved().Instructions
 	}
 	return ""
 }

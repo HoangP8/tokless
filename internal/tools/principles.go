@@ -90,6 +90,15 @@ var principles = &core.ToolManifest{
 			return kiloHasOwner("principles"), nil
 		},
 		"cline": principlesWireFor("cline"),
+		"droid": principlesWireFor("droid"),
+		"grok":  principlesWireFor("grok"),
+		"pi":    principlesWireFor("pi"),
+		"omp":   principlesWireFor("omp"),
+		"amp":   principlesWireFor("amp"),
+		"kimi":  principlesWireFor("kimi"),
+		"cmd":   principlesWireFor("cmd"),
+		"dsh":   principlesWireFor("dsh"),
+		"zcode": principlesWireFor("zcode"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      principlesUnwireFor("claude"),
@@ -102,6 +111,15 @@ var principles = &core.ToolManifest{
 			return true, nil
 		},
 		"cline": principlesUnwireFor("cline"),
+		"droid": principlesUnwireFor("droid"),
+		"grok":  principlesUnwireFor("grok"),
+		"pi":    principlesUnwireFor("pi"),
+		"omp":   principlesUnwireFor("omp"),
+		"amp":   principlesUnwireFor("amp"),
+		"kimi":  principlesUnwireFor("kimi"),
+		"cmd":   principlesUnwireFor("cmd"),
+		"dsh":   principlesUnwireFor("dsh"),
+		"zcode": principlesUnwireFor("zcode"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { v := principlesVerifyFor("claude")(); return &v },
@@ -113,5 +131,14 @@ var principles = &core.ToolManifest{
 			return core.BoolPtr(kiloHasOwner("principles"))
 		},
 		"cline": func() *bool { v := principlesVerifyFor("cline")(); return &v },
+		"droid": func() *bool { v := principlesVerifyFor("droid")(); return &v },
+		"grok":  func() *bool { v := principlesVerifyFor("grok")(); return &v },
+		"pi":    func() *bool { v := principlesVerifyFor("pi")(); return &v },
+		"omp":   func() *bool { v := principlesVerifyFor("omp")(); return &v },
+		"amp":   func() *bool { v := principlesVerifyFor("amp")(); return &v },
+		"kimi":  func() *bool { v := principlesVerifyFor("kimi")(); return &v },
+		"cmd":   func() *bool { v := principlesVerifyFor("cmd")(); return &v },
+		"dsh":   func() *bool { v := principlesVerifyFor("dsh")(); return &v },
+		"zcode": func() *bool { v := principlesVerifyFor("zcode")(); return &v },
 	},
 }

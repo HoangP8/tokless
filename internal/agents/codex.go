@@ -1776,6 +1776,10 @@ func Register() {
 	core.RegisterAgent(grok)
 	core.RegisterAgent(kilo)
 	core.RegisterAgent(cline)
+	core.RegisterAgent(kimi)
+	core.RegisterAgent(zcode)
+	core.RegisterAgent(dsh)
+	core.RegisterAgent(amp)
 }
 
 // --- projectmem SessionStart hook ---

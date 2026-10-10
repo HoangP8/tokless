@@ -21,6 +21,10 @@ type runtimeIssue struct {
 	detail string
 }
 
+func opencodeMajorVersionForDoctor() int {
+	return agents.OpenCodeInstalledMajor()
+}
+
 // probeAgentRuntime checks that wired hook/MCP commands can actually resolve
 // (and, where cheap, run). Catches Windows slash bugs that static VerifyFor miss.
 func probeAgentRuntime(agentID string) []runtimeIssue {
@@ -420,7 +424,11 @@ func managedRuntimeFiles(agentID string) []runtimeFile {
 	}
 	switch agentID {
 	case "opencode":
-		return []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
+		files := []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
+		if opencodeMajorVersionForDoctor() == 2 {
+			files = append(files, pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk-v2.ts"), "export default", "async setup", `ctx.tool.hook("execute.before"`))
+		}
+		return files
 	case "pi":
 		return []runtimeFile{pathFor(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
 	case "omp":
@@ -501,6 +509,10 @@ func managedMcpSpawns(agentID string) []util.McpSpawn {
 				}
 			}
 		}
+	case "kimi":
+		out = append(out, mcpFromCommandArgsFile(util.KimiPathsResolved().McpConfig, "mcpServers", "codegraph")...)
+	case "dsh":
+		out = append(out, mcpFromCommandArgsFile(filepath.Join(util.Home(), ".dsh", "mcp.json"), "mcpServers", "codegraph")...)
 	}
 	return out
 }

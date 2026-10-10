@@ -91,6 +91,11 @@ var caveman = &core.ToolManifest{
 		"omp":         cavemanWireFor("omp"),
 		"kilo":        cavemanKiloWire(),
 		"cline":       cavemanWireFor("cline"),
+		"amp":         cavemanWireFor("amp"),
+		"kimi":        cavemanWireFor("kimi"),
+		"cmd":         cavemanWireFor("cmd"),
+		"dsh":         cavemanWireFor("dsh"),
+		"zcode":       cavemanWireFor("zcode"),
 	},
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      cavemanUnwireFor("claude"),

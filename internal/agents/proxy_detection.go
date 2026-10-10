@@ -149,6 +149,12 @@ func DetectProxy(id string) ProxyDetection {
 		return detectCopilotProxy(capability)
 	case "cline":
 		return detectClineProxy(capability)
+	case "kimi":
+		return detectKimiProxy(capability)
+	case "zcode":
+		return detectZcodeProxy(capability)
+	case "dsh":
+		return detectDshProxy(capability)
 	case "cursor":
 		return proxyDetection(id, "manual configuration not observable", ProxyStateUnknown)
 	case "antigravity":
@@ -320,6 +326,81 @@ func detectManualEnv(cap ProxyCapability, key, endpoint string) ProxyDetection {
 }
 
 // detectAntigravityProxy validates the managed CLI launcher and IDE endpoint.
+// detectKimiProxy reports Kimi gateway state; unstashed gateway providers are conflicts.
+func detectKimiProxy(cap ProxyCapability) ProxyDetection {
+	if KimiProxyWired() {
+		return proxyDetection(cap.ID, "native OpenAI-compatible providers routed through Headroom", ProxyStateManaged)
+	}
+	path := util.KimiPathsResolved().Config
+	raw, err := readProxyConfig(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return proxyDetection(cap.ID, "config absent", ProxyStateAbsent)
+		}
+		return proxyDetection(cap.ID, "config unreadable", ProxyStateUnreadable)
+	}
+	if strings.TrimSpace(raw) == "" {
+		return proxyDetection(cap.ID, "config empty", ProxyStateUnconfigured)
+	}
+	if kimiHasGatewayProvider(raw) {
+		return proxyDetection(cap.ID, "provider points at BYOK gateway without a verified stash", ProxyStateConflict)
+	}
+	return proxyDetection(cap.ID, "OpenAI-compatible provider not routed through BYOK gateway", ProxyStateUnconfigured)
+}
+
+// detectZcodeProxy reports ZCode proxy state; unstashed proxy providers are conflicts.
+func detectZcodeProxy(cap ProxyCapability) ProxyDetection {
+	if ZcodeProxyWired() {
+		return proxyDetection(cap.ID, "native OpenAI-compatible providers routed through Headroom", ProxyStateManaged)
+	}
+	path := zcodeProviderConfigPath()
+	raw, err := readProxyConfig(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return proxyDetection(cap.ID, "config absent", ProxyStateAbsent)
+		}
+		return proxyDetection(cap.ID, "config unreadable", ProxyStateUnreadable)
+	}
+	if strings.TrimSpace(raw) == "" {
+		return proxyDetection(cap.ID, "config empty", ProxyStateUnconfigured)
+	}
+	if util.HasJSONCComments(raw) {
+		return proxyDetection(cap.ID, "comment-bearing config not safely inspectable", ProxyStateUnreadable)
+	}
+	if zcodeHasGatewayProvider(raw) {
+		if zcodeGatewayRecoverable(raw) {
+			return proxyDetection(cap.ID, "legacy gateway route recoverable from BYOK route table", ProxyStateUnconfigured)
+		}
+		return proxyDetection(cap.ID, "provider points at BYOK gateway without a verified stash", ProxyStateConflict)
+	}
+	return proxyDetection(cap.ID, "provider not routed through Headroom", ProxyStateUnconfigured)
+}
+
+// detectDshProxy reports DSH proxy state; unstashed proxy providers are conflicts.
+func detectDshProxy(cap ProxyCapability) ProxyDetection {
+	if DshProxyWired() {
+		return proxyDetection(cap.ID, "native OpenAI-compatible providers routed through Headroom", ProxyStateManaged)
+	}
+	path := dshPatchFile()
+	raw, err := readProxyConfig(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return proxyDetection(cap.ID, "cordis patch absent", ProxyStateAbsent)
+		}
+		return proxyDetection(cap.ID, "cordis patch unreadable", ProxyStateUnreadable)
+	}
+	if strings.TrimSpace(raw) == "" {
+		return proxyDetection(cap.ID, "cordis patch empty", ProxyStateUnconfigured)
+	}
+	if dshHasGatewayProvider(raw) {
+		if dshGatewayRecoverable(raw) {
+			return proxyDetection(cap.ID, "legacy gateway route recoverable from BYOK route table", ProxyStateUnconfigured)
+		}
+		return proxyDetection(cap.ID, "provider points at BYOK gateway without a verified stash", ProxyStateConflict)
+	}
+	return proxyDetection(cap.ID, "provider not routed through Headroom", ProxyStateUnconfigured)
+}
+
 func detectAntigravityProxy(cap ProxyCapability) ProxyDetection {
 	path := antigravityEnvFile()
 	raw, err := readProxyConfig(path)
