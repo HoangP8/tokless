@@ -241,6 +241,19 @@ func loadProxyRouteStash(agent string) map[string]proxyRouteStashEntry {
 	return loadProxyRouteStashLocked(agent)
 }
 
+// routeUpstreamToBaseURL restores the trimmed /v1 suffix for OpenAI-compatible routes.
+func routeUpstreamToBaseURL(upstream, api string) string {
+	upstream = strings.TrimRight(strings.TrimSpace(upstream), "/")
+	if upstream == "" {
+		return ""
+	}
+	if (api == "openai-completions" || api == "openai-responses") &&
+		!strings.HasSuffix(strings.ToLower(upstream), "/v1") {
+		return upstream + "/v1"
+	}
+	return upstream
+}
+
 func normalizedHeadroomUpstream(baseURL, api string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if (api == "openai-completions" || api == "openai-responses") && strings.HasSuffix(strings.ToLower(baseURL), "/v1") {
@@ -277,11 +290,24 @@ func registerBYOKRoute(agent, id, api, upstream string) (string, string, BYOKRou
 	return util.BYOKGatewayEndpoint(), util.BYOKRouteHeader(route), previous, true
 }
 
-// rollbackBYOKRoute restores a route to its previous state, or removes it if it was new.
+// rollbackBYOKRoute restores prior state without clobbering a route recreated by another writer.
 func rollbackBYOKRoute(agent, id string, previous BYOKRoute) error {
 	namespacedID := agent + ":" + id
+	current, exists := util.ReadBYOKRoute(namespacedID)
 	if previous.ID == "" {
+		if !exists {
+			return nil
+		}
 		return util.DeleteBYOKRoute(namespacedID)
+	}
+	if !exists {
+		return nil
+	}
+	if current.Token != previous.Token {
+		return nil
+	}
+	if current.Protocol == previous.Protocol && current.Upstream == previous.Upstream {
+		return nil
 	}
 	_, _, err := util.UpsertBYOKRoute(namespacedID, previous.Protocol, previous.Upstream)
 	return err

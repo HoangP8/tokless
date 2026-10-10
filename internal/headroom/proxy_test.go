@@ -1156,7 +1156,7 @@ import os, sys
 from concurrent.futures import TimeoutError
 
 os.environ["HEADROOM_ALLOWED_BASE_URLS"] = "http://127.0.0.1:18787,http://localhost:18787,https://api.customprovider.ai"
-from headroom.proxy.upstream_guard import is_safe_upstream_url, _allowlisted_destinations
+from headroom.proxy.upstream_guard import is_safe_upstream_url
 import headroom.proxy.upstream_guard as guard
 
 # Mock resolver pool so any DNS call raises TimeoutError (simulating 6s timeout)

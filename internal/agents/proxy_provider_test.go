@@ -228,3 +228,64 @@ func TestConfigureOpenCodeProxyMalformedGateNoOp(t *testing.T) {
 		t.Fatalf("transport plugin missing: %s", raw)
 	}
 }
+
+func TestRollbackBYOKRouteRemovesNewRoute(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	if _, _, err := util.UpsertBYOKRoute("kimi:acme", "openai-chat", "https://api.example.test/v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackBYOKRoute("kimi", "acme", BYOKRoute{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := util.ReadBYOKRoute("kimi:acme"); ok {
+		t.Fatal("new route should have been removed on rollback")
+	}
+}
+
+func TestRollbackBYOKRouteRestoresPreviousValue(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	previous, _, err := util.UpsertBYOKRoute("kimi:acme", "openai-chat", "https://old.example.test/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := util.UpsertBYOKRoute("kimi:acme", "openai-chat", "https://new.example.test/v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackBYOKRoute("kimi", "acme", previous); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := util.ReadBYOKRoute("kimi:acme")
+	if !ok || got.Upstream != "https://old.example.test/v1" {
+		t.Fatalf("rollback upstream = %q (exists=%v), want old value", got.Upstream, ok)
+	}
+}
+
+func TestRollbackBYOKRouteLeavesRecreatedRoute(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	previous, _, err := util.UpsertBYOKRoute("cmd:acme", "openai-chat", "https://old.example.test/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := util.DeleteBYOKRoute("cmd:acme"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := util.UpsertBYOKRoute("cmd:acme", "openai-chat", "https://other.example.test/v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackBYOKRoute("cmd", "acme", previous); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := util.ReadBYOKRoute("cmd:acme")
+	if !ok || got.Upstream != "https://other.example.test/v1" {
+		t.Fatalf("rollback clobbered a recreated route: %+v (exists=%v)", got, ok)
+	}
+}

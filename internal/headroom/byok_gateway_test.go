@@ -14,11 +14,223 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
+
+func TestBYOKGatewayRunServeBindFailureDoesNotAdvanceGeneration(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	if err := SaveBYOKRoutes([]BYOKRoute{
+		{ID: "opencode:test", Token: "test-token", Protocol: "openai-chat", Upstream: "https://api.example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stateBefore, err := util.ReadRoutingState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	genBefore := stateBefore.Generation
+
+	blockedPort := 18799 + (os.Getpid() % 1000)
+	t.Setenv("TOKLESS_BYOK_PROXY_PORT", strconv.Itoa(blockedPort))
+	blockListener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(blockedPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blockListener.Close()
+
+	if err := RunBYOKGatewayServe(); err == nil {
+		t.Fatal("RunBYOKGatewayServe succeeded with occupied port")
+	}
+
+	stateAfter, err := util.ReadRoutingState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateAfter.Generation != genBefore {
+		t.Fatalf("routing state generation advanced on bind failure: before=%d after=%d", genBefore, stateAfter.Generation)
+	}
+}
+
+func TestBYOKGatewayRebuildOnLateRouteChange(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	var hitsA, hitsB atomic.Int32
+	upstreamA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hitsA.Add(1); w.WriteHeader(http.StatusOK) }))
+	defer upstreamA.Close()
+	upstreamB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hitsB.Add(1); w.WriteHeader(http.StatusOK) }))
+	defer upstreamB.Close()
+	byokTransportFactory = func() http.RoundTripper { return &http.Transport{Proxy: nil} }
+	defer func() {
+		byokTransportFactory = func() http.RoundTripper { return &http.Transport{DialContext: safeDialContext, Proxy: nil} }
+	}()
+	tokenA, err := util.NewRoutingToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenB, err := util.NewRoutingToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveBYOKRoutes([]BYOKRoute{{ID: "route-a", Token: tokenA, Protocol: "openai-chat", Upstream: upstreamA.URL}}); err != nil {
+		t.Fatal(err)
+	}
+	port := 18799 + (os.Getpid() % 1000)
+	portListener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKLESS_BYOK_PROXY_PORT", strconv.Itoa(port))
+	_ = portListener.Close()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- RunBYOKGatewayServe() }()
+	t.Cleanup(func() {
+		_ = StopBYOKGateway()
+		select {
+		case <-serveDone:
+		case <-time.After(3 * time.Second):
+		}
+	})
+	baseURL := "http://127.0.0.1:" + strconv.Itoa(port)
+	deadline := time.Now().Add(5 * time.Second)
+	gatewayReady := false
+	for time.Now().Before(deadline) {
+		resp, getErr := http.Get(baseURL + "/livez")
+		if getErr == nil {
+			_ = resp.Body.Close()
+			gatewayReady = true
+			break
+		}
+		select {
+		case serveErr := <-serveDone:
+			t.Fatalf("gateway exited before ready: %v", serveErr)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !gatewayReady {
+		t.Fatal("gateway did not become ready")
+	}
+	post := func(id, token string) (*http.Response, string, error) {
+		req, _ := http.NewRequest(http.MethodPost, baseURL+"/v1/chat/completions", strings.NewReader(`{}`))
+		req.Header.Set(byokRouteHeader, id+"."+token)
+		resp, requestErr := (&http.Client{Timeout: time.Second}).Do(req)
+		if requestErr != nil {
+			return nil, "", requestErr
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp, string(body), readErr
+	}
+	waitRequest := func(id, token string, wantStatus int) {
+		t.Helper()
+		lastFailure := ""
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			resp, body, requestErr := post(id, token)
+			if requestErr == nil && resp.StatusCode == wantStatus {
+				return
+			}
+			if requestErr == nil && strings.Contains(body, "coordinator authorization failed") {
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			if requestErr == nil && wantStatus == http.StatusOK && resp.StatusCode == http.StatusBadGateway {
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			if requestErr != nil {
+				lastFailure = requestErr.Error()
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			if wantStatus == http.StatusBadGateway && resp.StatusCode == wantStatus {
+				return
+			}
+			t.Fatalf("route %s status=%d body=%q want %d", id, resp.StatusCode, body, wantStatus)
+		}
+		t.Fatalf("route %s did not reach status %d: %s", id, wantStatus, lastFailure)
+	}
+	waitRequest("route-a", tokenA, http.StatusOK)
+	if err := SaveBYOKRoutes([]BYOKRoute{{ID: "route-a", Token: tokenA, Protocol: "openai-chat", Upstream: upstreamA.URL}, {ID: "route-b", Token: tokenB, Protocol: "openai-chat", Upstream: upstreamB.URL}}); err != nil {
+		t.Fatal(err)
+	}
+	waitRequest("route-b", tokenB, http.StatusOK)
+	waitRequest("route-a", tokenA, http.StatusOK)
+	if hitsA.Load() < 2 || hitsB.Load() == 0 {
+		t.Fatalf("upstream hits A=%d B=%d", hitsA.Load(), hitsB.Load())
+	}
+	if err := SaveBYOKRoutes([]BYOKRoute{{ID: "route-a", Token: tokenA, Protocol: "openai-chat", Upstream: upstreamA.URL}}); err != nil {
+		t.Fatal(err)
+	}
+	waitRequest("route-b", tokenB, http.StatusBadGateway)
+	waitRequest("route-a", tokenA, http.StatusOK)
+	routesPath := byokRoutesPath()
+	valid, err := os.ReadFile(routesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(routesPath, []byte("broken{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	corruptDeadline := time.Now().Add(2 * time.Second)
+	for byokReloadErr.Load() == nil && time.Now().Before(corruptDeadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if byokReloadErr.Load() == nil {
+		t.Fatal("corrupt registry did not degrade livez")
+	}
+	stateBefore, err := util.ReadRoutingState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	stateAfter, err := util.ReadRoutingState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateBefore.Generation != stateAfter.Generation {
+		t.Fatalf("invalid registry caused rebuild: generation %d -> %d", stateBefore.Generation, stateAfter.Generation)
+	}
+	if err := os.WriteFile(routesPath, valid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitRequest("route-a", tokenA, http.StatusOK)
+}
+
+func TestBYOKGatewayListenerOwnershipRejectsPIDWithoutListener(t *testing.T) {
+	port := 18799 + (os.Getpid() % 1000)
+	t.Setenv("TOKLESS_BYOK_PROXY_PORT", strconv.Itoa(port))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	if got := byokGatewayListenerOwned(os.Getpid()); got == inspectedOwned {
+		t.Fatal("current process reported as owner of unrelated port")
+	}
+}
+
+func TestBYOKGatewayReclaimDecisionKeepsHealthyOwner(t *testing.T) {
+	if shouldReclaimBYOKOwner(true, true, true) {
+		t.Fatal("healthy fingerprint-matched owner must not be reclaimed")
+	}
+	if shouldReclaimBYOKOwner(true, true, false) {
+		t.Fatal("healthy but unverified owner must not be reclaimed")
+	}
+	if !shouldReclaimBYOKOwner(true, false, true) {
+		t.Fatal("unhealthy fingerprint-matched listener should be reclaimed")
+	}
+}
 
 func TestBYOKGatewayRoutesExplicitProtocolAndRejectsUnknown(t *testing.T) {
 	util.SetHomeOverride(t.TempDir())
@@ -150,7 +362,7 @@ func TestByokTargetPath(t *testing.T) {
 	}{
 		{"empty target", "", "/v1/chat/completions", "/v1/chat/completions"},
 		{"slash target", "/", "/v1/chat/completions", "/v1/chat/completions"},
-		{"target with /v1, incoming with /v1", "/api/v1", "/v1/chat/completions", "/api/v1/chat/completions"},
+		{"target with /v1, incoming with /v1", "/api/v1", "/v1/chat/completions", "/chat/completions"},
 		{"target without /v1, incoming with /v1", "/api", "/v1/chat/completions", "/v1/chat/completions"},
 		{"target matches incoming prefix", "/v1", "/v1/chat/completions", "/chat/completions"},
 		{"target does not match incoming", "/other", "/v1/chat/completions", "/v1/chat/completions"},
@@ -715,7 +927,7 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 	stopWatcher := make(chan struct{})
 	doneWatcher := make(chan struct{})
 	go func() {
-		runBYOKWatcher(byokRoutesPath(), stopWatcher, 10*time.Millisecond)
+		runBYOKWatcher(byokRoutesPath(), stopWatcher, 10*time.Millisecond, nil)
 		close(doneWatcher)
 	}()
 
@@ -789,7 +1001,7 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 	stopWatcher2 := make(chan struct{})
 	doneWatcher2 := make(chan struct{})
 	go func() {
-		runBYOKWatcher(byokRoutesPath(), stopWatcher2, 10*time.Millisecond)
+		runBYOKWatcher(byokRoutesPath(), stopWatcher2, 10*time.Millisecond, nil)
 		close(doneWatcher2)
 	}()
 	time.Sleep(20 * time.Millisecond)

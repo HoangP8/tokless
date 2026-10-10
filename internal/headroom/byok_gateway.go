@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -268,6 +269,99 @@ func BYOKGatewayURL() string {
 	return "http://127.0.0.1:" + strconv.Itoa(byokGatewayPort())
 }
 
+func reclaimStaleBYOKOwner() {
+	record, ok := byokGatewayOwned()
+	if !ok {
+		return
+	}
+	if record.PID == os.Getpid() {
+		return
+	}
+	proc, err := os.FindProcess(record.PID)
+	if err != nil {
+		return
+	}
+	identity, err := proxyIdentity(record.PID)
+	if err != nil || identity.Executable != record.Executable || !equalStrings(record.Args, identity.Args) || identity.Start != record.Start {
+		return
+	}
+	live := byokGatewayLive()
+	listenerOwnership := byokGatewayListenerOwned(record.PID)
+	if !shouldReclaimBYOKOwner(true, live, listenerOwnership == inspectedOwned || listenerOwnership == inspectionUnavailable) {
+		return
+	}
+	if err := stopByokGatewaySupervisor(); err != nil {
+		util.L.Warn("stop BYOK gateway supervisor: " + err.Error())
+	}
+	_ = proxyKill(proc)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if proxyGone(proc) && !byokGatewayLive() {
+			_ = os.Remove(byokGatewayPIDPath())
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func shouldReclaimBYOKOwner(fingerprintMatched, healthy, ownsListener bool) bool {
+	return fingerprintMatched && !healthy && ownsListener
+}
+
+func byokGatewayOwnerLive() bool {
+	record, owned := byokGatewayOwned()
+	if !owned || !byokGatewayLive() {
+		return false
+	}
+	return byokGatewayListenerOwned(record.PID) != inspectedNotOwned
+}
+
+const (
+	inspectedNotOwned = iota
+	inspectedOwned
+	inspectionUnavailable
+)
+
+// byokGatewayListenerOwned checks Linux socket ownership; other platforms use /livez.
+func byokGatewayListenerOwned(pid int) int {
+	if runtime.GOOS != "linux" {
+		return inspectionUnavailable
+	}
+	port := strconv.Itoa(byokGatewayPort())
+	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	if err != nil {
+		return inspectedNotOwned
+	}
+	inodes := make(map[string]bool)
+	for _, fd := range fds {
+		target, err := os.Readlink(filepath.Join(fmt.Sprintf("/proc/%d/fd", pid), fd.Name()))
+		if err == nil && strings.HasPrefix(target, "socket:[") {
+			inodes[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")] = true
+		}
+	}
+	for _, table := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		data, err := os.ReadFile(table)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n")[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 10 || fields[3] != "0A" {
+				continue
+			}
+			local := strings.Split(fields[1], ":")
+			if len(local) != 2 {
+				continue
+			}
+			listenPort, err := strconv.ParseInt(local[1], 16, 32)
+			if err == nil && strconv.Itoa(int(listenPort)) == port && inodes[fields[9]] {
+				return inspectedOwned
+			}
+		}
+	}
+	return inspectedNotOwned
+}
+
 func StartBYOKGateway() error {
 	byokGatewayLifecycle.Lock()
 	defer byokGatewayLifecycle.Unlock()
@@ -277,9 +371,10 @@ func StartBYOKGateway() error {
 	if localRunning {
 		return nil
 	}
-	if _, owned := byokGatewayOwned(); owned && byokGatewayLive() {
+	if byokGatewayOwnerLive() {
 		return nil
 	}
+	reclaimStaleBYOKOwner()
 	if err := LoadBYOKRoutes(); err != nil {
 		return err
 	}
@@ -292,6 +387,7 @@ func StartBYOKGateway() error {
 	if byokGatewayLive() {
 		return fmt.Errorf("BYOK gateway port %d is occupied by an unowned process", byokGatewayPort())
 	}
+	_ = os.Remove(byokGatewayPIDPath())
 	self := util.ToklessAbs()
 	cmd := exec.Command(self, byokGatewayServeArg)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -328,18 +424,29 @@ func StartBYOKGateway() error {
 }
 
 func RunBYOKGatewayServe() error {
+	reclaimStaleBYOKOwner()
 	if err := LoadBYOKRoutes(); err != nil {
 		return err
 	}
+	routes := configuredBYOKRoutes()
+	if len(routes) == 0 {
+		return fmt.Errorf("no BYOK routes configured")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(byokGatewayPort()))
+	if err != nil {
+		return err
+	}
+	serving := false
+	defer func() {
+		if !serving {
+			_ = listener.Close()
+		}
+	}()
 	coordinator, err := util.NewRoutingCoordinator(30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("start routing coordinator: %w", err)
 	}
 	defer coordinator.Close()
-	routes := configuredBYOKRoutes()
-	if len(routes) == 0 {
-		return fmt.Errorf("no BYOK routes configured")
-	}
 	laneListeners := make([]net.Listener, 0, len(routes))
 	defer func() {
 		for _, laneListener := range laneListeners {
@@ -394,7 +501,9 @@ func RunBYOKGatewayServe() error {
 	for i, route := range routes {
 		laneServer := &http.Server{Handler: byokProxy(route.ID, targets[i])}
 		laneServers = append(laneServers, laneServer)
-		go func(server *http.Server, listener net.Listener) { laneErrors <- server.Serve(listener) }(laneServer, laneListeners[i])
+		go func(errors chan<- error, server *http.Server, listener net.Listener) {
+			errors <- server.Serve(listener)
+		}(laneErrors, laneServer, laneListeners[i])
 	}
 	for _, laneListener := range laneListeners {
 		conn, dialErr := net.DialTimeout("tcp", laneListener.Addr().String(), time.Second)
@@ -411,10 +520,6 @@ func RunBYOKGatewayServe() error {
 			return fmt.Errorf("acquire BYOK lane %s: %w", lane.ID, err)
 		}
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(byokGatewayPort()))
-	if err != nil {
-		return err
-	}
 	server := &http.Server{Handler: BYOKGatewayHandlerWithCoordinator(coordinator), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 0, IdleTimeout: 90 * time.Second}
 	byokGatewayState.Lock()
 	byokGatewayState.listener, byokGatewayState.server = listener, server
@@ -428,33 +533,157 @@ func RunBYOKGatewayServe() error {
 		byokGatewayState.Unlock()
 	}()
 	serverErrors := make(chan error, 1)
-	go func() { serverErrors <- server.Serve(listener) }()
+	serving = true
+	go func(errors chan<- error) { errors <- server.Serve(listener) }(serverErrors)
 	stopWatcher := make(chan struct{})
 	defer close(stopWatcher)
+	routesChanged := make(chan struct{}, 1)
 	// Fail-closed revocation watcher: invalidates active routes on file deletion, corruption, or token revocation.
-	go runBYOKWatcher(byokRoutesPath(), stopWatcher, 100*time.Millisecond)
-	select {
-	case err := <-serverErrors:
-		for _, laneServer := range laneServers {
-			_ = laneServer.Close()
+	go runBYOKWatcher(byokRoutesPath(), stopWatcher, 100*time.Millisecond, routesChanged)
+	for {
+		select {
+		case err := <-serverErrors:
+			for _, laneServer := range laneServers {
+				_ = laneServer.Close()
+			}
+			return err
+		case err := <-laneErrors:
+			shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = server.Shutdown(shutdownContext)
+			cancel()
+			_ = server.Close()
+			for _, laneServer := range laneServers {
+				_ = laneServer.Close()
+			}
+			if err == http.ErrServerClosed {
+				return fmt.Errorf("BYOK lane stopped")
+			}
+			return fmt.Errorf("BYOK lane stopped: %w", err)
+		case <-routesChanged:
+			if err := LoadBYOKRoutes(); err != nil {
+				continue
+			}
+			nextRoutes := configuredBYOKRoutes()
+			if equalBYOKRoutes(routes, nextRoutes) {
+				continue
+			}
+			preparing, nextCommitted, nextListeners, buildErr := buildBYOKRoutingStates(coordinator.Nonce(), committed.Generation+1, committed.Generation, nextRoutes)
+			if buildErr != nil {
+				util.L.Warn("rebuild BYOK routes: " + buildErr.Error())
+				continue
+			}
+			nextServers := make([]*http.Server, 0, len(nextRoutes))
+			nextErrors := make(chan error, len(nextRoutes))
+			ready := true
+			for i, route := range nextRoutes {
+				target, parseErr := url.Parse(route.Upstream)
+				if parseErr != nil {
+					ready = false
+					util.L.Warn("rebuild BYOK routes: invalid upstream for " + route.ID)
+					break
+				}
+				laneServer := &http.Server{Handler: byokProxy(route.ID, target)}
+				nextServers = append(nextServers, laneServer)
+				go func(errors chan<- error, s *http.Server, l net.Listener) { errors <- s.Serve(l) }(nextErrors, laneServer, nextListeners[i])
+			}
+			if ready {
+				for _, l := range nextListeners {
+					conn, dialErr := net.DialTimeout("tcp", l.Addr().String(), time.Second)
+					if dialErr != nil {
+						ready = false
+						util.L.Warn("rebuild BYOK routes: lane readiness failed: " + dialErr.Error())
+						break
+					}
+					_ = conn.Close()
+				}
+			}
+			if ready {
+				if publishErr := coordinator.Publish(preparing); publishErr != nil {
+					util.L.Warn("rebuild BYOK routes: publish preparation: " + publishErr.Error())
+					ready = false
+				} else if publishErr = coordinator.Publish(nextCommitted); publishErr != nil {
+					util.L.Warn("rebuild BYOK routes: publish committed state: " + publishErr.Error())
+					ready = false
+				}
+			}
+			if ready {
+				for _, lane := range nextCommitted.Lanes {
+					if _, acquireErr := coordinator.Acquire(nextCommitted, lane); acquireErr != nil {
+						util.L.Warn("rebuild BYOK routes: acquire lane " + lane.ID + ": " + acquireErr.Error())
+						ready = false
+						break
+					}
+				}
+			}
+			if !ready {
+				for _, s := range nextServers {
+					_ = s.Close()
+				}
+				closeListeners(nextListeners)
+				rollbackCommitted := committed
+				rollbackCommitted.Generation = nextCommitted.Generation + 1
+				rollbackCommitted.PreviousGeneration = nextCommitted.Generation
+				rollbackCommitted.CoordinatorNonce = coordinator.Nonce()
+				rollbackCommitNonce, rollbackErr := util.NewRoutingToken()
+				rollbackCommitted.CommitNonce = rollbackCommitNonce
+				rollbackCommitted.State = util.RoutingStateCommitted
+				for i := range rollbackCommitted.Lanes {
+					rollbackCommitted.Lanes[i].Generation = rollbackCommitted.Generation
+					rollbackCommitted.Lanes[i].CoordinatorNonce = rollbackCommitted.CoordinatorNonce
+					rollbackCommitted.Lanes[i].Ready = true
+				}
+				for i := range rollbackCommitted.Routes {
+					rollbackCommitted.Routes[i].Generation = rollbackCommitted.Generation
+					rollbackCommitted.Routes[i].CoordinatorNonce = rollbackCommitted.CoordinatorNonce
+					rollbackCommitted.Routes[i].Revoked = false
+					rollbackCommitted.Routes[i].RevokedGeneration = 0
+				}
+				rollbackPreparing := rollbackCommitted
+				rollbackPreparing.Generation = rollbackCommitted.Generation - 1
+				rollbackPreparing.PreviousGeneration = nextCommitted.Generation
+				rollbackPreparing.State = util.RoutingStatePreparing
+				rollbackPreparing.CommitNonce = ""
+				for i := range rollbackPreparing.Lanes {
+					rollbackPreparing.Lanes[i].Generation = rollbackPreparing.Generation
+					rollbackPreparing.Lanes[i].Ready = false
+				}
+				for i := range rollbackPreparing.Routes {
+					rollbackPreparing.Routes[i].Generation = rollbackPreparing.Generation
+					rollbackPreparing.Routes[i].Revoked = true
+					rollbackPreparing.Routes[i].RevokedGeneration = rollbackPreparing.Generation
+				}
+				if rollbackErr == nil {
+					rollbackErr = coordinator.Publish(rollbackPreparing)
+				}
+				if rollbackErr == nil {
+					rollbackErr = coordinator.Publish(rollbackCommitted)
+				}
+				if rollbackErr == nil {
+					for _, lane := range rollbackCommitted.Lanes {
+						if _, rollbackErr = coordinator.Acquire(rollbackCommitted, lane); rollbackErr != nil {
+							break
+						}
+					}
+				}
+				if rollbackErr != nil {
+					util.L.Warn("rebuild BYOK routes: rollback failed: " + rollbackErr.Error())
+				}
+				continue
+			}
+			oldServers, oldListeners := laneServers, laneListeners
+			laneServers, laneListeners, committed, routes = nextServers, nextListeners, nextCommitted, nextRoutes
+			for _, s := range oldServers {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_ = s.Shutdown(ctx)
+				cancel()
+			}
+			closeListeners(oldListeners)
+			laneErrors = nextErrors
 		}
-		return err
-	case err := <-laneErrors:
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = server.Shutdown(shutdownContext)
-		cancel()
-		_ = server.Close()
-		for _, laneServer := range laneServers {
-			_ = laneServer.Close()
-		}
-		if err == http.ErrServerClosed {
-			return fmt.Errorf("BYOK lane stopped")
-		}
-		return fmt.Errorf("BYOK lane stopped: %w", err)
 	}
 }
 
-func runBYOKWatcher(routesPath string, stop <-chan struct{}, interval time.Duration) {
+func runBYOKWatcher(routesPath string, stop <-chan struct{}, interval time.Duration, routesChanged chan<- struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	var lastHash [32]byte
@@ -494,10 +723,43 @@ func runBYOKWatcher(routesPath string, stop <-chan struct{}, interval time.Durat
 			if !hasHash || h != lastHash {
 				lastHash = h
 				hasHash = true
-				_ = LoadBYOKRoutes()
+				if LoadBYOKRoutes() == nil {
+					signalBYOKRoutesChanged(routesChanged)
+				}
 			}
 		}
 	}
+}
+
+func signalBYOKRoutesChanged(ch chan<- struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func closeListeners(listeners []net.Listener) {
+	for _, listener := range listeners {
+		_ = listener.Close()
+	}
+}
+
+func equalBYOKRoutes(a, b []BYOKRoute) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	left, right := append([]BYOKRoute(nil), a...), append([]BYOKRoute(nil), b...)
+	sort.Slice(left, func(i, j int) bool { return left[i].ID < left[j].ID })
+	sort.Slice(right, func(i, j int) bool { return right[i].ID < right[j].ID })
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func configuredBYOKRoutes() []BYOKRoute {
@@ -594,13 +856,16 @@ func StopBYOKGateway() error {
 		defer cancel()
 		return server.Shutdown(ctx)
 	}
+	if !byokGatewayOwnerLive() {
+		_ = os.Remove(byokGatewayPIDPath())
+		if byokGatewayLive() {
+			return fmt.Errorf("BYOK gateway is running but ownership cannot be verified")
+		}
+		return nil
+	}
 	record, ok := byokGatewayOwned()
 	if !ok {
-		if !byokGatewayLive() {
-			_ = os.Remove(byokGatewayPIDPath())
-			return nil
-		}
-		return fmt.Errorf("BYOK gateway is running but ownership cannot be verified")
+		return fmt.Errorf("BYOK gateway ownership record unavailable")
 	}
 	proc, err := os.FindProcess(record.PID)
 	if err != nil {
@@ -777,19 +1042,11 @@ func byokTargetPath(target, incoming string) string {
 	if target == "" || target == "/" {
 		return incoming
 	}
-	// If target is /v1 and incoming starts with /v1, strip /v1 from incoming
-	if target == "/v1" && strings.HasPrefix(incoming, "/v1") {
+	if strings.HasSuffix(target, "/v1") && strings.HasPrefix(incoming, "/v1") {
 		if incoming == "/v1" {
 			return "/"
 		}
 		return incoming[3:]
-	}
-	// If target ends with /v1 and incoming starts with /v1, normalize
-	if strings.HasSuffix(target, "/v1") && strings.HasPrefix(incoming, "/v1") {
-		if incoming == "/v1" {
-			return target
-		}
-		return target + incoming[3:]
 	}
 	// If incoming starts with target, strip target prefix
 	if strings.HasPrefix(incoming, target) {
