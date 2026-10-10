@@ -248,8 +248,10 @@ func RunInit(opts InitOptions) int {
 
 	if len(wireIDs) == 0 {
 		projectmemSeedProject(opts, tools)
-		if cursorRollback != nil {
-			cursorRollback()
+		if cursorFails, ok := failures["cursor"]; ok && (contains(cursorFails, "project rules") || contains(cursorFails, "project rules hook")) {
+			if cursorRollback != nil {
+				cursorRollback()
+			}
 		}
 		util.SetQuiet(false)
 		for id, failed := range failures {
@@ -326,6 +328,10 @@ func RunInit(opts InitOptions) int {
 	if len(failures) > 0 && len(wireChanges) > 0 {
 		for i := len(wireChanges) - 1; i >= 0; i-- {
 			change := wireChanges[i]
+			failedList, agentFailed := failures[change.agent]
+			if !agentFailed || !contains(failedList, change.tool.Label) {
+				continue
+			}
 			if unwire, ok := change.tool.UnwireFor[change.agent]; ok {
 				removed, err := unwire(core.RunOpts{Agent: change.agent})
 				if err != nil {
@@ -337,7 +343,9 @@ func RunInit(opts InitOptions) int {
 		}
 	}
 	if len(failures) > 0 && cursorRollback != nil {
-		cursorRollback()
+		if cursorFails, ok := failures["cursor"]; ok && (contains(cursorFails, "project rules") || contains(cursorFails, "project rules hook")) {
+			cursorRollback()
+		}
 	}
 	projectmemSeedProject(opts, tools)
 	if len(failures) == 0 {
