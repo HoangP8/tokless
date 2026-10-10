@@ -2815,3 +2815,48 @@ func TestMixedProviderProxyKeepsDistinctUpstreams(t *testing.T) {
 		t.Fatalf("process-wide targets mutated: openai=%q anthropic=%q", os.Getenv("OPENAI_TARGET_API_URL"), os.Getenv("ANTHROPIC_TARGET_API_URL"))
 	}
 }
+
+func TestClineProxyRemovesWithoutOwnershipState(t *testing.T) {
+	clineProxyTestHome(t)
+	seed := `{"version":1,"lastUsedProvider":"openai-compatible","providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","apiKey":"user-key","model":"user-model","baseUrl":"https://api.user.test/v1"},"tokenSource":"manual"}}}`
+	if err := util.WriteFile(clineProvidersFile(), seed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureClineProxy(); !changed || !ClineProxyWired() {
+		t.Fatalf("configure: changed=%v wired=%v", changed, ClineProxyWired())
+	}
+	if err := os.Remove(clineProviderStateFile()); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveClineProxy() {
+		t.Fatal("remove failed without ownership state")
+	}
+	if ClineProxyWired() {
+		t.Fatal("cline still wired after removal")
+	}
+	raw, _ := util.ReadFileSafe(clineProvidersFile())
+	if strings.Contains(raw, clineProviderName) {
+		t.Fatalf("managed provider not removed:\n%s", raw)
+	}
+}
+
+func TestDroidProxyRemovesReservedEntryWithStash(t *testing.T) {
+	droidProxyTestHome(t)
+	raw := `{"customModels":[{"model":"native-model","displayName":"Native","baseUrl":"https://provider.example/v1","apiKey":"user-key","provider":"generic-chat-completion-api"}]}`
+	if err := util.WriteFile(droidSettingsFile(), raw); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureDroidProxy(); !changed || !DroidProxyWired() {
+		t.Fatalf("configure: changed=%v wired=%v", changed, DroidProxyWired())
+	}
+	if !RemoveDroidProxy() {
+		t.Fatal("remove failed with non-empty stash")
+	}
+	if DroidProxyWired() {
+		t.Fatal("droid still wired after removal")
+	}
+	got, _ := util.ReadFileSafe(droidSettingsFile())
+	if got != util.StringifyJSON(util.TryParseJsonc(raw)) {
+		t.Fatalf("droid config not restored:\n%s", got)
+	}
+}

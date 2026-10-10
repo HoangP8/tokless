@@ -853,6 +853,34 @@ func droidProxyEntry(endpoint string) *util.OrderedMap {
 	return entry
 }
 
+// droidHasDuplicateNativeRoutes detects ambiguous model IDs that block configure.
+func droidHasDuplicateNativeRoutes(cfg *util.OrderedMap) bool {
+	value, ok := cfg.Get("customModels")
+	if !ok {
+		return false
+	}
+	models, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	seenIDs := map[string]bool{}
+	for _, value := range models {
+		model, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		id, _, _, ok := droidModelRoute(model)
+		if !ok {
+			continue
+		}
+		if seenIDs[id] {
+			return true
+		}
+		seenIDs[id] = true
+	}
+	return false
+}
+
 // ConfigureDroidProxy appends the headroom entry to customModels in
 // settings.json, pointing at the OpenAI-compatible headroom daemon endpoint.
 func ConfigureDroidProxy() (changed bool, file string) {
@@ -890,6 +918,7 @@ func configureDroidProxyLocked() (changed bool, file string) {
 	stash := loadProxyRouteStashLocked("droid")
 	stashRaw, stashExists := util.ReadFileSafe(proxyRouteStashPath("droid"))
 	prevStashLen := len(stash)
+	nativeDone := false
 	if nativeChanged, nativeFound, registeredRoutes := droidNativeRoutes(cfg, stash); nativeFound {
 		if saveProxyRouteStash("droid", stash) != nil {
 			for _, route := range registeredRoutes {
@@ -897,25 +926,27 @@ func configureDroidProxyLocked() (changed bool, file string) {
 			}
 			return false, file
 		}
-		if !nativeChanged {
+		if nativeChanged {
+			if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+				restoreProxyRouteStashLogged("droid", stashRaw, stashExists)
+				for _, route := range registeredRoutes {
+					rollbackBYOKRouteLogged("droid", route.id, route.previous)
+				}
+				return false, file
+			}
+			nativeDone = true
+		} else {
 			for _, route := range registeredRoutes {
 				rollbackBYOKRouteLogged("droid", route.id, route.previous)
 			}
-			return false, file
-		}
-		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
-			restoreProxyRouteStashLogged("droid", stashRaw, stashExists)
-			for _, route := range registeredRoutes {
-				rollbackBYOKRouteLogged("droid", route.id, route.previous)
+			if droidHasDuplicateNativeRoutes(cfg) {
+				return false, file
 			}
-			return false, file
 		}
-		return true, file
 	} else if prevStashLen > 0 {
 		if saveProxyRouteStash("droid", stash) != nil {
 			return false, file
 		}
-		return false, file
 	}
 	endpoint := ProxyEndpointFor("droid")
 	desired := droidProxyEntry(endpoint)
@@ -936,7 +967,7 @@ func configureDroidProxyLocked() (changed bool, file string) {
 		display, _ := em.Get("displayName")
 		if model == proxyWireModel() && display == droidProxyDisplayName {
 			if jsonEqual(em, desired) {
-				return false, f
+				return nativeDone, f
 			}
 			baseURL, _ := em.Get("baseUrl")
 			if baseURL != endpoint {
@@ -1035,7 +1066,25 @@ func removeDroidProxyLocked() bool {
 			}
 			changed = true
 		}
-		if !changed || util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
+		endpoint := ProxyEndpointFor("droid")
+		kept := make([]any, 0, len(models))
+		droppedManaged := false
+		for _, value := range models {
+			em, isMap := value.(*util.OrderedMap)
+			if isMap && droidEntryManaged(em, droidProxyEntry(endpoint)) {
+				droppedManaged = true
+				continue
+			}
+			kept = append(kept, value)
+		}
+		if droppedManaged {
+			if len(kept) == 0 {
+				cfg.Delete("customModels")
+			} else {
+				cfg.Set("customModels", kept)
+			}
+		}
+		if (!changed && !droppedManaged) || util.WriteFile(f, util.StringifyJSON(cfg)) != nil {
 			return false
 		}
 		var deletedRoutes []BYOKRoute

@@ -352,7 +352,12 @@ func removeClineProxyLocked() bool {
 			cfg.Delete("lastUsedProvider")
 		}
 	} else {
-		return false
+		providers.Delete(clineProviderName)
+		if v, exists := cfg.Get("lastUsedProvider"); exists {
+			if name, ok := v.(string); ok && name == clineProviderName {
+				cfg.Delete("lastUsedProvider")
+			}
+		}
 	}
 	prevRoute, hasPrev := util.ReadBYOKRoute("cline:" + clineProviderName)
 	if err := deleteBYOKRoute("cline", clineProviderName); err != nil {
