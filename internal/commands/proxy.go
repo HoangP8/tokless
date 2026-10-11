@@ -13,7 +13,7 @@ import (
 // wired agents first (config-file injection), then manual/env agents.
 func ProxyAgentIDs() []string {
 	return []string{
-		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", "kimi", "cmd", "zcode", "dsh", // wired
+		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", "kimi", "zcode", "dsh", // wired
 		"cursor", // manual / launch-env
 	}
 }
@@ -666,6 +666,20 @@ func restoreProxyAgents(wiredBefore map[string]bool) {
 	}
 }
 
+func proxyReadinessLabel(r agents.ProxyReadiness) string {
+	switch r {
+	case agents.ProxyReadyInstallMissing:
+		return "headroom not installed"
+	case agents.ProxyReadyAgentUnwired:
+		return "not wired"
+	case agents.ProxyReadyRoutingDisabled:
+		return "routing disabled"
+	case agents.ProxyReadyManual:
+		return "manual"
+	}
+	return ""
+}
+
 // RunProxyStatus prints daemon + per-agent capability and wiring state.
 func RunProxyStatus(opts InitOptions) int {
 	cmdHeader("proxy status", "headroom HTTP-proxy daemon and agent wiring")
@@ -685,6 +699,11 @@ func RunProxyStatus(opts InitOptions) int {
 		label := id + ": " + string(detection.Capability.WireKind) + ", " + string(detection.Capability.Protocol) + " — " + string(detection.State)
 		if detection.Detail != "" {
 			label += " (" + detection.Detail + ")"
+		}
+		if id != "copilot" && id != "grok" {
+			if readiness := agents.ProxyReadinessFor(id); readiness != agents.ProxyReady {
+				label += " " + util.C.Dim("["+proxyReadinessLabel(readiness)+"]")
+			}
 		}
 		if detection.State == agents.ProxyStateManaged && detection.Capability.WireKind != agents.ProxyWireManual && id != "copilot" && id != "grok" {
 			label += " " + util.C.Dim("→") + " " + agents.ProxyEndpointFor(id)

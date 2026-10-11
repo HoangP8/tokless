@@ -39,6 +39,9 @@ func headroomWire(agent string) core.AgentFn {
 		if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
 			return true, nil
 		}
+		if !isTest() && !util.HeadroomInstalled() {
+			return false, fmt.Errorf("headroom is not installed at %s", util.HeadroomBin())
+		}
 		preferenceSet := util.ProxyRoutingPreferenceSet()
 		preferenceEnabled := util.ProxyRoutingEnabled()
 		runtimeBefore, runtimeWasSet := util.ReadProxyRuntime()
@@ -153,11 +156,17 @@ func headroomUnwire(agent string) core.AgentFn {
 }
 
 func headroomVerify(agent string) bool {
+	if !isTest() {
+		switch agents.ProxyReadinessFor(agent) {
+		case agents.ProxyReady, agents.ProxyReadyManual, agents.ProxyReadyByokExcluded, agents.ProxyReadyRoutingDisabled, agents.ProxyReadyNotApplicable:
+			return true
+		default:
+			return false
+		}
+	}
+	// Test homes have no real headroom bin, so verify wiring only.
 	if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
 		return true
-	}
-	if !isTest() && !util.HeadroomInstalled() {
-		return false
 	}
 	if !headroomWired(agent) {
 		return true
@@ -180,6 +189,7 @@ func WireHeadroomTools() {
 	for _, agent := range core.AgentIDs() {
 		headroom.WireFor[agent] = headroomWire(agent)
 		headroom.UnwireFor[agent] = headroomUnwire(agent)
+
 		headroom.VerifyFor[agent] = func(agent string) core.VerifyFn {
 			return func() *bool { return core.BoolPtr(headroomVerify(agent)) }
 		}(agent)

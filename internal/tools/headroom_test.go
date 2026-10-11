@@ -16,7 +16,7 @@ func setupHeadroomHome(t *testing.T) string {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	t.Setenv("XDG_CONFIG_HOME", home+string(os.PathSeparator)+".config")
 	fakeBin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakeBin, "tokless"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -25,7 +25,14 @@ func setupHeadroomHome(t *testing.T) string {
 	t.Setenv("TOKLESS_TEST", "1")
 	agents.SetIdeProjectRoot(home)
 	ConfigureInstructionConflicts(true)
-	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+	plugin := filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai")
+	if util.IsWin {
+		plugin = filepath.Join(plugin, "Lib", "site-packages")
+	} else {
+		plugin = filepath.Join(plugin, "lib", "python3.13", "site-packages")
+	}
+	plugin = filepath.Join(plugin, "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
+	if err := util.WriteFile(plugin, "export default async () => ({})\n"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { util.SetHomeOverride(""); agents.SetIdeProjectRoot(""); ConfigureInstructionConflicts(false) })
@@ -146,6 +153,9 @@ func TestHeadroomWireRollsBackWhenPreferencePersistenceFails(t *testing.T) {
 	if agents.ClaudeProxyWired() {
 		t.Fatal("agent remained wired after preference persistence failure")
 	}
+	if removed, err := headroom.UnwireFor["claude"](core.RunOpts{}); err != nil || removed {
+		t.Fatalf("unwire after internal rollback = %v, %v; want ordinary unwired result", removed, err)
+	}
 }
 
 func TestHeadroomWireRequiresProxyLifecycleLock(t *testing.T) {
@@ -244,5 +254,92 @@ func TestHeadroomVerifierRejectsForeignEndpoint(t *testing.T) {
 	raw, _ := util.ReadFileSafe(p.Settings)
 	if !strings.Contains(raw, "http://user.example:9999") {
 		t.Fatalf("unwire removed user value: %s", raw)
+	}
+}
+
+func TestHeadroomWireRefusesOpenCodeBeforeWriting(t *testing.T) {
+	setupHeadroomHome(t)
+	config := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(config, `{"provider":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	before, exists := util.ReadFileSafe(config)
+	if !exists {
+		t.Fatal("OpenCode config missing before wire")
+	}
+	plugin := filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai")
+	if util.IsWin {
+		plugin = filepath.Join(plugin, "Lib", "site-packages")
+	} else {
+		plugin = filepath.Join(plugin, "lib", "python3.13", "site-packages")
+	}
+	plugin = filepath.Join(plugin, "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
+	if err := os.Remove(plugin); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := headroom.WireFor["opencode"](core.RunOpts{})
+	if ok || err == nil {
+		t.Fatalf("wire = %v, %v; want pre-write plugin failure", ok, err)
+	}
+	if after, exists := util.ReadFileSafe(config); !exists || after != before {
+		t.Fatalf("OpenCode config changed after failed wire: exists=%v, content=%q", exists, after)
+	}
+	if agents.OpenCodeProxyWired() {
+		t.Fatal("OpenCode proxy became wired after pre-write failure")
+	}
+	if err := os.WriteFile(plugin, []byte("export default {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !agents.ConfigureProxyAgent("opencode") {
+		t.Fatal("failed to create managed OpenCode wiring")
+	}
+	if ok, err := headroom.UnwireFor["opencode"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("unwire newly managed config = %v, %v; want removal", ok, err)
+	}
+	if agents.OpenCodeProxyWired() {
+		t.Fatal("stale rollback state skipped removal")
+	}
+}
+
+func TestHeadroomWireDryRunDoesNotLeaveRollbackState(t *testing.T) {
+	setupHeadroomHome(t)
+	if ok, err := headroom.WireFor["opencode"](core.RunOpts{DryRun: true}); err != nil || !ok {
+		t.Fatalf("dry-run wire = %v, %v; want success", ok, err)
+	}
+	if ok, err := headroom.UnwireFor["opencode"](core.RunOpts{}); err != nil || ok {
+		t.Fatalf("unwire after dry-run = %v, %v; want ordinary unwired result", ok, err)
+	}
+}
+
+func TestHeadroomWireRefusesWhenBinMissing(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("TOKLESS_TEST", "") // real-mode install gate is active
+	claudeBin := filepath.Join(home, ".local", "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(claudeBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claudeBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	if util.HeadroomInstalled() {
+		t.Fatal("test precondition: headroom bin must be absent")
+	}
+	if !headroomWired("claude") {
+		t.Fatal("test precondition: claude must be wire-applicable")
+	}
+	ok, err := headroom.WireFor["claude"](core.RunOpts{})
+	if ok || err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("wire = %v, %v; want install-missing refusal", ok, err)
+	}
+	settings := util.ClaudeCodePaths().Settings
+	if _, exists := util.ReadFileSafe(settings); exists {
+		t.Fatal("config written despite missing headroom bin")
 	}
 }

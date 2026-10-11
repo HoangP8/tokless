@@ -37,6 +37,10 @@ func RunSelfUpdate() int {
 	if ok, interrupted := runSelfUpdateWithStatus(latest); interrupted {
 		return 130
 	} else if ok {
+		if util.IsWin {
+			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " tokless update scheduled; run tokless again after this process exits")
+			return 0
+		}
 		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " tokless " + util.C.Gray("v"+local+" → v"+latest+" updated"))
 		return 0
 	}
@@ -62,6 +66,10 @@ func MaybeSelfUpdate(opts InitOptions) {
 		util.RestoreConsoleCP()
 		os.Exit(130)
 	} else if ok {
+		if util.IsWin {
+			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " tokless update scheduled; run tokless again after this process exits")
+			return
+		}
 		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " tokless " + util.C.Gray("v"+local+" → v"+latest+" updated"))
 		reexecAfterSelfUpdate()
 	} else {
@@ -126,7 +134,7 @@ func runStatus(label string, fn func()) {
 // runSelfUpdateTo swaps the binary and refreshes install.json on success.
 func runSelfUpdateTo(latest string) (bool, bool) {
 	ok, interrupted := selfUpdateExec(latest)
-	if ok && os.Getenv("TOKLESS_TEST") != "1" {
+	if ok && !util.IsWin && os.Getenv("TOKLESS_TEST") != "1" {
 		util.RefreshInstallMarker(latest)
 	}
 	return ok, interrupted
@@ -140,13 +148,19 @@ func selfUpdateExec(latest string) (bool, bool) {
 	defer stop()
 	if util.IsWin {
 		if shell := windowsPowerShell(); shell != "" {
-			r := util.Run(shell, []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm " + installPs1 + " | iex"}, util.RunOptions{Capture: false, Env: []string{"CI=1"}, Ctx: ctx})
+			exe, err := os.Executable()
+			if err != nil {
+				util.L.Err("Could not locate tokless executable for update.")
+				return false, false
+			}
+			r := util.Run(shell, []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm " + installPs1 + " | iex"}, util.RunOptions{Capture: false, Env: windowsSelfUpdateEnv(os.Getpid(), exe), Ctx: ctx})
 			if ctx.Err() != nil {
 				return false, true
 			}
 			if r.Code == 0 {
 				return true, false
 			}
+			util.L.Err("Windows update could not be scheduled or replacement failed.")
 		}
 		util.L.Raw("  " + util.C.Cyan("powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm "+installPs1+" | iex\""))
 		return false, false
@@ -233,6 +247,10 @@ func toklessReleaseAsset() (string, bool) {
 		return "", false
 	}
 	return "tokless-" + osPart + "-" + archPart, true
+}
+
+func windowsSelfUpdateEnv(pid int, exe string) []string {
+	return []string{"CI=1", fmt.Sprintf("TOKLESS_SELF_UPDATE_PID=%d", pid), "TOKLESS_SELF_UPDATE_PATH=" + exe}
 }
 
 func windowsPowerShell() string {

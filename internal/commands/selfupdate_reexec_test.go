@@ -160,6 +160,34 @@ func main() {
 	}
 }
 
+func TestWindowsSelfUpdateEnvIncludesPIDHandoff(t *testing.T) {
+	got := strings.Join(windowsSelfUpdateEnv(1234, `C:\\Users\\test\\tokless.exe`), ",")
+	for _, want := range []string{"CI=1", "TOKLESS_SELF_UPDATE_PID=1234", `TOKLESS_SELF_UPDATE_PATH=C:\\Users\\test\\tokless.exe`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Windows update env missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestWindowsUpdateInstallerStagesAfterDownload(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"TOKLESS_SELF_UPDATE_PID", "TOKLESS_SELF_UPDATE_PATH", "$process.WaitForExit()", "[System.IO.File]::Replace($staged, $Destination, $null)", "if (Test-Path -LiteralPath $Destination)", "Move-Item -LiteralPath $staged -Destination $Destination", "StatusFile", "Update replacement completed", "--version", "$dataRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE \"AppData\\Local\" }", "Join-Path $dataRoot \"tokless\"", "path    = $Destination", "version = $version", "at      = (Get-Date).ToUniversalTime()", "Update replacement failed", "$helperArgs", "ConvertFrom-Json", "Process ID must be a positive integer", "Remove-Item -LiteralPath $staged", "ProcessId = $selfUpdate", "StartTime = $targetStartTime", "Path = $targetPath", "Get-Process -Id $ProcessId -ErrorAction Stop", "Self-update process identity changed", "$process.WaitForExit()", "finally {", "status write failed", "Remove-Item -LiteralPath $ConfigFile", "Update scheduled; replacement runs after tokless exits; run tokless again", "Download failed ($asset): $($_.Exception.ToString())", "$PSVersionTable.PSVersion.Major -eq 5", "$PSVersionTable.PSVersion.Minor -eq 1", "SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12", "Replacement failed"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("install.ps1 missing %q", want)
+		}
+	}
+	replacement := strings.Index(s, "[System.IO.File]::Replace($staged, $Destination, $null)")
+	versionLookup := strings.Index(s, "$versionOutput = & $Destination --version")
+	markerWrite := strings.Index(s, `method  = "install script"`)
+	if replacement < 0 || versionLookup < 0 || markerWrite < 0 || replacement >= versionLookup || versionLookup >= markerWrite {
+		t.Fatalf("marker refresh must follow replacement: replacement=%d version=%d marker=%d", replacement, versionLookup, markerWrite)
+	}
+}
+
 func TestWithEnvKV(t *testing.T) {
 	got := withEnvKV([]string{"A=1", "B=2"}, "B", "9")
 	if strings.Join(got, ",") != "A=1,B=9" {

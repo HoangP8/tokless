@@ -10,6 +10,19 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+func updateToolFlow(id string, info util.VersionInfo, install func() (bool, bool, error)) (needsInstall, verified bool, err error) {
+	if id == "projectmem" || id == "headroom" {
+		needsInstall = !info.Present
+	} else {
+		needsInstall = info.Installed == nil && info.Latest != nil
+	}
+	if install != nil {
+		installed, present, installErr := install()
+		return needsInstall, installed && ((id != "projectmem" && id != "headroom") || present), installErr
+	}
+	return needsInstall, false, nil
+}
+
 func RunUpdate(opts InitOptions) int {
 	MaybeSelfUpdate(opts)
 
@@ -40,6 +53,7 @@ func RunUpdate(opts InitOptions) int {
 			continue
 		}
 		info, has := versions[t.ID]
+		needsInstall, _, _ := updateToolFlow(t.ID, info, nil)
 		name := paintName(padEnd(t.ID, 14))
 
 		installed := util.C.Dim("not on PATH")
@@ -63,9 +77,11 @@ func RunUpdate(opts InitOptions) int {
 			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
 			suffix = util.C.Yellow(" → upgrade")
 			changed = append(changed, t.ID)
-		case has && info.Installed == nil && info.Latest != nil:
+		case has && needsInstall:
 			mark = util.C.Yellow("+")
-			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
+			if info.Latest != nil {
+				latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
+			}
 			suffix = util.C.Yellow(" → install")
 			changed = append(changed, t.ID)
 		case has && info.Installed != nil && info.Latest != nil:
@@ -178,10 +194,21 @@ func RunUpdate(opts InitOptions) int {
 		bar.Begin(tool.Label)
 		report := func(phase string, frac float64) { bar.Step(phase, frac) }
 		installed := false
-		err := util.WithSilencedLogs(func() error {
-			ok, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, Report: report})
-			installed = ok
-			return e
+		_, verified, err := updateToolFlow(tool.ID, versions[tool.ID], func() (bool, bool, error) {
+			var installErr error
+			installErr = util.WithSilencedLogs(func() error {
+				ok, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, Report: report})
+				installed = ok
+				return e
+			})
+			present := true
+			switch tool.ID {
+			case "projectmem":
+				present = util.ProjectmemInstalled()
+			case "headroom":
+				present = util.HeadroomInstalled()
+			}
+			return installed, present, installErr
 		})
 		switch {
 		case err != nil:
@@ -189,6 +216,9 @@ func RunUpdate(opts InitOptions) int {
 			failed = append(failed, tool.ID)
 		case !installed:
 			bar.Fail("install failed")
+			failed = append(failed, tool.ID)
+		case !verified:
+			bar.Fail("install verification failed")
 			failed = append(failed, tool.ID)
 		default:
 			bar.Complete("")

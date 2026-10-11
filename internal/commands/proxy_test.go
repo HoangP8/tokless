@@ -799,3 +799,53 @@ func TestRunProxyUpRejectsProxyLanePortCollision(t *testing.T) {
 		t.Fatal("duplicate proxy lane ports must fail closed")
 	}
 }
+
+func TestRunProxyStatusReportsReadinessForUnmanagedAgent(t *testing.T) {
+	proxyCmdTestHome(t)
+	oldRunning := proxyRunning
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() { proxyRunning = oldRunning })
+	logs, err := util.CaptureLogs(func() error {
+		if got := RunProxyStatus(InitOptions{Agents: []string{"claude"}}); got != 0 {
+			t.Fatalf("status exit = %d", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs, "[not wired]") {
+		t.Fatalf("unwired agent missing readiness annotation: %q", logs)
+	}
+	if strings.Contains(logs, "→") {
+		t.Fatalf("unmanaged agent unexpectedly rendered endpoint arrow: %q", logs)
+	}
+}
+
+func TestRunProxyStatusStillReportsManagedWiredAgent(t *testing.T) {
+	proxyCmdTestHome(t)
+	if !agents.ConfigureProxyAgent("claude") {
+		t.Fatal("failed to wire claude for test")
+	}
+	if got := agents.ProxyReadinessFor("claude"); got != agents.ProxyReady {
+		t.Fatalf("claude readiness = %v, want ProxyReady", got)
+	}
+	oldRunning := proxyRunning
+	proxyRunning = func() bool { return true }
+	t.Cleanup(func() { proxyRunning = oldRunning })
+	logs, err := util.CaptureLogs(func() error {
+		if got := RunProxyStatus(InitOptions{Agents: []string{"claude"}}); got != 0 {
+			t.Fatalf("status exit = %d", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs, "→") {
+		t.Fatalf("managed wired agent missing endpoint arrow: %q", logs)
+	}
+	if strings.Contains(logs, "[headroom not installed]") || strings.Contains(logs, "[not wired]") || strings.Contains(logs, "[routing disabled]") {
+		t.Fatalf("ready agent rendered a readiness annotation: %q", logs)
+	}
+}

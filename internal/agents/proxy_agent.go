@@ -19,18 +19,18 @@ type ProxyAgentSpec struct {
 }
 
 var proxyAgentSpecs = map[string]ProxyAgentSpec{
-	"claude":   {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired},
-	"omp":      {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
-	"codex":    {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired},
-	"opencode": {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired},
-	"kilo":     {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
-	"pi":       {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
-	"droid":    {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
-	"copilot":  {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired},
-	"cline":    {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
-	"kimi":     {"kimi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKimiProxy, RemoveKimiProxy, KimiProxyWired},
-	"zcode": {"zcode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureZcodeProxy, RemoveZcodeProxy, ZcodeProxyWired},
-	"dsh":   {"dsh", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDshProxy, RemoveDshProxy, DshProxyWired},
+	"claude":      {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired},
+	"omp":         {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired},
+	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired},
+	"opencode":    {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired},
+	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired},
+	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired},
+	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired},
+	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired},
+	"cline":       {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired},
+	"kimi":        {"kimi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKimiProxy, RemoveKimiProxy, KimiProxyWired},
+	"zcode":       {"zcode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureZcodeProxy, RemoveZcodeProxy, ZcodeProxyWired},
+	"dsh":         {"dsh", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDshProxy, RemoveDshProxy, DshProxyWired},
 	"amp":         {"amp", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil},
 	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil},
 	"antigravity": {"antigravity", ProxyProtocolGeminiNative, ProxyWireManagedRoute, ConfigureAntigravityProxy, RemoveAntigravityProxy, AntigravityProxyWired},
@@ -122,4 +122,52 @@ func ProxyAgentWired(id string) bool {
 		return false
 	}
 	return spec.Wired()
+}
+
+// ProxyReadiness classifies why an agent is or is not proxy-ready.
+type ProxyReadiness int
+
+const (
+	ProxyReady ProxyReadiness = iota
+	ProxyReadyInstallMissing
+	ProxyReadyAgentUnwired
+	ProxyReadyRoutingDisabled
+	ProxyReadyManual        // amp/cursor: intentionally not auto-wired
+	ProxyReadyByokExcluded  // grok: routes through its own launcher, not the shared daemon
+	ProxyReadyNotApplicable // unknown or unsupported agent ID
+)
+
+// ProxyReadinessFor reports whether id is ready for shared proxy routing.
+func ProxyReadinessFor(id string) ProxyReadiness {
+	if spec, ok := proxySpecFor(id); ok && spec.WireKind == ProxyWireManual {
+		return ProxyReadyManual
+	}
+	if id == "grok" {
+		return ProxyReadyByokExcluded
+	}
+	if _, ok := proxySpecFor(id); !ok {
+		return ProxyReadyNotApplicable
+	}
+	if !ProxyAgentApplicable(id) {
+		return ProxyReadyNotApplicable
+	}
+	if util.ProxyRoutingPreferenceSet() && !util.ProxyRoutingEnabled() {
+		return ProxyReadyRoutingDisabled
+	}
+	if !ProxyAgentUsesHeadroom(id) {
+		return ProxyReadyByokExcluded
+	}
+	if !util.HeadroomInstalled() {
+		return ProxyReadyInstallMissing
+	}
+	if id == "opencode" {
+		if !OpenCodeProxySatisfied() {
+			return ProxyReadyAgentUnwired
+		}
+		return ProxyReady
+	}
+	if !ProxyAgentWired(id) {
+		return ProxyReadyAgentUnwired
+	}
+	return ProxyReady
 }
