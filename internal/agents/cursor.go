@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
@@ -513,6 +514,8 @@ func cursorTargetBridge(path string) bool {
 
 func cursorHooksFile() string { return filepath.Join(cursorConfigDir(), "hooks.json") }
 
+func CursorRtkHooksFile() string { return cursorHooksFile() }
+
 func cursorHooksFiles() []string {
 	dirs := cursorIDEConfigDirs()
 	paths := make([]string, len(dirs))
@@ -636,18 +639,57 @@ func cursorOwnedCodegraphHookEntryFor(v any, want string) bool {
 	return ok && command == want
 }
 
+// cursorCodegraphHookEntryMatches reports whether a hook entry is a
+// Tokless-owned CodeGraph hook.
+func cursorCodegraphHookEntryMatches(entry any) bool {
+	a, ok := entry.(*util.OrderedMap)
+	if !ok || a.Len() != 1 {
+		return false
+	}
+	command, ok := a.Get("command")
+	if !ok {
+		return false
+	}
+	cmdStr, ok := command.(string)
+	if !ok {
+		return false
+	}
+	parts := util.SplitCommand(cmdStr)
+	if strings.ToLower(filepath.Base(strings.ReplaceAll(parts[0], `\`, `/`))) == "wsl.exe" {
+		sep := -1
+		for i := 1; i < len(parts); i++ {
+			if parts[i] == "--" {
+				sep = i
+				break
+			}
+		}
+		if sep < 0 || sep+3 != len(parts)-1 {
+			return false
+		}
+		return cursorIsToklessCommand(parts[sep+1]) &&
+			parts[sep+2] == "cursor-hook" && parts[sep+3] == "codegraph-index"
+	}
+	if len(parts) != 3 {
+		return false
+	}
+	return cursorIsToklessCommand(parts[0]) &&
+		parts[1] == "cursor-hook" && parts[2] == "codegraph-index"
+}
+
 // HasCursorCodegraphIndexHook reports whether both required Cursor lifecycle
-// events contain exactly one exact Tokless-owned CodeGraph hook.
+// events contain a tokless-owned CodeGraph hook. Tolerates bare
+// "tokless", absolute paths, and stale /tmp/... paths (including
+// leftover duplicates) while rejecting foreign/non-tokless commands.
 func HasCursorCodegraphIndexHook() bool {
 	for _, path := range cursorHooksFiles() {
-		if !hasCursorCodegraphIndexHook(path, cursorCodegraphHookCommandFor(cursorTargetBridge(path))) {
+		if !hasCursorCodegraphIndexHook(path) {
 			return false
 		}
 	}
 	return true
 }
 
-func hasCursorCodegraphIndexHook(path, want string) bool {
+func hasCursorCodegraphIndexHook(path string) bool {
 	raw, ok := util.ReadFileSafe(path)
 	if !ok {
 		return false
@@ -671,11 +713,11 @@ func hasCursorCodegraphIndexHook(path, want string) bool {
 		}
 		count := 0
 		for _, entry := range entries {
-			if cursorOwnedCodegraphHookEntryFor(entry, want) {
+			if cursorCodegraphHookEntryMatches(entry) {
 				count++
 			}
 		}
-		if count != 1 {
+		if count < 1 {
 			return false
 		}
 	}
@@ -721,7 +763,7 @@ func installCursorCodegraphIndexHook(path string) bool {
 		entries, _ := v.([]any)
 		kept := make([]any, 0, len(entries)+1)
 		for _, entry := range entries {
-			if !cursorOwnedCodegraphHookEntryFor(entry, command) {
+			if !cursorCodegraphHookEntryMatches(entry) {
 				kept = append(kept, entry)
 			}
 		}
@@ -776,7 +818,7 @@ func removeCursorCodegraphIndexHook(path string) bool {
 		}
 		kept := make([]any, 0, len(entries))
 		for _, entry := range entries {
-			if !cursorOwnedCodegraphHookEntryFor(entry, cursorCodegraphHookCommandFor(cursorTargetBridge(p))) {
+			if !cursorCodegraphHookEntryMatches(entry) {
 				kept = append(kept, entry)
 			} else {
 				changed = true
@@ -1685,13 +1727,24 @@ func cursorCLIIsCursor() bool {
 	if bin == "" {
 		return false
 	}
-	for _, arg := range [][]string{{"--version"}, {"--help"}} {
-		result := util.Run(bin, arg, util.RunOptions{Capture: true, Quiet: true})
-		if strings.Contains(strings.ToLower(result.Stdout+"\n"+result.Stderr), "cursor") {
-			return true
-		}
-	}
-	return false
+	var wg sync.WaitGroup
+	var versionHit, helpHit bool
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		versionHit = cursorProbeHasCursor(bin, "--version")
+	}()
+	go func() {
+		defer wg.Done()
+		helpHit = cursorProbeHasCursor(bin, "--help")
+	}()
+	wg.Wait()
+	return versionHit || helpHit
+}
+
+func cursorProbeHasCursor(bin, arg string) bool {
+	result := util.Run(bin, []string{arg}, util.RunOptions{Capture: true, Quiet: true})
+	return strings.Contains(strings.ToLower(result.Stdout+"\n"+result.Stderr), "cursor")
 }
 
 var cursor = &core.AgentManifest{ID: "cursor", Label: "Cursor", Homepage: "https://www.cursor.com", CLIBin: "agent", ConfigDir: cursorConfigDir, Detect: func() core.Detection {

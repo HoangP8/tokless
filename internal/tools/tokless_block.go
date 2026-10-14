@@ -11,6 +11,11 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+// InstructionPath returns the path to the agent's instructions/markdown file.
+func InstructionPath(agent string) string {
+	return instructionPath(agent)
+}
+
 func instructionPath(agent string) string {
 	switch agent {
 	case "claude":

@@ -22,6 +22,8 @@ func grokConfigFile() string { return filepath.Join(grokDir(), "config.toml") }
 
 func GrokInstructionsFile() string { return filepath.Join(grokDir(), "rules", "AGENTS.md") }
 
+func GrokConfigFile() string { return grokConfigFile() }
+
 var grok = &core.AgentManifest{
 	ID:        "grok",
 	Label:     "Grok",
@@ -354,6 +356,8 @@ type grokRtkHook struct {
 func grokRtkHookPath() string {
 	return filepath.Join(grokDir(), "hooks", grokRtkHookFile)
 }
+
+func GrokRtkHookPath() string { return grokRtkHookPath() }
 
 func grokCodegraphSessionHookPath() string {
 	return filepath.Join(grokDir(), "hooks", grokCodegraphSessionHookFile)

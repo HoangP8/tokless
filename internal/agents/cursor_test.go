@@ -263,6 +263,169 @@ func TestHasCursorCodegraphIndexHookRequiresBothExactLifecycleEntries(t *testing
 	}
 }
 
+func TestHasCursorCodegraphIndexHookToleratesStaleAndBarePaths(t *testing.T) {
+	withoutWSL(t)
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	p := cursorHooksFile()
+
+	write := func(cmd string) {
+		t.Helper()
+		raw := `{"version":1,"hooks":{"sessionStart":[{"command":"` + cmd + `"}],"workspaceOpen":[{"command":"` + cmd + `"}]}}`
+		if err := util.WriteFile(p, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Accepts absolute tokless path.
+	write("/home/hoangp8/.local/bin/tokless cursor-hook codegraph-index")
+	if !HasCursorCodegraphIndexHook() {
+		t.Fatal("absolute tokless path not recognized")
+	}
+
+	// Accepts bare tokless program name.
+	write("tokless cursor-hook codegraph-index")
+	if !HasCursorCodegraphIndexHook() {
+		t.Fatal("bare tokless not recognized")
+	}
+
+	// Accepts stale /tmp/... tokless path.
+	write("/tmp/tokless-baseline-bin/tokless-linux cursor-hook codegraph-index")
+	if !HasCursorCodegraphIndexHook() {
+		t.Fatal("stale /tmp tokless path not recognized")
+	}
+
+	// Accepts leftover stale duplicates alongside the current entry.
+	dupRaw := `{"version":1,"hooks":{"sessionStart":[{"command":"'/home/hoangp8/.local/bin/tokless' cursor-hook codegraph-index"},{"command":"'/tmp/tokless-final' cursor-hook codegraph-index"}],"workspaceOpen":[{"command":"'/home/hoangp8/.local/bin/tokless' cursor-hook codegraph-index"},{"command":"'/tmp/tokless-final' cursor-hook codegraph-index"}]}}`
+	if err := util.WriteFile(p, dupRaw); err != nil {
+		t.Fatal(err)
+	}
+	if !HasCursorCodegraphIndexHook() {
+		t.Fatal("stale duplicate codegraph entries not tolerated")
+	}
+
+	// Accepts the WSL bridge form: wsl.exe -d distro -- <stale tokless path> cursor-hook codegraph-index.
+	write("wsl.exe -d Ubuntu -- '/tmp/tokless-opt/tokless-linux' cursor-hook codegraph-index")
+	if !HasCursorCodegraphIndexHook() {
+		t.Fatal("WSL bridge form not recognized")
+	}
+
+	// Rejects a tokless command with extra trailing args.
+	write("tokless cursor-hook codegraph-index extra")
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("codegraph-index tail with extra args recognized")
+	}
+
+	// Rejects non-tokless command.
+	write("foreign cursor-hook codegraph-index")
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("non-tokless command recognized")
+	}
+
+	// Rejects short-circuited cursor-hook project-rules tail.
+	write("tokless cursor-hook project-rules")
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("project-rules tail recognized as codegraph-index")
+	}
+
+	// Rejects foreign command with wrong tail.
+	write("foreign cursor-hook project-rules")
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("foreign project-rules tail recognized")
+	}
+
+	// Requires the hook in BOTH events.
+	raw := `{"version":1,"hooks":{"sessionStart":[{"command":"tokless cursor-hook codegraph-index"}]}}`
+	if err := util.WriteFile(p, raw); err != nil {
+		t.Fatal(err)
+	}
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("missing workspaceOpen hook passed verification")
+	}
+	raw = `{"version":1,"hooks":{"workspaceOpen":[{"command":"tokless cursor-hook codegraph-index"}]}}`
+	if err := util.WriteFile(p, raw); err != nil {
+		t.Fatal(err)
+	}
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("missing sessionStart hook passed verification")
+	}
+}
+
+func TestCursorCodegraphHookInstallDedupesAndRemoveClearsOwnedVariants(t *testing.T) {
+	withoutWSL(t)
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	p := cursorHooksFile()
+
+	// Stale duplicates (bare, absolute, /tmp) plus a foreign entry per event.
+	stale := `{"version":1,"hooks":{` +
+		`"sessionStart":[{"command":"tokless cursor-hook codegraph-index"},{"command":"'/tmp/tokless-final' cursor-hook codegraph-index"},{"command":"user-guard"}],` +
+		`"workspaceOpen":[{"command":"'/home/hoangp8/.local/bin/tokless' cursor-hook codegraph-index"},{"command":"/tmp/tokless-opt/tokless-linux cursor-hook codegraph-index"},{"command":"user-open"}]}}`
+	if err := util.WriteFile(p, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	// Installing must collapse every owned variant down to the canonical entry.
+	if !installCursorCodegraphIndexHook(p) {
+		t.Fatal("install over stale duplicates failed")
+	}
+	raw, _ := util.ReadFileSafe(p)
+	cfg := util.TryParseJsonc(raw)
+	hooksValue, _ := cfg.Get("hooks")
+	hooks := hooksValue.(*util.OrderedMap)
+	for _, event := range []string{"sessionStart", "workspaceOpen"} {
+		value, _ := hooks.Get(event)
+		entries := value.([]any)
+		count := 0
+		for _, entry := range entries {
+			if cursorCodegraphHookEntryMatches(entry) {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("install left %d owned codegraph hooks in %s, want 1", count, event)
+		}
+	}
+	if !HasCursorCodegraphIndexHook() {
+		t.Fatal("install did not produce a verifiable hook")
+	}
+
+	// Re-installing must not grow the owned entries (install returns true
+	// whenever the write succeeds, so assert on the resulting content).
+	if !installCursorCodegraphIndexHook(p) {
+		t.Fatal("re-install failed")
+	}
+	raw, _ = util.ReadFileSafe(p)
+	cfg = util.TryParseJsonc(raw)
+	hooksValue, _ = cfg.Get("hooks")
+	hooks = hooksValue.(*util.OrderedMap)
+	for _, event := range []string{"sessionStart", "workspaceOpen"} {
+		value, _ := hooks.Get(event)
+		entries := value.([]any)
+		count := 0
+		for _, entry := range entries {
+			if cursorCodegraphHookEntryMatches(entry) {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("re-install left %d owned codegraph hooks in %s, want 1", count, event)
+		}
+	}
+
+	// Removal must clear every owned variant but preserve foreign entries.
+	if !removeCursorCodegraphIndexHook(p) {
+		t.Fatal("remove failed")
+	}
+	raw, _ = util.ReadFileSafe(p)
+	if HasCursorCodegraphIndexHook() {
+		t.Fatal("owned hooks survived removal")
+	}
+	if !strings.Contains(raw, "user-guard") || !strings.Contains(raw, "user-open") {
+		t.Fatalf("removal dropped foreign hook entries: %s", raw)
+	}
+}
+
 func TestCursorRtkHookUpstreamContractIsIsolatedAndIdempotent(t *testing.T) {
 	withoutWSL(t)
 	util.SetHomeOverride(t.TempDir())

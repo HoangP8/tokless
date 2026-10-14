@@ -103,6 +103,8 @@ func antigravityHooksFile() string {
 	return filepath.Join(util.Home(), ".gemini", "config", "hooks.json")
 }
 
+func AntigravityRtkHooksFile() string { return antigravityHooksFile() }
+
 // HasAntigravityContextModeHook checks the minimal PreToolUse hook.
 func HasAntigravityContextModeHook() bool {
 	raw, ok := util.ReadFileSafe(antigravityHooksFile())

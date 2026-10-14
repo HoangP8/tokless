@@ -134,6 +134,8 @@ func TestHeadroomInstallUsesManagedUVState(t *testing.T) {
 }
 
 func TestHeadroomVersionProbeRequiresWorkingBinary(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	old := runHeadroom
 	t.Cleanup(func() { runHeadroom = old })
 	runHeadroom = func(string, []string, []string, context.Context) util.ExecResult {
@@ -147,6 +149,32 @@ func TestHeadroomVersionProbeRequiresWorkingBinary(t *testing.T) {
 	}
 	if err := headroomVersionProbe(); err != nil {
 		t.Fatalf("version probe = %v", err)
+	}
+}
+
+func TestHeadroomVersionProbeSkipsSpawnWithMetadata(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	dist := filepath.Join(home, ".local", "share", "uv", "tools", "headroom-ai", "lib", "python3.13", "site-packages", "headroom_ai-0.35.0.dist-info")
+	if err := os.MkdirAll(dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "METADATA"), []byte("Version: 0.35.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spawns := 0
+	old := runHeadroom
+	t.Cleanup(func() { runHeadroom = old })
+	runHeadroom = func(string, []string, []string, context.Context) util.ExecResult {
+		spawns++
+		return util.ExecResult{Code: 127, Stderr: "must not run"}
+	}
+	if err := headroomVersionProbe(); err != nil {
+		t.Fatalf("metadata fast path = %v", err)
+	}
+	if spawns != 0 {
+		t.Fatalf("spawns = %d, want 0", spawns)
 	}
 }
 

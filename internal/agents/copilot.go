@@ -54,7 +54,9 @@ func copilotIdeHooksDir() string { return filepath.Join(ideRoot(), ".github", "h
 func copilotIdeHooksFile(name string) string {
 	return filepath.Join(copilotIdeHooksDir(), name)
 }
-func copilotIdeMcpFile() string { return filepath.Join(ideRoot(), ".vscode", "mcp.json") }
+func CopilotRtkHooksFile() string    { return copilotHooksFile("tokless-rtk.json") }
+func CopilotRtkIDEHooksFile() string { return copilotIdeHooksFile("tokless-rtk.json") }
+func copilotIdeMcpFile() string      { return filepath.Join(ideRoot(), ".vscode", "mcp.json") }
 func copilotIdeInstructionsFile() string {
 	return filepath.Join(ideRoot(), ".github", "copilot-instructions.md")
 }

@@ -145,6 +145,17 @@ func treeStatus(lines ...string) {
 	util.TreeClose()
 }
 
+// treeStatusLast prints the final Status branch without extending the tree.
+func treeStatusLast(lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
+	util.TreeCornerLast("Status")
+	for _, line := range lines {
+		util.TreeBottomLeaf(line)
+	}
+}
+
 // Palette helpers for status / version trees.
 func paintVer(v string) string  { return util.C.Soft(v) }
 func paintName(s string) string { return util.C.Bold(s) }
@@ -175,14 +186,14 @@ func printRepoFooter(tree bool) {
 	}
 	if tree {
 		util.TreeFooter(52)
-		util.L.Raw("  " + util.C.Gray("If tokless helps, please star it here: ") + util.C.Cyan(repoURL))
-		util.L.Raw("  " + util.C.Gray("If you hit any issue or have ideas, please raise it here: ") + util.C.Cyan(issuesURL))
+		util.L.Raw("  " + util.C.Bold(util.C.Gray("If tokless helps, please star it here: ")) + util.C.Cyan(repoURL))
+		util.L.Raw("  " + util.C.Bold(util.C.Gray("If you hit any issue or have ideas, please raise it here: ")) + util.C.Cyan(issuesURL))
 		return
 	}
 	util.L.Raw("")
 	util.L.Raw(util.C.Gray(util.Rule(52)))
-	util.L.Raw("  " + util.C.Gray("If tokless helps, please star it here: ") + util.C.Cyan(repoURL))
-	util.L.Raw("  " + util.C.Gray("If you hit any issue or have ideas, please raise it here: ") + util.C.Cyan(issuesURL))
+	util.L.Raw("  " + util.C.Gray("If tokless helps, please star it here: ") + util.C.Blue(repoURL))
+	util.L.Raw("  " + util.C.Gray("If you hit any issue or have ideas, please raise it here: ") + util.C.Blue(issuesURL))
 }
 
 func osEnvTest() bool { return os.Getenv("TOKLESS_TEST") == "1" }

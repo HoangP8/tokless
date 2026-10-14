@@ -19,6 +19,8 @@ func droidHooksFile() string {
 	return filepath.Join(droidDir(), "hooks.json")
 }
 
+func DroidRtkHooksFile() string { return droidHooksFile() }
+
 func droidMcpFile() string {
 	return filepath.Join(droidDir(), "mcp.json")
 }

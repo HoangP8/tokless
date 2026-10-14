@@ -138,6 +138,11 @@ func codexIsManagedEndpoint(have string) bool {
 	return false
 }
 
+// CodexUsesChatGPTAuth reports whether Codex authenticates via ChatGPT OAuth.
+func CodexUsesChatGPTAuth() bool {
+	return codexUsesChatGPTAuth()
+}
+
 func codexUsesChatGPTAuth() bool {
 	raw, ok := util.ReadFileSafe(filepath.Join(util.CodexPathsResolved().Dir, "auth.json"))
 	if !ok {
@@ -1124,6 +1129,8 @@ const (
 func codexHooksFile() string {
 	return filepath.Join(util.CodexPathsResolved().Dir, "hooks.json")
 }
+
+func CodexRtkHooksFile() string { return codexHooksFile() }
 
 // codexHookCommand is the command Codex runs for every Bash tool call.
 func codexHookCommand() string {

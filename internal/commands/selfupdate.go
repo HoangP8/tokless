@@ -24,7 +24,7 @@ const selfUpdateRuleWidth = 52
 
 func RunSelfUpdate() int {
 	local := util.ToklessVersion()
-	latest := fetchLatestReleaseTag()
+	latest := fetchLatestReleaseTagCached()
 	if latest == "" {
 		util.L.Err("Could not reach latest version.")
 		util.L.Raw("  " + util.C.Cyan("curl -fsSL "+installSh+" | bash"))
@@ -286,4 +286,74 @@ func fetchLatestReleaseTag() string {
 		return ""
 	}
 	return strings.TrimPrefix(j.TagName, "v")
+}
+
+// selfUpdateCacheTTL bounds how stale a cached "latest tag" may be.
+const selfUpdateCacheTTL = 6 * time.Hour
+const selfUpdateCacheNegTTL = 60 * time.Second
+
+// selfUpdateCachePath is where the latest release tag is cached.
+func selfUpdateCachePath() string {
+	home := util.Home()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "tokless", "selfupdate.json")
+}
+
+// selfUpdateCachedTag reads the cached tag and whether it is still fresh.
+func selfUpdateCachedTag() (tag string, fresh bool) {
+	p := selfUpdateCachePath()
+	if p == "" {
+		return "", false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", false
+	}
+	var c struct {
+		Tag string `json:"tag"`
+		Ts  int64  `json:"ts"`
+	}
+	if json.Unmarshal(b, &c) != nil {
+		return "", false
+	}
+	age := time.Since(time.UnixMilli(c.Ts))
+	ttl := selfUpdateCacheTTL
+	if c.Tag == "" {
+		ttl = selfUpdateCacheNegTTL
+	}
+	return c.Tag, age <= ttl
+}
+
+func writeSelfUpdateCache(tag string) {
+	p := selfUpdateCachePath()
+	if p == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	b, _ := json.Marshal(struct {
+		Tag string `json:"tag"`
+		Ts  int64  `json:"ts"`
+	}{Tag: tag, Ts: time.Now().UnixMilli()})
+	_ = os.WriteFile(p, b, 0o644)
+}
+
+// fetchLatestReleaseTagCached returns the latest release tag, reading a cached
+// value when fresh.
+func fetchLatestReleaseTagCached() string {
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return fetchLatestReleaseTag()
+	}
+	if tag, fresh := selfUpdateCachedTag(); fresh {
+		return tag
+	}
+	tag := fetchLatestReleaseTag()
+	if tag == "" {
+		if prev, _ := selfUpdateCachedTag(); prev != "" {
+			return prev
+		}
+	}
+	writeSelfUpdateCache(tag)
+	return tag
 }

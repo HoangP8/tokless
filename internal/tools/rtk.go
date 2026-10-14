@@ -171,6 +171,44 @@ func ompRtkExtensionPath() string {
 	return filepath.Join(agents.OmpAgentDirResolved(), "extensions", "tokless-rtk.ts")
 }
 
+// RTKLocationFor returns the mechanism file checked by RTK's verifier.
+func RTKLocationFor(agentID string) (path, label string) {
+	switch agentID {
+	case "amp":
+		return ampRtkPluginPath(), "plugin tokless-rtk.ts"
+	case "zcode":
+		return util.ZcodePathsResolved().Config, "PreToolUse hook"
+	case "dsh":
+		return agents.DshRtkPatchFile(), "cordis patch tokless-rtk"
+	case "claude":
+		return util.ClaudeCodePaths().Settings, "PreToolUse hook"
+	case "opencode":
+		return openCodeRtkPluginPath(), "plugin tokless-rtk.ts"
+	case "codex":
+		return agents.CodexRtkHooksFile(), "PreToolUse hook"
+	case "cursor":
+		return agents.CursorRtkHooksFile(), "PreToolUse hook + permissions"
+	case "antigravity":
+		return agents.AntigravityRtkHooksFile(), "PreToolUse hook"
+	case "copilot":
+		return agents.CopilotRtkHooksFile(), "PreToolUse hook"
+	case "droid":
+		return agents.DroidRtkHooksFile(), "PreToolUse hook"
+	case "pi":
+		return filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"), "extension rtk.ts"
+	case "omp":
+		return ompRtkExtensionPath(), "extension tokless-rtk.ts"
+	case "kilo":
+		return kiloRtkPath(), "plugin rtk.ts"
+	case "cline":
+		return clineRtkHookPath(), "PreToolUse hook"
+	case "grok":
+		return agents.GrokRtkHookPath(), "PreToolUse hook"
+	default:
+		return "", ""
+	}
+}
+
 func writeOmpRtkExtension() bool {
 	if err := util.EnsureDir(filepath.Dir(ompRtkExtensionPath())); err != nil {
 		return false
@@ -1393,7 +1431,7 @@ var rtk = &core.ToolManifest{
 		},
 	},
 	VerifyFor: map[string]core.VerifyFn{
-		"amp":  func() *bool { return core.BoolPtr(ampRtkVerify()) },
+		"amp": func() *bool { return core.BoolPtr(ampRtkVerify()) },
 		"zcode": func() *bool {
 			return core.BoolPtr(zcodeRtkVerify())
 		},

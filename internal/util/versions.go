@@ -185,10 +185,22 @@ func rtkInstalledVersion() *string {
 	return nil
 }
 
+var runNpmLs = func(npmBin, pkg string) ExecResult {
+	return Run(npmBin, []string{"ls", "-g", "--depth=0", "--json", pkg}, RunOptions{Capture: true})
+}
+
 func npmInstalledVersion(pkg string) *string {
+	prefix := npmPrefix()
+	userPrefix := userLocalNpmPrefix()
+	if dir := npmPkgDirFromPrefixes(pkg, prefix, userPrefix); dir != "" {
+		if v := readPkgVersion(filepath.Join(dir, "package.json")); v != nil {
+			return v
+		}
+	}
+
 	npmBin := ResolveNpmBinary()
 	if npmBin != "" {
-		r := Run(npmBin, []string{"ls", "-g", "--depth=0", "--json", pkg}, RunOptions{Capture: true})
+		r := runNpmLs(npmBin, pkg)
 		var j struct {
 			Dependencies map[string]struct {
 				Version string `json:"version"`
@@ -199,10 +211,10 @@ func npmInstalledVersion(pkg string) *string {
 				return strp(d.Version)
 			}
 		}
-		if v := npmPrefixInstalledVersion(npmPrefix(), pkg); v != nil {
+		if v := npmPrefixInstalledVersion(prefix, pkg); v != nil {
 			return v
 		}
-		if v := npmPrefixInstalledVersion(userLocalNpmPrefix(), pkg); v != nil {
+		if v := npmPrefixInstalledVersion(userPrefix, pkg); v != nil {
 			return v
 		}
 	}
@@ -256,8 +268,9 @@ func gatherVersions(force bool) map[string]VersionInfo {
 			"rtk":          {Installed: strp("0.43.0"), Latest: strp("0.43.0"), Channel: "github", Present: false},
 			"codegraph":    {Installed: nil, Latest: strp("1.1.6"), Channel: "npm", Present: false},
 			"context-mode": {Installed: nil, Latest: strp("1.0.169"), Channel: "npm", Present: false},
-			"headroom":     {Installed: strp("0.35.0"), Channel: "uv", Present: HeadroomInstalled()},
-			"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm", Present: false},
+		"headroom":     {Installed: strp("0.35.0"), Latest: strp("0.35.0"), Channel: "uv", Present: HeadroomInstalled()},
+		"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm", Present: false},
+		"projectmem":   {Installed: strp("0.3.4"), Latest: strp("0.3.4"), Channel: "uv", Present: false},
 		}
 	}
 	// Latest (slow, network) is cached; installed (fast, local) is always live.
@@ -267,7 +280,7 @@ func gatherVersions(force bool) map[string]VersionInfo {
 	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm", Present: npmInstalledVersion("@colbymchenry/codegraph") != nil}
 	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm", Present: npmInstalledVersion("context-mode") != nil}
 	out["headroom"] = VersionInfo{Installed: HeadroomInstalledVersion(), Latest: latest["headroom"], Channel: "uv", Present: HeadroomInstalled()}
-	out["projectmem"] = VersionInfo{Installed: ProjectmemInstalledVersion(), Channel: "uv", Present: ProjectmemInstalled()}
+	out["projectmem"] = VersionInfo{Installed: ProjectmemInstalledVersion(), Latest: latest["projectmem"], Channel: "uv", Present: ProjectmemInstalled()}
 	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm", Present: npmInstalledVersion("tokless") != nil}
 	return out
 }
@@ -307,14 +320,39 @@ func InstalledPathFor(id string) string {
 		return npmPkgDir("context-mode")
 	case "tokless":
 		return npmPkgDir("tokless")
+	case "headroom":
+		if !HeadroomInstalled() {
+			return ""
+		}
+		return HeadroomBin()
+	case "projectmem":
+		return uvToolPath("projectmem", "pjm")
+	}
+	return ""
+}
+
+// uvToolPath returns the uv-installed tool's bin path for id, or "".
+func uvToolPath(id, exe string) string {
+	if exe == "" {
+		return ""
+	}
+	for _, tools := range headroomUVToolDirs() {
+		bin := filepath.Join(tools, id, "bin", exe)
+		if Exists(bin) {
+			return bin
+		}
 	}
 	return ""
 }
 
 // npmPkgDir finds a global npm/bun package directory.
 func npmPkgDir(pkg string) string {
+	return npmPkgDirFromPrefixes(pkg, npmPrefix(), userLocalNpmPrefix())
+}
+
+func npmPkgDirFromPrefixes(pkg, npmPrefix, userPrefix string) string {
 	var dirs []string
-	for _, prefix := range []string{npmPrefix(), userLocalNpmPrefix()} {
+	for _, prefix := range []string{npmPrefix, userPrefix} {
 		if prefix == "" {
 			continue
 		}
@@ -325,6 +363,14 @@ func npmPkgDir(pkg string) string {
 		}
 	}
 	dirs = append(dirs, filepath.Join(Home(), ".bun", "install", "global", "node_modules", pkg))
+	if npmBin := resolveNpmBinary(); npmBin != "" && filepath.Base(filepath.Dir(npmBin)) == "bin" {
+		prefix := filepath.Dir(filepath.Dir(npmBin))
+		if IsWin {
+			dirs = append(dirs, filepath.Join(prefix, "node_modules", pkg))
+		} else {
+			dirs = append(dirs, filepath.Join(prefix, "lib", "node_modules", pkg))
+		}
+	}
 	for _, d := range dirs {
 		if Exists(filepath.Join(d, "package.json")) {
 			return d
@@ -333,7 +379,7 @@ func npmPkgDir(pkg string) string {
 	return ""
 }
 
-var toolIDs = []string{"rtk", "codegraph", "context-mode", "tokless", "headroom"}
+var toolIDs = []string{"rtk", "codegraph", "context-mode", "tokless", "headroom", "projectmem"}
 
 var latestFetcher = fetchLatestFor
 
@@ -350,6 +396,8 @@ func fetchLatestFor(id string) *string {
 		return npmLatest("tokless")
 	case "headroom":
 		return pypiLatest("headroom-ai")
+	case "projectmem":
+		return pypiLatest("projectmem")
 	}
 	return nil
 }

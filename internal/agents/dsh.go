@@ -52,6 +52,8 @@ func DshInstructionsFile() string {
 	return filepath.Join(dshHome(), "AGENTS.md")
 }
 
+func DshPatchFile() string { return dshPatchFile() }
+
 // DshHooksBridgeEntry is the cordis.patch.yml row that mounts
 // @deepseek-ai/dsh-hooks-claude-code so dsh runs Claude Code
 // command hooks. Its config.configPath points at a hooks.json.
@@ -61,6 +63,8 @@ const DshHooksBridgeEntry = "hooks-claude-code"
 func dshHooksFile() string {
 	return filepath.Join(dshHome(), "hooks.json")
 }
+
+func DshRtkPatchFile() string { return dshPatchFile() }
 
 // Headroom-front headers. dsh providers point baseURL at the headroom OpenAI
 // front (8787/v1) and carry the real upstream in these two headers so headroom

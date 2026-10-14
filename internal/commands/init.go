@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
@@ -12,13 +13,14 @@ import (
 
 // InitOptions carries flags shared across init/update.
 type InitOptions struct {
-	Agents  []string
-	Tools   []string
-	Agent   string
-	DryRun  bool
-	Yes     bool
-	Verbose bool
-	Upgrade bool
+	Agents    []string
+	Tools     []string
+	Agent     string
+	DryRun    bool
+	Yes       bool
+	Verbose   bool
+	Upgrade   bool
+	Uninstall bool
 }
 
 func contains(ss []string, s string) bool {
@@ -37,6 +39,30 @@ func hasToolForAgent(tools []*core.ToolManifest, agentID string) bool {
 		}
 	}
 	return false
+}
+
+// detectAgents probes all agents concurrently.
+func detectAgents(allAgents []*core.AgentManifest) (map[string]bool, map[string]string) {
+	results := make([]core.Detection, len(allAgents))
+	var wg sync.WaitGroup
+	for i, a := range allAgents {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = a.Detect()
+		}()
+	}
+	wg.Wait()
+
+	installedIDs := make(map[string]bool, len(allAgents))
+	detectedSource := make(map[string]string, len(allAgents))
+	for i, a := range allAgents {
+		if results[i].Installed {
+			installedIDs[a.ID] = true
+			detectedSource[a.ID] = results[i].Source
+		}
+	}
+	return installedIDs, detectedSource
 }
 
 func RunInit(opts InitOptions) int {
@@ -121,14 +147,7 @@ func RunInit(opts InitOptions) int {
 	}
 
 	allAgents := core.ListAgents()
-	installedIDs := map[string]bool{}
-	detectedSource := map[string]string{}
-	for _, a := range allAgents {
-		if d := a.Detect(); d.Installed {
-			installedIDs[a.ID] = true
-			detectedSource[a.ID] = d.Source
-		}
-	}
+	installedIDs, detectedSource := detectAgents(allAgents)
 
 	var requested []string
 	switch {
@@ -290,15 +309,17 @@ func RunInit(opts InitOptions) int {
 				}
 				okWire := false
 				wasWired := false
-				if verify, exists := tool.VerifyFor[agentID]; exists {
-					if current := verify(); current != nil {
-						wasWired = *current
+				if !tool.InstructionOnly {
+					if verify, exists := tool.VerifyFor[agentID]; exists {
+						if current := verify(); current != nil {
+							wasWired = *current
+						}
 					}
 				}
 				if res, err := fn(core.RunOpts{DryRun: opts.DryRun, Upgrade: opts.Upgrade}); err == nil {
 					okWire = res
 				}
-				if okWire && !opts.DryRun && os.Getenv("TOKLESS_TEST") != "1" {
+				if okWire && !opts.DryRun && os.Getenv("TOKLESS_TEST") != "1" && !tool.InstructionOnly {
 					if verify, ok := tool.VerifyFor[agentID]; ok {
 						r := verify()
 						okWire = r != nil && *r
@@ -404,6 +425,9 @@ func projectmemSeedProject(opts InitOptions, tools []*core.ToolManifest) {
 
 func initAgentFullyWired(agentID string, tools []*core.ToolManifest) bool {
 	for _, tool := range tools {
+		if tool.InstructionOnly {
+			continue
+		}
 		verify, ok := tool.VerifyFor[agentID]
 		if !ok {
 			continue

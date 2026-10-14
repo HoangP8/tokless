@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -74,21 +75,61 @@ func parseArgs(argv []string) parsedArgs {
 
 func helpText() string {
 	cy := util.C.Cyan
-	return util.C.Bold(util.C.Cyan("tokless")) + " — token-saving for AI coding agents (Claude Code, OpenCode, Codex, Antigravity, GitHub Copilot, Factory Droid, Grok, Pi, Oh My Pi, Cline)\n\n" +
+	return util.C.Bold(util.C.Cyan("tokless")) + " — token-saving for AI coding agents\n\n" +
 		util.C.Bold("Usage:") + "\n" +
 		"  " + cy("tokless") + "              Install + wire everything (default; safe to re-run)\n" +
 		"  " + cy("tokless update") + "       Update the tokless CLI, then show version diff and upgrade tools\n" +
-		"  " + cy("tokless doctor") + "       Show what's wired up; warn about anything broken\n" +
+		"  " + cy("tokless doctor") + "       Show health; use --fix to interactively start proxy or build project index\n" +
 		"  " + cy("tokless info") + "         Show how tokless was installed, plus paths and config locations\n" +
 		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
-		"  " + cy("tokless uninstall") + "    Remove everything tokless ever touched\n" +
-		"  " + cy("tokless proxy") + "      Manage the headroom HTTP proxy: up|down|status\n\n" +
+		"  " + cy("tokless disable") + "      Remove wiring; use --uninstall to also remove installed tools\n" +
+		"  " + cy("tokless proxy") + "        Manage the headroom HTTP proxy: up|down|status\n\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agents <list>     Limit to a subset: claude,opencode,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor,amp,kimi,dsh,zcode\n" +
-		"  --tools <list>      Limit to a subset: rtk,caveman,ponytail,codegraph,context-mode,headroom,projectmem\n" +
+		"  --agents <list>     Limit to a subset: " + fitList(agentSubset, termWidth(), len("  --agents <list>     Limit to a subset: ")) + "\n" +
+		"  --tools <list>      Limit to a subset: " + fitList(toolSubset, termWidth(), len("  --tools <list>      Limit to a subset: ")) + "\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
+		"  --uninstall         With disable, also remove tokless-installed binaries/packages\n" +
 		"  --verbose           Show every step\n\n" +
 		util.C.Gray("Docs: https://github.com/HoangP8/tokless")
+}
+
+var agentSubset = []string{"claude", "opencode", "codex", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "cursor", "amp", "kimi", "dsh", "zcode"}
+var toolSubset = []string{"rtk", "codegraph", "context-mode", "headroom", "projectmem"}
+
+// termWidth returns the terminal width in columns.
+func termWidth() int {
+	if s := os.Getenv("COLUMNS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 40 {
+			return n
+		}
+	}
+	if w := ttyWidth(); w >= 40 {
+		return w
+	}
+	return 80
+}
+
+
+func fitList(items []string, width, prefixW int) string {
+	avail := width - prefixW
+	if avail < 12 {
+		avail = 12
+	}
+	var b strings.Builder
+	cur := 0
+	for i, it := range items {
+		sep := ""
+		if i > 0 {
+			sep = ","
+		}
+		if cur+len(sep)+len(it) > avail-len(",…") {
+			b.WriteString(",…")
+			return b.String()
+		}
+		b.WriteString(sep + it)
+		cur += len(sep) + len(it)
+	}
+	return b.String()
 }
 
 func parseList(raw string, ok bool, allowed []string) ([]string, error) {
@@ -173,6 +214,9 @@ func runProxyCli(argv []string) int {
 		return commands.RunProxyDown(opts)
 	case "status":
 		return commands.RunProxyStatus(opts)
+	case "":
+		fmt.Println(proxyHelpText())
+		return 0
 	}
 	util.L.Err("Unknown proxy subcommand: " + p.cmd)
 	fmt.Println(proxyHelpText())
@@ -328,7 +372,6 @@ func run() int {
 	if command == "" {
 		command = "init"
 	}
-
 	opts := commands.InitOptions{
 		Agents:  agentList,
 		Tools:   toolList,
@@ -345,15 +388,17 @@ func run() int {
 	case "update":
 		code = commands.RunUpdate(opts)
 	case "doctor":
-		code = commands.RunDoctor(p.bools["offline"])
+		code = commands.RunDoctor(p.bools["offline"], p.bools["fix"])
 	case "info":
 		code = commands.RunInfo()
 	case "index":
 		code = commands.RunIndex(opts, p.bools["auto"])
 	case "disable":
+		opts.Uninstall = p.bools["uninstall"]
 		code = commands.RunDisable(opts)
 	case "uninstall":
-		code = commands.RunUninstall(opts)
+		opts.Uninstall = true
+		code = commands.RunDisable(opts)
 	case "self-update":
 		code = commands.RunSelfUpdate()
 	default:

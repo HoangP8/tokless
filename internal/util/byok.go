@@ -297,6 +297,33 @@ func ReadBYOKRoute(id string) (BYOKRoute, bool) {
 	return result, err == nil && result.ID != ""
 }
 
+// BYOKRoutesFor returns the gateway routes registered for one agent.
+func BYOKRoutesFor(agentID string) []BYOKRoute {
+	byokRegistryLock.Lock()
+	defer byokRegistryLock.Unlock()
+	return byokRoutesFor(agentID)
+}
+
+// byokRoutesFor reads and filters routes by agentID prefix (unexported helper).
+func byokRoutesFor(agentID string) []BYOKRoute {
+	raw, err := os.ReadFile(byokRoutesPath())
+	if err != nil {
+		return []BYOKRoute{}
+	}
+	routes, err := ParseBYOKRoutes(string(raw))
+	if err != nil {
+		return []BYOKRoute{}
+	}
+	filtered := make([]BYOKRoute, 0)
+	prefix := agentID + ":"
+	for _, route := range routes {
+		if strings.HasPrefix(route.ID, prefix) {
+			filtered = append(filtered, route)
+		}
+	}
+	return filtered
+}
+
 // DeleteBYOKRoute removes a route from the registry by ID.
 func DeleteBYOKRoute(id string) error {
 	byokRegistryLock.Lock()

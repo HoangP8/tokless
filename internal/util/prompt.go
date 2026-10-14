@@ -175,33 +175,39 @@ func settleMultiSelect(question string, items []MultiSelectOption) {
 	fmt.Fprintf(os.Stdout, "%s%s\n", C.Dim(corner), C.Bold(question))
 	for _, it := range items {
 		pad := strings.Repeat(" ", labelW-utf8.RuneCountInString(it.Label))
-		var box, label, tag, extra string
+		var box, prefix, label, tag, extra string
 		if it.Disabled {
 			box = C.Dim(Sym.Disabled)
+			prefix = "  "
 			label = C.Dim(it.Label)
-			tag = C.Yellow("[MISSING]")
+			tag = tagMissing()
 			if it.Hint != "" {
 				extra = "  " + C.Dim(it.Hint)
 			}
 		} else if it.Selected {
 			box = C.Green(Sym.Selected)
+			prefix = C.Green(C.Bold("✓ "))
 			label = C.Green(C.Bold(it.Label))
-			tag = C.Green(C.Bold("✓ ")) + C.Green("[READY]") + "  "
+			tag = tagReady()
 			if it.Hint != "" {
 				extra = "  " + C.Dim(it.Hint)
 			}
 		} else {
 			box = C.Gray(Sym.Unselected)
+			prefix = "  "
 			label = it.Label
-			tag = C.Green("[READY]") + "  "
+			tag = tagReady()
 			if it.Hint != "" {
 				extra = "  " + C.Dim(it.Hint)
 			}
 		}
-		fmt.Fprintf(os.Stdout, "%s%s  %s%s  %s%s\n", stem, box, label, pad, tag, extra)
+		fmt.Fprintf(os.Stdout, "%s%s  %s%s%s  %s%s\n", stem, box, prefix, label, pad, tag, extra)
 	}
 	fmt.Fprintln(os.Stdout, C.Dim(bul))
 }
+
+func tagReady() string   { return C.Green("[READY]   ") }
+func tagMissing() string { return C.Yellow("[MISSING] ") }
 
 func selectOneLine(question string, options []SelectOption, selected int) string {
 	fmt.Fprintln(os.Stdout, C.Bold(C.Cyan("?"))+" "+C.Bold(question))
@@ -274,7 +280,6 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 	dividerW := 60
 	ptr := pick("❯", ">")
 	checkMark := "✓"
-	tagPad := "  "
 	keyHint := "  " +
 		C.Orange("↑/↓") + C.Dim(" move · ") +
 		C.Orange("<space>") + C.Dim(" select · ") +
@@ -301,23 +306,26 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 				ptrCol = C.Cyan(C.Bold(ptr)) + " "
 			}
 
-			var box, label, tag, extra string
+			var box, prefix, label, tag, extra string
 			if it.Disabled {
 				box = C.Dim(Sym.Disabled)
+				prefix = "  "
 				label = C.Dim(it.Label)
-				tag = C.Yellow("[MISSING]")
+				tag = tagMissing()
 				if it.Hint != "" {
 					extra = "  " + C.Dim(it.Hint)
 				}
 			} else {
 				if it.Selected {
 					box = C.Green(Sym.Selected)
+					prefix = C.Green(C.Bold(checkMark + " "))
 					label = C.Green(C.Bold(it.Label))
-					tag = C.Green(C.Bold(checkMark+" ")) + C.Green("[READY]") + "  "
+					tag = tagReady()
 				} else {
 					box = C.Gray(Sym.Unselected)
+					prefix = "  "
 					label = it.Label
-					tag = tagPad + C.Green("[READY]") + "  "
+					tag = tagReady()
 				}
 				if it.Hint != "" {
 					extra = "  " + C.Dim(it.Hint)
@@ -328,7 +336,7 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 				label = C.Cyan(C.Bold(it.Label))
 			}
 
-			b.WriteString(C.Dim("│   ") + ptrCol + box + "  " + label + pad + "  " + tag + extra + "\r\n")
+			b.WriteString(C.Dim("│   ") + ptrCol + box + "  " + prefix + label + pad + "  " + tag + extra + "\r\n")
 		}
 		b.WriteString(C.Dim("  "+strings.Repeat(divider, dividerW)) + "\r\n")
 		b.WriteString(keyHint + "\r\n")
@@ -420,7 +428,7 @@ func multiSelectLine(question string, items []MultiSelectOption) []string {
 		pad := strings.Repeat(" ", labelW-utf8.RuneCountInString(it.Label))
 		if it.Disabled {
 			numByIdx[i] = 0
-			line := "       " + C.Dim(it.Label) + pad + "  " + C.Yellow("[MISSING]")
+			line := "       " + C.Dim(it.Label) + pad + "  " + tagMissing()
 			if it.Hint != "" {
 				line += "  " + C.Dim(it.Hint)
 			}
@@ -434,7 +442,7 @@ func multiSelectLine(question string, items []MultiSelectOption) []string {
 			mark = "*"
 			defaults = append(defaults, it.Value)
 		}
-		line := fmt.Sprintf("  %2d) %s%s%s  %s", num, mark, it.Label, pad, C.Green("[READY]")+"  ")
+		line := fmt.Sprintf("  %2d) %s%s%s  %s", num, mark, it.Label, pad, tagReady())
 		if it.Hint != "" {
 			line += "  " + C.Dim(it.Hint)
 		}

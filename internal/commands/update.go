@@ -87,6 +87,12 @@ func RunUpdate(opts InitOptions) int {
 		case has && info.Installed != nil && info.Latest != nil:
 			mark = util.C.Green(util.Sym.Check)
 			suffix = util.C.Green(" (up to date)")
+		case has && info.Present && info.Latest != nil:
+			mark = util.C.Green(util.Sym.Check)
+			suffix = util.C.Green(" (up to date)")
+		case has && info.Installed != nil && info.Latest != nil:
+			mark = util.C.Green(util.Sym.Check)
+			suffix = util.C.Green(" (up to date)")
 		}
 
 		util.TreeLeaf(mark + " " + name + " " + installed + " " + paintArrow() + " " + latest + suffix)

@@ -25,7 +25,7 @@ type purgeOps struct {
 }
 
 func RunDisable(opts InitOptions) int {
-	return disableImpl(opts, false, "Disabled")
+	return disableImpl(opts, opts.Uninstall, map[bool]string{true: "Uninstalled", false: "Disabled"}[opts.Uninstall])
 }
 
 func RunUninstall(opts InitOptions) int {

@@ -37,6 +37,8 @@ func piMcpFile() string       { return filepath.Join(piAgentDir(), "mcp.json") }
 
 func PiAgentDirResolved() string { return piAgentDir() }
 
+func PiSettingsFile() string { return piSettingsFile() }
+
 func HasPiRtkExtension() bool {
 	return util.Exists(filepath.Join(piExtensionsDir(), "rtk.ts"))
 }

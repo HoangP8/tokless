@@ -88,6 +88,8 @@ func ompMcpFile() string          { return filepath.Join(ompAgentDir(), "mcp.jso
 func ompExtensionsDir() string    { return filepath.Join(ompAgentDir(), "extensions") }
 func OmpAgentDirResolved() string { return ompAgentDir() }
 
+func OmpConfigFile() string { return ompConfigFile() }
+
 func init() { core.RegisterAgent(omp) }
 
 var omp = &core.AgentManifest{

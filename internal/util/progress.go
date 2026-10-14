@@ -60,6 +60,37 @@ func TreeCorner(title string) {
 	fmt.Println(C.Dim(treeCornerGlyph(false)) + C.Bold(C.Magenta(title)))
 }
 
+// TreeNest3 prints a row at depth three beneath a proxy block.
+func TreeNest3(portHasSibling, labelLast, last, block bool, line string) {
+	cont2 := "    "
+	if portHasSibling {
+		cont2 = pick("│   ", "|   ")
+	}
+	cont3 := "    "
+	if !labelLast {
+		cont3 = pick("│   ", "|   ")
+	}
+	prefix := TreeStem() + C.Dim("  "+cont2+cont3)
+	if !block {
+		if last {
+			prefix += C.Dim(pick("└─ ", "+- "))
+		} else {
+			prefix += C.Dim(pick("├─ ", "+- "))
+		}
+	}
+	fmt.Println(prefix + line)
+}
+
+// TreeCornerLast opens the final top-level branch.
+func TreeCornerLast(title string) {
+	fmt.Println(C.Dim(pick("└─ ", "+- ")) + C.Bold(C.Magenta(title)))
+}
+
+// TreeBottomLeaf prints a leaf below a final top-level branch.
+func TreeBottomLeaf(line string) {
+	fmt.Println(C.Dim("    ") + line)
+}
+
 // TreeCornerStyled opens a mid-tree branch; title already styled.
 func TreeCornerStyled(title string) {
 	fmt.Println(C.Dim(treeCornerGlyph(false)) + title)
@@ -68,6 +99,34 @@ func TreeCornerStyled(title string) {
 // TreeLeaf prints one row under TreeStem().
 func TreeLeaf(line string) {
 	fmt.Println(TreeStem() + line)
+}
+
+func TreeChild(line string) {
+	fmt.Println(TreeStem() + C.Dim(pick("└─ ", "+- ")) + line)
+}
+
+func TreeChildMid(line string) {
+	fmt.Println(TreeStem() + C.Dim("  ") + C.Dim(pick("├─ ", "+- ")) + line)
+}
+
+func TreeChildLast(line string) {
+	fmt.Println(TreeStem() + C.Dim("  ") + C.Dim(pick("└─ ", "+- ")) + line)
+}
+
+func TreeSubChildMid(line string) {
+	fmt.Println(TreeStem() + C.Dim("  │   ") + C.Dim(pick("├─ ", "+- ")) + line)
+}
+
+func TreeSubChildLast(line string) {
+	fmt.Println(TreeStem() + C.Dim("  │   ") + C.Dim(pick("└─ ", "+- ")) + line)
+}
+
+func TreeSubChildMidLast(line string) {
+	fmt.Println(TreeStem() + C.Dim("      ") + C.Dim(pick("├─ ", "+- ")) + line)
+}
+
+func TreeSubChildLastLast(line string) {
+	fmt.Println(TreeStem() + C.Dim("      ") + C.Dim(pick("└─ ", "+- ")) + line)
 }
 
 // TreeClose ends the current trunk segment (connector only; trunk continues below).

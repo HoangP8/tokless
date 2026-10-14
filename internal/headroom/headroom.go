@@ -104,7 +104,11 @@ func headroomUVWorks(uv string) bool {
 	return runHeadroom(uv, []string{"--version"}, util.HeadroomEnv(), ctx).Code == 0
 }
 
+// headroomVersionProbe verifies the installed headroom executable.
 func headroomVersionProbe() error {
+	if util.HeadroomMetadataVersion() != nil {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), headroomVersionTimeout)
 	defer cancel()
 	result := runHeadroom(util.HeadroomBin(), []string{"--version"}, nil, ctx)

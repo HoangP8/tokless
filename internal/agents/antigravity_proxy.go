@@ -481,6 +481,20 @@ func AntigravityProxySessionReady() bool {
 	return os.Getenv(antigravityCloudCodeKey) == u && os.Getenv(antigravityProxyEnvKey) == u
 }
 
+// AntigravityOAuthWired reports whether Antigravity has completed
+// Google sign-in on any installed surface.
+func AntigravityOAuthWired() bool {
+	for _, p := range []string{
+		filepath.Join(util.Home(), ".gemini", "antigravity-cli", "jetski_state.pbtxt"),
+		filepath.Join(util.Home(), ".gemini", "antigravity-ide", "jetski_state.pbtxt"),
+	} {
+		if util.Exists(p) {
+			return true
+		}
+	}
+	return false
+}
+
 func removeFileIfExists(path string) bool {
 	if util.Exists(path) {
 		if err := os.Remove(path); err != nil {

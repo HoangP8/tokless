@@ -31,6 +31,7 @@ func isolateProxyOps(t *testing.T) {
 	oldNow := proxyNow
 	oldCopilotProbe := copilotProxyLiveProbe
 	oldGrokProbe := grokProxyLiveZProbe
+	oldServingPID, oldProcessEnv := proxyServingPIDProbe, proxyProcessEnv
 	t.Cleanup(func() {
 		proxyLiveZProbe, proxySpawn = oldProbe, oldSpawn
 		grokProxyLiveZProbe = oldGrokProbe
@@ -40,6 +41,7 @@ func isolateProxyOps(t *testing.T) {
 		proxySleep = oldSleep
 		proxyNow = oldNow
 		copilotProxyLiveProbe = oldCopilotProbe
+		proxyServingPIDProbe, proxyProcessEnv = oldServingPID, oldProcessEnv
 		util.SetHomeOverride("")
 		activeBYOKRoutes.Store(nil)
 	})
@@ -758,6 +760,124 @@ func TestStartProxyRefusesStaleArgsDaemon(t *testing.T) {
 	}
 	if killed || spawned || wrote {
 		t.Fatalf("stale-args daemon was modified: killed=%v spawned=%v wrote=%v", killed, spawned, wrote)
+	}
+}
+
+func TestStartProxyAdoptsCompatibleOrphanedProxy(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5370, Executable: bin, Args: proxyArgs(8787), Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	servingIdentity := processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 5371, true }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case 5370:
+			return processIdentityInfo{}, errors.New("process gone")
+		case 5371:
+			return servingIdentity, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	allowed := headroomAllowedBaseURLs()
+	proxyProcessEnv = func(int) map[string]string {
+		return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": allowed}
+	}
+	spawned, killed := false, false
+	proxySpawn = func(*exec.Cmd) error { spawned = true; return nil }
+	proxyKill = func(*os.Process) error { killed = true; return nil }
+	if err := StartProxy(); err != nil {
+		t.Fatalf("StartProxy should adopt compatible orphan: %v", err)
+	}
+	if spawned || killed {
+		t.Fatalf("adoption must not spawn or kill: spawned=%v killed=%v", spawned, killed)
+	}
+	raw, ok := util.ReadFileSafe(pidFile)
+	if !ok {
+		t.Fatal("adoption did not rewrite ownership record")
+	}
+	var record proxyOwnership
+	if json.Unmarshal([]byte(raw), &record) != nil || record.PID != 5371 {
+		t.Fatalf("ownership record = %+v, want pid 5371", record)
+	}
+}
+
+func TestStartProxyRefusesAdoptionWhenAllowlistDiffers(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5372, Executable: bin, Args: proxyArgs(8787), Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 5373, true }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case 5372:
+			return processIdentityInfo{}, errors.New("process gone")
+		case 5373:
+			return processIdentityInfo{Executable: bin, Args: proxyArgs(8787), Start: "start"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyProcessEnv = func(int) map[string]string {
+		return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": "http://127.0.0.1:9999"}
+	}
+	wrote := false
+	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
+	if err := StartProxy(); err == nil || !strings.Contains(err.Error(), "without tokless ownership") {
+		t.Fatalf("StartProxy error = %v, want ownership refusal", err)
+	}
+	if wrote {
+		t.Fatal("adoption wrote an ownership record for a foreign proxy")
+	}
+}
+
+func TestStartProxyRefusesAdoptionWhenArgsDiffer(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5374, Executable: bin, Args: proxyArgs(8787), Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 5375, true }
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: []string{"proxy", "--port", "8787"}, Start: "start"}, nil
+	}
+	allowed := headroomAllowedBaseURLs()
+	proxyProcessEnv = func(int) map[string]string {
+		return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": allowed}
+	}
+	wrote := false
+	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
+	if err := StartProxy(); err == nil || !strings.Contains(err.Error(), "without tokless ownership") {
+		t.Fatalf("StartProxy error = %v, want ownership refusal", err)
+	}
+	if wrote {
+		t.Fatal("adoption wrote an ownership record for a mismatched proxy")
+	}
+}
+
+func TestStartProxyRefusesAdoptionWhenServingPIDUnavailable(t *testing.T) {
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5376, Executable: bin, Args: proxyArgs(8787), Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 0, false }
+	wrote := false
+	proxyWrite = func(string, proxyOwnership) error { wrote = true; return nil }
+	if err := StartProxy(); err == nil || !strings.Contains(err.Error(), "without tokless ownership") {
+		t.Fatalf("StartProxy error = %v, want ownership refusal", err)
+	}
+	if wrote {
+		t.Fatal("adoption wrote an ownership record without a serving PID")
 	}
 }
 

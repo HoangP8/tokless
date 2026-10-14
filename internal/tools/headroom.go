@@ -60,8 +60,8 @@ func headroomWire(agent string) core.AgentFn {
 			}
 			if !autostartBefore {
 				err := headroompkg.EnableProxyAutostart()
-				if err != nil && !errors.Is(err, headroompkg.ErrProxyAutostartUnavailable) {
-					if !wasRunning {
+			if err != nil && !errors.Is(err, headroompkg.ErrProxyAutostartUnavailable) {
+				if !wasRunning {
 						if stopErr := headroompkg.StopProxy(); stopErr != nil {
 							err = errors.Join(err, fmt.Errorf("proxy rollback: %w", stopErr))
 						}

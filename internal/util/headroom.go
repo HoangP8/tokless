@@ -77,27 +77,80 @@ func HeadroomInstalledVersion() *string {
 	return &version
 }
 
+func HeadroomMetadataVersion() *string { return headroomDistInfoVersion() }
+
+// headroomUVToolDirs returns candidate uv tool directories: the UV_TOOL_DIR
+// override, the uv default tool dir, then the Tokless-managed tool dir.
+func headroomUVToolDirs() []string {
+	var dirs []string
+	if env := os.Getenv("UV_TOOL_DIR"); env != "" {
+		dirs = append(dirs, env)
+	}
+	if dir := uvDefaultToolDir(); dir != "" {
+		dirs = append(dirs, dir)
+	}
+	dirs = append(dirs, HeadroomPathsResolved().Tools)
+	return dirs
+}
+
+func uvDefaultToolDir() string {
+	if IsWin {
+		base := os.Getenv("LOCALAPPDATA")
+		if base == "" {
+			base = filepath.Join(Home(), "AppData", "Local")
+		}
+		return filepath.Join(base, "uv", "tools")
+	}
+	if x := os.Getenv("XDG_DATA_HOME"); x != "" {
+		return filepath.Join(x, "uv", "tools")
+	}
+	return filepath.Join(Home(), ".local", "share", "uv", "tools")
+}
+
 // headroomDistInfoVersion returns the highest installed dist-info version.
 func headroomDistInfoVersion() *string {
-	p := HeadroomPathsResolved()
-	roots := []string{
-		filepath.Join(p.Tools, "headroom-ai", "lib", "python*", "site-packages"),
-		filepath.Join(p.Tools, "headroom-ai", "Lib", "site-packages"),
-	}
 	var best *string
-	for _, root := range roots {
-		matches, _ := filepath.Glob(filepath.Join(root, "headroom_ai-*.dist-info"))
-		for _, m := range matches {
-			base := filepath.Base(m)
-			name := strings.TrimSuffix(strings.TrimPrefix(base, "headroom_ai-"), ".dist-info")
-			if name == "" {
-				continue
-			}
-			if best == nil || SemverCompare(&name, best) > 0 {
-				v := name
-				best = &v
+	for _, tools := range headroomUVToolDirs() {
+		roots := []string{
+			filepath.Join(tools, "headroom-ai", "lib", "python*", "site-packages"),
+			filepath.Join(tools, "headroom-ai", "Lib", "site-packages"),
+		}
+		for _, root := range roots {
+			matches, _ := filepath.Glob(filepath.Join(root, "headroom_ai-*.dist-info"))
+			for _, m := range matches {
+				name := headroomDistInfoDirVersion(m)
+				if name == "" {
+					continue
+				}
+				if best == nil || SemverCompare(&name, best) > 0 {
+					v := name
+					best = &v
+				}
 			}
 		}
 	}
 	return best
+}
+
+// headroomDistInfoDirVersion reads a dist-info directory's version from its
+// METADATA file, falling back to the directory name.
+func headroomDistInfoDirVersion(dir string) string {
+	if v := headroomMetadataFileVersion(filepath.Join(dir, "METADATA")); v != "" {
+		return v
+	}
+	base := filepath.Base(dir)
+	return strings.TrimSuffix(strings.TrimPrefix(base, "headroom_ai-"), ".dist-info")
+}
+
+func headroomMetadataFileVersion(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "Version:"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

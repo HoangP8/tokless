@@ -63,7 +63,7 @@ var C = Colors{
 	Blue:      wrap(34, 39),
 	Magenta:   wrap(35, 39),
 	Cyan:      wrap(36, 39),
-	Gray:      wrap(90, 39),
+	Gray:      wrap(2, 22),
 	Orange:    wrapFg256(208),
 	Soft: wrapFg256(111),
 }

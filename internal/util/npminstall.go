@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -252,12 +253,26 @@ func npmUserPrefixInstall(pkg, token, cacheDir string) (string, bool) {
 	return *v, true
 }
 
+// npmPrefixCache memoizes `npm config get prefix` so it spawns at most once per process.
+var (
+	npmPrefixMu     sync.Mutex
+	npmPrefixCached string
+	npmPrefixSet    bool
+)
+
 var npmPrefix = func() string {
+	npmPrefixMu.Lock()
+	defer npmPrefixMu.Unlock()
+	if npmPrefixSet {
+		return npmPrefixCached
+	}
+	npmPrefixSet = true
 	r := runNpmConfig([]string{"config", "get", "prefix"})
 	if r.Code != 0 {
 		return ""
 	}
-	return strings.TrimSpace(r.Stdout)
+	npmPrefixCached = strings.TrimSpace(r.Stdout)
+	return npmPrefixCached
 }
 
 func EnsureNpmGlobalBinOnPath() {

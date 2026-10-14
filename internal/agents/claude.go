@@ -634,6 +634,29 @@ func ClaudeProxyWired() bool {
 	return ok && s == url
 }
 
+// ClaudeOAuthWired reports whether Claude Code is logged in via OAuth.
+func ClaudeOAuthWired() bool {
+	creds := filepath.Join(util.ClaudeCodePaths().Dir, ".credentials.json")
+	raw, ok := util.ReadFileSafe(creds)
+	if !ok {
+		return false
+	}
+	var c map[string]any
+	if json.Unmarshal([]byte(raw), &c) != nil {
+		return false
+	}
+	if v, ok := c["claudeAiOauth"]; ok && v != nil {
+		return true
+	}
+	var d struct {
+		SubscriptionType string `json:"subscriptionType"`
+	}
+	if json.Unmarshal([]byte(raw), &d) == nil && strings.TrimSpace(d.SubscriptionType) != "" {
+		return true
+	}
+	return false
+}
+
 // claudeMcpEqual compares command/args/env by canonical JSON.
 func claudeMcpEqual(existing any, desired *util.OrderedMap) bool {
 	em, ok := existing.(*util.OrderedMap)

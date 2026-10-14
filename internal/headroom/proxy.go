@@ -57,6 +57,8 @@ var (
 	proxyWait       = func(proc *os.Process) error { _, err := proc.Wait(); return err }
 	proxySleep      = time.Sleep
 	proxyNow        = time.Now
+	proxyServingPIDProbe = proxyServingPID
+	proxyProcessEnv      = readProcessEnv
 )
 
 func ProxyPort() int         { return util.HeadroomProxyPort() }
@@ -378,6 +380,79 @@ func proxyLiveZ(timeout time.Duration) bool {
 	return json.NewDecoder(resp.Body).Decode(&live) == nil && live.Service == "headroom-proxy"
 }
 
+// proxyServingPID returns the PID of the headroom proxy currently
+// serving our port, as reported by its own /health endpoint.
+func proxyServingPID(timeout time.Duration) (int, bool) {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(ProxyURL() + "/health")
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, false
+	}
+	var health struct {
+		Config struct {
+			PID int `json:"pid"`
+		} `json:"config"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&health) != nil || health.Config.PID <= 0 {
+		return 0, false
+	}
+	return health.Config.PID, true
+}
+
+// readProcessEnv returns the environment of a live process read
+// from /proc.
+func readProcessEnv(pid int) map[string]string {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "environ"))
+	if err != nil {
+		return nil
+	}
+	env := map[string]string{}
+	for _, entry := range strings.Split(string(data), "\x00") {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	return env
+}
+
+// adoptCompatibleProxy re-records ownership of an already-running
+// headroom proxy that tokless can prove it spawned.
+func adoptCompatibleProxy(port int) bool {
+	pid, ok := proxyServingPIDProbe(proxyProbeTimeout)
+	if !ok {
+		return false
+	}
+	identity, err := proxyIdentity(pid)
+	if err != nil {
+		return false
+	}
+	if !identity.matches(ResolveHeadroomBin(), proxyArgs(port)) {
+		return false
+	}
+	allowed := headroomAllowedBaseURLs()
+	env := proxyProcessEnv(pid)
+	if env == nil || env["HEADROOM_ALLOWED_BASE_URLS"] != allowed {
+		return false
+	}
+	pidFile, _ := proxyFiles()
+	if err := proxyWrite(pidFile, proxyOwnership{
+		PID:             pid,
+		Executable:      identity.Executable,
+		Args:            identity.Args,
+		Start:           identity.Start,
+		AllowedBaseURLs: allowed,
+	}); err != nil {
+		return false
+	}
+	util.L.Sub("headroom proxy already running on " + ProxyURL() + " (adopted pid " + strconv.Itoa(pid) + ")")
+	return true
+}
+
 func proxyFiles() (pidFile, logFile string) {
 	root := util.HeadroomPathsResolved().Root
 	return filepath.Join(root, "proxy.pid"), filepath.Join(root, "proxy.log")
@@ -685,6 +760,14 @@ func StartProxy() error {
 			return nil
 		}
 		if !owned {
+			if adoptCompatibleProxy(port) {
+				if err := persistProxyRuntime(port); err != nil {
+					return fmt.Errorf("headroom proxy runtime record: %w", err)
+				}
+				proxyStarted = true
+				byokStarted = false
+				return nil
+			}
 			return fmt.Errorf("headroom proxy is running without tokless ownership — refusing to replace")
 		}
 		if !argsMatch {
