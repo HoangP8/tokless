@@ -12,7 +12,7 @@ func TestMultiSelectLineAllDisabled(t *testing.T) {
 		{Value: "claude", Label: "Claude Code", Disabled: true},
 		{Value: "codex", Label: "Codex", Disabled: true},
 	}
-	if got := multiSelectLine("pick", items); got != nil {
+	if got := multiSelectLine("pick", items, true); got != nil {
 		t.Errorf("expected nil for all-disabled options, got %v", got)
 	}
 }

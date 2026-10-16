@@ -68,41 +68,29 @@ func SelectOne(question string, options []SelectOption) string {
 		}
 		return selectOneLine(question, options, selected)
 	}
+	if !selectOneFitsTerminal(question, options, 60) {
+		restore()
+		return selectOneLine(question, options, selected)
+	}
 	defer func() { restore() }()
+	if _, err := fmt.Fprint(os.Stdout, "\r\n"); err != nil {
+		return options[selected].Value
+	}
 	reader := bufio.NewReader(os.Stdin)
 	cursor := selected
-	first := true
 	dot := pick("●", "*")
 	divider := pick("─", "-")
 	dividerW := 60
 	ptr := pick("❯", ">")
 	keyArrow := C.Orange("↑/↓") + C.Dim(" move · ") + C.Orange("<enter>") + C.Dim(" confirm")
+	lines := len(options) + 3
+	firstRender := true
 	render := func() {
-		if !first {
-			fmt.Fprintf(os.Stdout, "\x1b[%dA", len(options)+3)
+		if !firstRender {
+			fmt.Fprintf(os.Stdout, "\r\x1b[%dA", lines)
 		}
-		first = false
-		fmt.Fprint(os.Stdout, "\x1b[0J")
-		fmt.Fprintln(os.Stdout, C.Magenta(C.Bold(dot))+" "+C.Magenta(C.Bold(question)))
-		for i, o := range options {
-			mark := " "
-			if i == cursor {
-				mark = C.Cyan(C.Bold(ptr))
-			}
-			box := C.Gray(Sym.Unselected)
-			label := o.Label
-			if i == cursor {
-				box = C.Green(Sym.Selected)
-				label = C.Cyan(C.Bold(o.Label))
-			}
-			extra := ""
-			if o.Hint != "" {
-				extra = "  " + C.Dim(o.Hint)
-			}
-			fmt.Fprintln(os.Stdout, C.Dim("│   ")+mark+" "+box+"  "+label+extra)
-		}
-		fmt.Fprintln(os.Stdout, C.Dim("  "+strings.Repeat(divider, dividerW)))
-		fmt.Fprintln(os.Stdout, "  "+keyArrow)
+		firstRender = false
+		fmt.Fprint(os.Stdout, renderSelectOne(question, options, cursor, dot, divider, dividerW, ptr, keyArrow, true))
 	}
 	render()
 	for {
@@ -127,16 +115,60 @@ func SelectOne(question string, options []SelectOption) string {
 			}
 		case ' ', '\r', '\n':
 			restore()
-			settleSelectOne(question, options, cursor)
+			settleSelectOne(question, options, cursor, true)
 			return options[cursor].Value
 		}
 	}
 }
 
+func selectOneFitsTerminal(question string, options []SelectOption, dividerW int) bool {
+	width := 80
+	if raw, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && raw > 0 {
+		width = raw
+	}
+	maxLine := utf8.RuneCountInString(question) + 2
+	for _, option := range options {
+		line := 7 + utf8.RuneCountInString(option.Label) + utf8.RuneCountInString(option.Hint)
+		if line > maxLine {
+			maxLine = line
+		}
+	}
+	return maxLine < width && dividerW+2 < width
+}
+
+func renderSelectOne(question string, options []SelectOption, cursor int, dot, divider string, dividerW int, ptr, keyArrow string, clear bool) string {
+	var b strings.Builder
+	if clear {
+		fmt.Fprint(&b, "\x1b[0J")
+	}
+	fmt.Fprintf(&b, "%s\r\n", C.Magenta(C.Bold(dot))+" "+C.Magenta(C.Bold(question)))
+	for i, o := range options {
+		mark := " "
+		if i == cursor {
+			mark = C.Cyan(C.Bold(ptr))
+		}
+		box := C.Gray(Sym.Unselected)
+		label := o.Label
+		if i == cursor {
+			box = C.Green(Sym.Selected)
+			label = C.Cyan(C.Bold(o.Label))
+		}
+		extra := ""
+		if o.Hint != "" {
+			extra = "  " + C.Dim(o.Hint)
+		}
+		fmt.Fprint(&b, C.Dim("│   ")+mark+" "+box+"  "+label+extra+"\r\n")
+	}
+	fmt.Fprintf(&b, "%s\r\n", C.Dim("  "+strings.Repeat(divider, dividerW)))
+	fmt.Fprintf(&b, "  %s\r\n", keyArrow)
+	return b.String()
+}
+
 // settleSelectOne rewrites the active SelectOne block as a static tree node.
-func settleSelectOne(question string, options []SelectOption, chosen int) {
-	height := len(options) + 3
-	fmt.Fprintf(os.Stdout, "\x1b[%dA\x1b[0J", height)
+func settleSelectOne(question string, options []SelectOption, chosen int, replace bool) {
+	if replace {
+		fmt.Fprintf(os.Stdout, "\r\x1b[%dA\x1b[0J", len(options)+4)
+	}
 	corner := pick("├─ ", "+- ")
 	stem := C.Dim(pick("│   ", "|   "))
 	bul := pick("│", "|")
@@ -158,7 +190,8 @@ func settleSelectOne(question string, options []SelectOption, chosen int) {
 }
 
 // settleMultiSelect rewrites the active MultiSelect block as a static tree node.
-func settleMultiSelect(question string, items []MultiSelectOption) {
+func settleMultiSelect(question string, items []MultiSelectOption, showStatus ...bool) {
+	status := len(showStatus) == 0 || showStatus[0]
 	height := len(items) + 3
 	fmt.Fprintf(os.Stdout, "\x1b[%dA\x1b[0J", height)
 	corner := pick("├─ ", "+- ")
@@ -180,7 +213,9 @@ func settleMultiSelect(question string, items []MultiSelectOption) {
 			box = C.Dim(Sym.Disabled)
 			prefix = "  "
 			label = C.Dim(it.Label)
-			tag = tagMissing()
+			if status {
+				tag = tagMissing()
+			}
 			if it.Hint != "" {
 				extra = "  " + C.Dim(it.Hint)
 			}
@@ -188,7 +223,9 @@ func settleMultiSelect(question string, items []MultiSelectOption) {
 			box = C.Green(Sym.Selected)
 			prefix = C.Green(C.Bold("✓ "))
 			label = C.Green(C.Bold(it.Label))
-			tag = tagReady()
+			if status {
+				tag = tagReady()
+			}
 			if it.Hint != "" {
 				extra = "  " + C.Dim(it.Hint)
 			}
@@ -196,7 +233,9 @@ func settleMultiSelect(question string, items []MultiSelectOption) {
 			box = C.Gray(Sym.Unselected)
 			prefix = "  "
 			label = it.Label
-			tag = tagReady()
+			if status {
+				tag = tagReady()
+			}
 			if it.Hint != "" {
 				extra = "  " + C.Dim(it.Hint)
 			}
@@ -233,6 +272,15 @@ func selectOneLine(question string, options []SelectOption, selected int) string
 
 // MultiSelect renders an interactive checklist; non-TTY returns enabled defaults.
 func MultiSelect(question string, options []MultiSelectOption) []string {
+	return multiSelect(question, options, true)
+}
+
+// MultiSelectWithoutStatus renders a checklist without readiness tags.
+func MultiSelectWithoutStatus(question string, options []MultiSelectOption) []string {
+	return multiSelect(question, options, false)
+}
+
+func multiSelect(question string, options []MultiSelectOption, showStatus bool) []string {
 	if !interactiveTTY() {
 		var out []string
 		for _, o := range options {
@@ -250,7 +298,7 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		cursor++
 	}
 	if cursor == len(items) {
-		return multiSelectLine(question, items)
+		return multiSelectLine(question, items, showStatus)
 	}
 
 	// The full-screen picker needs both raw key input and ANSI redraws.
@@ -259,7 +307,7 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		if ok {
 			restore()
 		}
-		return multiSelectLine(question, items)
+		return multiSelectLine(question, items, showStatus)
 	}
 	defer func() { restore() }()
 
@@ -311,7 +359,9 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 				box = C.Dim(Sym.Disabled)
 				prefix = "  "
 				label = C.Dim(it.Label)
-				tag = tagMissing()
+				if showStatus {
+					tag = tagMissing()
+				}
 				if it.Hint != "" {
 					extra = "  " + C.Dim(it.Hint)
 				}
@@ -320,12 +370,16 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 					box = C.Green(Sym.Selected)
 					prefix = C.Green(C.Bold(checkMark + " "))
 					label = C.Green(C.Bold(it.Label))
-					tag = tagReady()
+					if showStatus {
+						tag = tagReady()
+					}
 				} else {
 					box = C.Gray(Sym.Unselected)
 					prefix = "  "
 					label = it.Label
-					tag = tagReady()
+					if showStatus {
+						tag = tagReady()
+					}
 				}
 				if it.Hint != "" {
 					extra = "  " + C.Dim(it.Hint)
@@ -388,7 +442,7 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 			render()
 		case '\r', '\n':
 			restore()
-			settleMultiSelect(question, items)
+			settleMultiSelect(question, items, showStatus)
 			var out []string
 			for _, it := range items {
 				if it.Selected && !it.Disabled {
@@ -399,6 +453,126 @@ func MultiSelect(question string, options []MultiSelectOption) []string {
 		}
 	}
 	return nil
+}
+
+// SelectToolSet combines install mode and tool checklist in one prompt.
+func SelectToolSet(question string, options []MultiSelectOption) ([]string, bool) {
+	if !interactiveTTY() {
+		return nil, true
+	}
+	items := append([]MultiSelectOption(nil), options...)
+	cursor, first := 0, true
+	restore, ok := rawMode()
+	if !ok || !vtReady {
+		if ok {
+			restore()
+		}
+		return nil, true
+	}
+	defer restore()
+	reader := bufio.NewReader(os.Stdin)
+	render := func() {
+		if !first {
+			fmt.Fprintf(os.Stdout, "\x1b[%dA", len(items)+5)
+		}
+		first = false
+		fmt.Fprint(os.Stdout, "\x1b[0J")
+		fmt.Fprintf(os.Stdout, "%s %s\r\n", C.Magenta(C.Bold("●")), C.Magenta(C.Bold(question)))
+		fmt.Fprint(os.Stdout, renderToolSelectionRows(items, cursor))
+		fmt.Fprintf(os.Stdout, "  %s\r\n  %s\r\n", strings.Repeat(pick("─", "-"), 60), C.Orange("↑/↓")+C.Dim(" move · ")+C.Orange("space")+C.Dim(" toggle tool · ")+C.Orange("enter")+C.Dim(" choose"))
+	}
+	render()
+	for {
+		ch, err := reader.ReadByte()
+		if err != nil {
+			return nil, true
+		}
+		switch ch {
+		case 3:
+			promptExit(restore)
+		case 26:
+			promptSuspend(&restore, render)
+		case 27:
+			b1, _ := reader.ReadByte()
+			b2, _ := reader.ReadByte()
+			if b1 == '[' && b2 == 'A' {
+				cursor = (cursor + len(items) + 1) % (len(items) + 2)
+				render()
+			}
+			if b1 == '[' && b2 == 'B' {
+				cursor = (cursor + 1) % (len(items) + 2)
+				render()
+			}
+		case ' ':
+			if cursor >= 2 && cursor-2 < len(items) {
+				items[cursor-2].Selected = !items[cursor-2].Selected
+				render()
+			}
+		case '\r', '\n':
+			restore()
+			settleToolSelection(question, items)
+			if cursor == 0 {
+				return nil, true
+			}
+			return selectedValues(items), false
+		}
+	}
+}
+
+func renderToolSelectionRows(items []MultiSelectOption, cursor int) string {
+	var b strings.Builder
+	for i, label := range []string{"Full (Default)", "Selected"} {
+		mark, box, text := "  ", C.Gray(Sym.Unselected), label
+		if cursor == i {
+			mark, box, text = C.Cyan(C.Bold(pick("❯", ">")))+" ", C.Green(Sym.Selected), C.Cyan(C.Bold(label))
+		}
+		fmt.Fprintf(&b, "%s%s%s  %s\r\n", C.Dim("│   "), mark, box, text)
+	}
+	for i, item := range items {
+		branch, stem := pick("├─ ", "+- "), pick("│   ", "|   ")
+		if i == len(items)-1 {
+			branch, stem = pick("└─ ", "`- "), "    "
+		}
+		box := C.Gray(Sym.Unselected)
+		if item.Selected {
+			box = C.Green(Sym.Selected)
+		}
+		mark, label := "  ", item.Label
+		if cursor == i+2 {
+			mark, label = C.Cyan(C.Bold(pick("❯", ">")))+" ", C.Cyan(C.Bold(label))
+		}
+		fmt.Fprintf(&b, "%s%s%s%s%s  %s\r\n", C.Dim("│   "), C.Dim(stem), C.Dim(branch), mark, box, label)
+	}
+	return b.String()
+}
+
+func settleToolSelection(question string, items []MultiSelectOption) {
+	fmt.Fprintf(os.Stdout, "\r\x1b[%dA\x1b[0J", len(items)+5)
+	fmt.Fprintf(os.Stdout, "%s%s\n", C.Dim(pick("├─ ", "+- ")), C.Bold(question))
+	fmt.Fprintln(os.Stdout, C.Dim("│   ")+C.Green(Sym.Selected)+"  Full (Default)")
+	fmt.Fprintln(os.Stdout, C.Dim("│   ")+C.Gray(Sym.Unselected)+"  Selected")
+	for i, item := range items {
+		branch := pick("├─ ", "+- ")
+		if i == len(items)-1 {
+			branch = pick("└─ ", "`- ")
+		}
+		box := C.Gray(Sym.Unselected)
+		if item.Selected {
+			box = C.Green(Sym.Selected)
+		}
+		fmt.Fprintf(os.Stdout, "%s%s%s  %s\n", C.Dim("│   "), C.Dim(branch), box, item.Label)
+	}
+	fmt.Fprintln(os.Stdout, C.Dim("│"))
+}
+
+func selectedValues(options []MultiSelectOption) []string {
+	var selected []string
+	for _, option := range options {
+		if option.Selected && !option.Disabled {
+			selected = append(selected, option.Value)
+		}
+	}
+	return selected
 }
 
 func moveCursor(cursor *int, items []MultiSelectOption, delta int) {
@@ -413,7 +587,7 @@ func moveCursor(cursor *int, items []MultiSelectOption, delta int) {
 
 // multiSelectLine is the cooked-mode fallback picker: numbered list, read a
 // line. Enter keeps the preselected defaults; "a" selects everything enabled.
-func multiSelectLine(question string, items []MultiSelectOption) []string {
+func multiSelectLine(question string, items []MultiSelectOption, showStatus bool) []string {
 	fmt.Fprintln(os.Stdout, C.Bold(C.Cyan("?"))+" "+C.Bold(question))
 	labelW := 0
 	for _, it := range items {
@@ -428,7 +602,10 @@ func multiSelectLine(question string, items []MultiSelectOption) []string {
 		pad := strings.Repeat(" ", labelW-utf8.RuneCountInString(it.Label))
 		if it.Disabled {
 			numByIdx[i] = 0
-			line := "       " + C.Dim(it.Label) + pad + "  " + tagMissing()
+			line := "       " + C.Dim(it.Label) + pad
+			if showStatus {
+				line += "  " + tagMissing()
+			}
 			if it.Hint != "" {
 				line += "  " + C.Dim(it.Hint)
 			}
@@ -442,7 +619,10 @@ func multiSelectLine(question string, items []MultiSelectOption) []string {
 			mark = "*"
 			defaults = append(defaults, it.Value)
 		}
-		line := fmt.Sprintf("  %2d) %s%s%s  %s", num, mark, it.Label, pad, tagReady())
+		line := fmt.Sprintf("  %2d) %s%s%s", num, mark, it.Label, pad)
+		if showStatus {
+			line += "  " + tagReady()
+		}
 		if it.Hint != "" {
 			line += "  " + C.Dim(it.Hint)
 		}
