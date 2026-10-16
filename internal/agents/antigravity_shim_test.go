@@ -12,7 +12,13 @@ import (
 
 func seedAntigravityBinary(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(util.Home(), ".local", "bin", "agy")
+	var bin string
+	if util.IsWin {
+		t.Setenv("LOCALAPPDATA", filepath.Join(util.Home(), "AppData", "Local"))
+		bin = filepath.Join(os.Getenv("LOCALAPPDATA"), "agy", "bin", "agy.exe")
+	} else {
+		bin = filepath.Join(util.Home(), ".local", "bin", "agy")
+	}
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -20,6 +26,19 @@ func seedAntigravityBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return bin
+}
+
+func antigravityTestSettings(t *testing.T) string {
+	t.Helper()
+	base := filepath.Join(util.Home(), ".config")
+	if util.IsWin {
+		appdata := filepath.Join(util.Home(), "AppData", "Roaming")
+		t.Setenv("APPDATA", appdata)
+		base = appdata
+	} else if goosForDetect == "darwin" {
+		base = filepath.Join(util.Home(), "Library", "Application Support")
+	}
+	return filepath.Join(base, "Antigravity IDE", "User", "settings.json")
 }
 
 func TestAntigravityShimLifecycle(t *testing.T) {
@@ -43,15 +62,19 @@ func TestAntigravityShimLifecycle(t *testing.T) {
 
 func TestAntigravityShimRefusesForeignWrapper(t *testing.T) {
 	setTestHome(t)
-	bin := seedAntigravityBinary(t)
 	foreign := "#!/bin/sh\nexec /vendor/agy \"$@\"\n"
-	if err := os.WriteFile(bin, []byte(foreign), 0o755); err != nil {
+	target := seedAntigravityBinary(t)
+	if util.IsWin {
+		target = antigravityBinFile()
+		foreign = "@echo off\r\ncall \"C:\\vendor\\agy.exe\" %*\r\n"
+	}
+	if err := os.WriteFile(target, []byte(foreign), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := installAntigravityShim(); err == nil {
 		t.Fatal("foreign wrapper accepted")
 	}
-	raw, _ := os.ReadFile(bin)
+	raw, _ := os.ReadFile(target)
 	if string(raw) != foreign {
 		t.Fatal("foreign wrapper changed")
 	}
@@ -108,6 +131,8 @@ func TestAntigravityShimRefusesForeignRealOnUpgrade(t *testing.T) {
 }
 
 func TestAntigravityShimRoutesPlainCLI(t *testing.T) {
+	// Runs the POSIX launcher directly; Windows launcher is a batch shim.
+	skipOnWindows(t)
 	setTestHome(t)
 	bin := seedAntigravityBinary(t)
 	if _, err := installAntigravityShim(); err != nil {
@@ -142,6 +167,7 @@ func TestAntigravityShimRoutesPlainCLI(t *testing.T) {
 }
 
 func TestAntigravityShimFailsClosed(t *testing.T) {
+	skipOnWindows(t)
 	setTestHome(t)
 	bin := seedAntigravityBinary(t)
 	if _, err := installAntigravityShim(); err != nil {
@@ -168,7 +194,7 @@ func TestAntigravityShimFailsClosed(t *testing.T) {
 
 func TestAntigravityIDEProxyLifecycle(t *testing.T) {
 	setTestHome(t)
-	settings := filepath.Join(util.Home(), ".config", "Antigravity IDE", "User", "settings.json")
+	settings := antigravityTestSettings(t)
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +216,7 @@ func TestAntigravityIDEProxyLifecycle(t *testing.T) {
 
 func TestAntigravityIDEProxyPreservesForeignEndpoint(t *testing.T) {
 	setTestHome(t)
-	settings := filepath.Join(util.Home(), ".config", "Antigravity IDE", "User", "settings.json")
+	settings := antigravityTestSettings(t)
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
 	}

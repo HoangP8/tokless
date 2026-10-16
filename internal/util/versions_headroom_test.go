@@ -47,7 +47,8 @@ func TestHeadroomDistInfoVersionUVToolLayout(t *testing.T) {
 	home := t.TempDir()
 	SetHomeOverride(home)
 	t.Cleanup(func() { SetHomeOverride("") })
-	site := filepath.Join(home, ".local", "share", "uv", "tools", "headroom-ai", "lib", "python3.13", "site-packages")
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	site := filepath.Join(uvDefaultToolDir(), "headroom-ai", "lib", "python3.13", "site-packages")
 	dist := filepath.Join(site, "headroom_ai-0.35.0.dist-info")
 	if err := os.MkdirAll(dist, 0o755); err != nil {
 		t.Fatal(err)

@@ -179,8 +179,12 @@ func TestRemoveGrokProxyRollsBackConfigWhenShimRestoreFails(t *testing.T) {
 	if got, _ := util.ReadFileSafe(grokRealBinFile()); got != realBefore {
 		t.Fatal("real binary changed after failed restore")
 	}
-	if info, err := os.Stat(grokConfigFile()); err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("config mode = %v, err=%v", info.Mode().Perm(), err)
+	info, statErr := os.Stat(grokConfigFile())
+	if statErr != nil {
+		t.Fatalf("config stat: %v", statErr)
+	}
+	if !util.IsWin && info.Mode().Perm() != 0o640 {
+		t.Fatalf("config mode = %v", info.Mode().Perm())
 	}
 }
 
@@ -237,6 +241,8 @@ func TestInstallGrokShimUpgradesStaleFormat(t *testing.T) {
 }
 
 func TestInstallGrokShimRefusesUnreadableBinary(t *testing.T) {
+	// Windows chmod cannot make a file unreadable for its owner.
+	skipOnWindows(t)
 	seedGrokBinary(t)
 	if err := os.Chmod(grokBinFile(), 0o000); err != nil {
 		t.Fatal(err)
@@ -252,6 +258,7 @@ func TestInstallGrokShimRefusesUnreadableBinary(t *testing.T) {
 }
 
 func TestRenderGrokShimShellSafePath(t *testing.T) {
+	skipOnWindows(t)
 	home := setGrokBuildTestHome(t)
 	dir := filepath.Join(home, ".grok", "b'in")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -270,6 +277,7 @@ func TestRenderGrokShimShellSafePath(t *testing.T) {
 }
 
 func TestShimRequiresHeadroomIdentityBody(t *testing.T) {
+	skipOnWindows(t)
 	script := renderGrokShim()
 	line := ""
 	for _, l := range strings.Split(script, "\n") {

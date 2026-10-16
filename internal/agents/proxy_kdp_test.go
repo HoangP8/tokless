@@ -14,6 +14,7 @@ import (
 const proxyEndpoint = proxyTestURL + "/v1"
 
 func kiloProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -27,6 +28,7 @@ func kiloProxyTestHome(t *testing.T) {
 }
 
 func piProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -36,6 +38,7 @@ func piProxyTestHome(t *testing.T) {
 }
 
 func droidProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()

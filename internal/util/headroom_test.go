@@ -2,6 +2,7 @@ package util
 
 import (
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +13,12 @@ func TestHeadroomPathsEnvAndSpawnAreToklessOwned(t *testing.T) {
 	SetHomeOverride(home)
 	t.Cleanup(func() { SetHomeOverride("") })
 	p := HeadroomPathsResolved()
-	root := filepath.Join(home, ".local", "share", "tokless", "headroom")
+	var root string
+	if runtime.GOOS == "windows" {
+		root = filepath.Join(home, "AppData", "Local", "tokless", "headroom")
+	} else {
+		root = filepath.Join(home, ".local", "share", "tokless", "headroom")
+	}
 	for _, path := range []string{p.Root, p.UV, p.Tools, p.Bin, p.Python, HeadroomBin()} {
 		if !strings.HasPrefix(path, root) {
 			t.Fatalf("path outside Tokless root: %q", path)

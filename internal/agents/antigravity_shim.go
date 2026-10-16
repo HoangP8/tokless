@@ -196,7 +196,7 @@ func installAntigravityShim() (bool, error) {
 			if !owned || !looksLikeAntigravityShim(raw) {
 				return false, fmt.Errorf("antigravity launcher: %s is not a Tokless-owned launcher", bin)
 			}
-			if raw == rendered {
+			if raw == rendered && !util.Exists(vendor) {
 				return false, nil
 			}
 		} else if util.Exists(bin) {
@@ -237,8 +237,21 @@ func installAntigravityShim() (bool, error) {
 		return false, fmt.Errorf("antigravity launcher: read %s: %w", bin, readErr)
 	}
 	if util.IsWin && util.Exists(vendor) {
-		if util.Exists(real) && !owned {
-			return false, fmt.Errorf("antigravity launcher: %s already exists without Tokless ownership; refusing to overwrite", real)
+		if util.Exists(real) {
+			if !owned {
+				return false, fmt.Errorf("antigravity launcher: %s already exists without Tokless ownership; refusing to overwrite", real)
+			}
+			state, ok := readAntigravityShimState()
+			if !ok || state.RealDigest == "" {
+				return false, fmt.Errorf("antigravity launcher: missing real-binary ownership digest")
+			}
+			digest, err := antigravityFileDigest(real)
+			if err != nil || digest != state.RealDigest {
+				return false, fmt.Errorf("antigravity launcher: real binary changed outside Tokless; refusing upgrade")
+			}
+			if err := os.Remove(real); err != nil {
+				return false, fmt.Errorf("antigravity launcher: replace old real binary: %w", err)
+			}
 		}
 		if err := os.Rename(vendor, real); err != nil {
 			return false, fmt.Errorf("antigravity launcher: stash real binary: %w", err)

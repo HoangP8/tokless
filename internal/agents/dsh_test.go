@@ -12,6 +12,7 @@ import (
 // dshProxyTestHome pins DSH_HOME under a temp home and returns the
 // cordis.patch.yml path.
 func dshProxyTestHome(t *testing.T) string {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()

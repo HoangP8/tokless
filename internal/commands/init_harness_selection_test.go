@@ -34,6 +34,17 @@ func seedAgentInstalled(t *testing.T, agentID string) {
 		} else if agentID == "opencode2" {
 			script = "#!/bin/sh\necho opencode 2.0.6\n"
 		}
+		if util.IsWin {
+			bin += ".bat"
+			switch agentID {
+			case "opencode":
+				script = "@echo off\r\necho opencode 1.2.3\r\n"
+			case "opencode2":
+				script = "@echo off\r\necho opencode 2.0.6\r\n"
+			default:
+				script = "@echo off\r\nexit /b 0\r\n"
+			}
+		}
 		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 			t.Fatalf("seed %s binary: %v", agentID, err)
 		}
@@ -115,7 +126,8 @@ func TestInitSelectedToolsAcrossRegisteredAgents(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 			util.SetHomeOverride(home)
-			t.Cleanup(func() { util.SetHomeOverride("") })
+			agents.SetIdeProjectRoot(home)
+			t.Cleanup(func() { util.SetHomeOverride(""); agents.SetIdeProjectRoot("") })
 			seedAgentInstalled(t, agent.ID)
 
 			if code := commands.RunInit(commands.InitOptions{Agents: []string{agent.ID}, Tools: []string{selected.ID}}); code != 0 {

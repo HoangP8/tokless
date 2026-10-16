@@ -10,6 +10,7 @@ import (
 )
 
 func setPiTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	util.SetHomeOverride(t.TempDir())
 	t.Setenv("PI_CODING_AGENT_DIR", "")

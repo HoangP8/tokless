@@ -11,6 +11,7 @@ import (
 )
 
 func setGrokTestHome(t *testing.T) string {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -47,7 +48,7 @@ func TestRestoreGrokProxyFilePreservesMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o640 {
+	if got := info.Mode().Perm(); !util.IsWin && got != 0o640 {
 		t.Fatalf("mode = %o, want 640", got)
 	}
 }
@@ -870,6 +871,8 @@ func TestDetectGrokProxyUnreadableState(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits meaningless as root")
 	}
+	// Windows ignores chmod 0000; the file stays readable.
+	skipOnWindows(t)
 	setGrokTestHome(t)
 	if err := util.WriteFile(grokConfigFile(), "[models]\n"); err != nil {
 		t.Fatal(err)

@@ -21,7 +21,8 @@ func TestDarwinProcArgsParsesArgvAndRejectsTruncatedData(t *testing.T) {
 			t.Fatalf("argv[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	truncated := append([]byte(nil), data[:len(data)-1]...)
+	// Cut right after first arg so buffer runs out mid-argv.
+	truncated := append([]byte(nil), data[:4+len("/tmp/tokless bin")+1]...)
 	if got := darwinProcArgs(truncated); got != nil {
 		t.Fatalf("truncated argv = %#v, want nil", got)
 	}

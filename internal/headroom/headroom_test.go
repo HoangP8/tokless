@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -156,7 +157,10 @@ func TestHeadroomVersionProbeSkipsSpawnWithMetadata(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
-	dist := filepath.Join(home, ".local", "share", "uv", "tools", "headroom-ai", "lib", "python3.13", "site-packages", "headroom_ai-0.35.0.dist-info")
+	if runtime.GOOS == "windows" {
+		t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	}
+	dist := filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom_ai-0.35.0.dist-info")
 	if err := os.MkdirAll(dist, 0o755); err != nil {
 		t.Fatal(err)
 	}

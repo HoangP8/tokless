@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,14 +13,37 @@ import (
 
 func writeFakeUV(t *testing.T, path string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(fakeUVContent()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
 
+func fakeUVContent() string {
+	if runtime.GOOS == "windows" {
+		return "@echo off\r\nexit /b 0\r\n"
+	}
+	return "#!/bin/sh\nexit 0\n"
+}
+
+func uvFixtureExt() string {
+	if runtime.GOOS == "windows" {
+		return ".bat"
+	}
+	return ""
+}
+
+// uvPathsEqual tolerates the extension-case difference between the fixture
+// name and PATHEXT on Windows.
+func uvPathsEqual(got, want string) bool {
+	if got == want {
+		return true
+	}
+	return runtime.GOOS == "windows" && strings.EqualFold(got, want)
+}
+
 func TestEnsureUVUsesPathHitWithoutInstalling(t *testing.T) {
 	dir := t.TempDir()
-	uvPath := filepath.Join(dir, "uv")
+	uvPath := filepath.Join(dir, "uv"+uvFixtureExt())
 	writeFakeUV(t, uvPath)
 	t.Setenv("PATH", dir)
 	t.Setenv("TOKLESS_TEST", "1")
@@ -37,7 +61,7 @@ func TestEnsureUVUsesPathHitWithoutInstalling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureUV: %v", err)
 	}
-	if got != uvPath {
+	if !uvPathsEqual(got, uvPath) {
 		t.Fatalf("EnsureUV = %q, want %q", got, uvPath)
 	}
 	if called {
@@ -52,7 +76,7 @@ func TestEnsureUVBootstrapsWhenAbsent(t *testing.T) {
 	SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { SetHomeOverride("") })
 
-	uvPath := filepath.Join(dir, "uv")
+	uvPath := filepath.Join(dir, "uv"+uvFixtureExt())
 	restore := SetUVInstallCmdForTest(func(_ context.Context, name string, args []string) error {
 		if name == "" || len(args) == 0 {
 			return errors.New("missing installer command")
@@ -66,7 +90,7 @@ func TestEnsureUVBootstrapsWhenAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureUV: %v", err)
 	}
-	if got != uvPath {
+	if !uvPathsEqual(got, uvPath) {
 		t.Fatalf("EnsureUV = %q, want re-resolved %q", got, uvPath)
 	}
 }

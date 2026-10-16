@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,12 @@ func isolateProxyOps(t *testing.T) {
 	oldCopilotProbe := copilotProxyLiveProbe
 	oldGrokProbe := grokProxyLiveZProbe
 	oldServingPID, oldProcessEnv := proxyServingPIDProbe, proxyProcessEnv
+	oldFind := proxyFindProcess
+	// Fake pids must not depend on os.FindProcess (errors on Windows for stale pids).
+	proxyFindProcess = func(pid int) (*os.Process, error) { return &os.Process{Pid: pid}, nil }
+	// Fake pids were never spawned as children; Go 1.23+ panics on Wait for a
+	// zero-value Process, so short-circuit like an already-reaped child.
+	proxyWait = func(*os.Process) error { return os.ErrProcessDone }
 	t.Cleanup(func() {
 		proxyLiveZProbe, proxySpawn = oldProbe, oldSpawn
 		grokProxyLiveZProbe = oldGrokProbe
@@ -42,6 +49,7 @@ func isolateProxyOps(t *testing.T) {
 		proxyNow = oldNow
 		copilotProxyLiveProbe = oldCopilotProbe
 		proxyServingPIDProbe, proxyProcessEnv = oldServingPID, oldProcessEnv
+		proxyFindProcess = oldFind
 		util.SetHomeOverride("")
 		activeBYOKRoutes.Store(nil)
 	})
@@ -171,12 +179,15 @@ func TestProxyOwnershipRecordIsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Fatalf("ownership mode = %o, want 600", mode)
+	if runtime.GOOS != "windows" {
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Fatalf("ownership mode = %o, want 600", mode)
+		}
 	}
 }
 
 func TestProcessIdentityMatchesDirectInvocation(t *testing.T) {
+	requireProcessIdentity(t)
 	bin := proxyTestBin(t)
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	args := []string{"proxy", "--port", "8787"}
@@ -374,6 +385,7 @@ func TestStopProxySelfHealsStaleRecord(t *testing.T) {
 }
 
 func TestStopProxyTimeoutRetainsOwnershipRecord(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	pidFile, _ := proxyFiles()
@@ -399,6 +411,7 @@ func TestStopProxyTimeoutRetainsOwnershipRecord(t *testing.T) {
 }
 
 func TestStartProxyRecordWriteFailureRollsBack(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return false }
@@ -562,6 +575,7 @@ func TestAcquireProxyStartLockStealsStale(t *testing.T) {
 }
 
 func TestStartProxyReadinessTimeoutRollsBack(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return false }
@@ -657,6 +671,7 @@ func TestStartProxyIdentityFailureRollsBackDirectChild(t *testing.T) {
 }
 
 func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return false }
@@ -704,6 +719,7 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 }
 
 func TestStartProxyReusesHeadroomProbe(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	util.SetHomeOverride(t.TempDir())
 	bin := proxyTestBin(t)
@@ -764,6 +780,7 @@ func TestStartProxyRefusesStaleArgsDaemon(t *testing.T) {
 }
 
 func TestStartProxyAdoptsCompatibleOrphanedProxy(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	pidFile, _ := proxyFiles()
@@ -941,6 +958,7 @@ func TestClearProxyStateCanPreserveRuntimeForHandoff(t *testing.T) {
 }
 
 func TestStopHeadroomProxyRefusesReplacementRecordCleanup(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	pidFile, _ := proxyFiles()
@@ -1077,6 +1095,7 @@ func TestStopSupervisedDaemonClearsStateAfterStop(t *testing.T) {
 }
 
 func TestStartProxyDoesNotReuseNonHeadroomProbe(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	proxyTestBin(t)
 	proxyLiveZProbe = func(time.Duration) bool { return false }
@@ -1315,6 +1334,7 @@ print("PASS: Upstream guard exact origin and slow DNS bypass verified")
 }
 
 func TestStartProxyRestartsWhenAllowedBaseURLsChange(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	byokGatewayState.Lock()
 	oldListener := byokGatewayState.listener
@@ -1448,7 +1468,7 @@ func TestStartProxyFailsClosedOnCorruptRouteRegistry(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
-	routesFile := filepath.Join(home, ".local", "share", "tokless", "headroom", "byok.routes.json")
+	routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
 	if err := os.MkdirAll(filepath.Dir(routesFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1463,6 +1483,7 @@ func TestStartProxyFailsClosedOnCorruptRouteRegistry(t *testing.T) {
 }
 
 func TestStartProxyRestartsSupervisedDaemonWhenAllowlistChanges(t *testing.T) {
+	requireProcessIdentity(t)
 	isolateProxyOps(t)
 	byokGatewayState.Lock()
 	oldListener := byokGatewayState.listener

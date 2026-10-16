@@ -230,7 +230,7 @@ func StopGrokOAuthProxy() error {
 	if !identity.matchesRecord(record) {
 		return fmt.Errorf("grok proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
-	proc, err := os.FindProcess(record.PID)
+	proc, err := proxyFindProcess(record.PID)
 	if err != nil {
 		return fmt.Errorf("failed to find grok proxy pid %d: %w", record.PID, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,9 +85,14 @@ func TestRtkOpenCodeWritesDetectedVersions(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	binDir := t.TempDir()
+	suffix, bodyFor := "", func(version string) string { return "#!/bin/sh\nprintf '" + version + "'\n" }
+	if runtime.GOOS == "windows" {
+		suffix = ".bat"
+		bodyFor = func(version string) string { return "@echo off\r\necho " + version + "\r\n" }
+	}
 	for name, version := range map[string]string{"opencode": "1.9.0", "opencode2": "2.1.0"} {
-		bin := filepath.Join(binDir, name)
-		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '"+version+"'\n"), 0o755); err != nil {
+		bin := filepath.Join(binDir, name+suffix)
+		if err := os.WriteFile(bin, []byte(bodyFor(version)), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

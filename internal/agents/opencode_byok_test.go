@@ -174,6 +174,10 @@ func TestOpenCodeV2BYOKWriteAndOwnership(t *testing.T) {
 	t.Setenv("HOME", util.Home())
 	binDir := t.TempDir()
 	bin := filepath.Join(binDir, "opencode2")
+	if util.IsWin {
+		bin += ".bat"
+		t.Setenv("USERPROFILE", util.Home())
+	}
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'opencode v2.0.6\\n'\n"), 0o755); err != nil { t.Fatal(err) }
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := util.OpenCodePathsResolved().Dir
@@ -201,6 +205,10 @@ func TestRemoveOpenCodeProxyClearsV2MirrorsWithoutStash(t *testing.T) {
 	t.Setenv("HOME", util.Home())
 	binDir := t.TempDir()
 	bin := filepath.Join(binDir, "opencode2")
+	if util.IsWin {
+		bin += ".bat"
+		t.Setenv("USERPROFILE", util.Home())
+	}
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'opencode v2.0.6\\n'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -655,6 +663,9 @@ func TestOpenCodeBYOKPluginHeaderIsolationNode(t *testing.T) {
 		t.Skip("node not available")
 	}
 	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"type":"module"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	entryPath := filepath.Join(dir, "entry.opencode.js")
 	if err := os.WriteFile(entryPath, []byte(`
 export default async function MockNativePlugin(input, opts) {

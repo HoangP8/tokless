@@ -2,6 +2,7 @@ package commands
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/core"
@@ -32,7 +33,11 @@ func TestProjectmemSeedProjectGuards(t *testing.T) {
 			}
 			t.Setenv("TOKLESS_TEST", tc.env)
 			projectmemSeedProject(tc.opts, []*core.ToolManifest{manifest})
-			if util.Exists(".projectmem") {
+			// Windows cannot remove a directory that is the process cwd.
+			if err := os.Chdir(cwd); err != nil {
+				t.Fatal(err)
+			}
+			if util.Exists(filepath.Join(dir, ".projectmem")) {
 				t.Fatalf("%s: .projectmem created", tc.name)
 			}
 		})

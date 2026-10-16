@@ -11,6 +11,7 @@ import (
 )
 
 func setOmpTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })

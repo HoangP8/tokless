@@ -10,6 +10,7 @@ import (
 
 // kimiProxyTestHome pins KIMI_CODE_HOME under a temp home and returns config.toml.
 func kimiProxyTestHome(t *testing.T) string {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()

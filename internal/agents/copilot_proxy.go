@@ -533,9 +533,14 @@ func copilotProxyRollbackOwned(path string) bool {
 	return false
 }
 
+// Guards ancestors below home only; OS symlinks above (/var, /tmp) are out of scope.
 func rejectCopilotProxySymlinkPath(path string, allowLeaf bool) error {
 	clean := filepath.Clean(path)
+	home := filepath.Clean(util.Home())
 	for current := clean; current != filepath.Dir(current); current = filepath.Dir(current) {
+		if current == home || home == "" || !underHome(current, home) {
+			break
+		}
 		if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			if allowLeaf && current == clean {
 				continue
@@ -544,6 +549,13 @@ func rejectCopilotProxySymlinkPath(path string, allowLeaf bool) error {
 		}
 	}
 	return nil
+}
+
+func underHome(path, home string) bool {
+	if home == "" || home == "." || home == string(os.PathSeparator) {
+		return false
+	}
+	return strings.HasPrefix(path, home+string(os.PathSeparator))
 }
 
 // RemoveCopilotCLIProxy removes only Tokless's shell launcher.

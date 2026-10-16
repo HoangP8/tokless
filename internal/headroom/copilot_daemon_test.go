@@ -21,11 +21,14 @@ func isolateCopilotProxyOps(t *testing.T) {
 	oldIdentity, oldKill := proxyIdentity, proxyKill
 	oldWrite, oldGone := proxyWrite, proxyGone
 	oldWait, oldSleep, oldNow := proxyWait, proxySleep, proxyNow
+	oldFind := proxyFindProcess
+	proxyFindProcess = func(pid int) (*os.Process, error) { return &os.Process{Pid: pid}, nil }
 	t.Cleanup(func() {
 		copilotProxyLiveProbe, proxySpawn = oldProbe, oldSpawn
 		proxyIdentity, proxyKill = oldIdentity, oldKill
 		proxyWrite, proxyGone = oldWrite, oldGone
 		proxyWait, proxySleep, proxyNow = oldWait, oldSleep, oldNow
+		proxyFindProcess = oldFind
 		util.SetHomeOverride("")
 	})
 }
@@ -102,6 +105,9 @@ func TestStartCopilotProxyStopsWhenIdentityChangesDuringReadiness(t *testing.T) 
 	killed := false
 	proxyKill = func(*os.Process) error { killed = true; return nil }
 	proxyWait = func(*os.Process) error { return nil }
+	proxyGone = func(*os.Process) bool { return true }
+	copilotProxyLiveProbe = func(time.Duration) bool { return false }
+	proxySleep = func(time.Duration) {}
 	proxyNow = func() time.Time { return time.Unix(100, 0) }
 
 	if err := StartCopilotProxy(); err == nil || !strings.Contains(err.Error(), "identity changed") {

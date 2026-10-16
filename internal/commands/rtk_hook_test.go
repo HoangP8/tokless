@@ -137,12 +137,29 @@ func TestRunRtkHookGrokRtkFailurePassesThrough(t *testing.T) {
 func installFakeRtk(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "rtk")
-	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'rtk 1.0.0\\n'; exit 0; fi\nif [ \"$1\" != \"rewrite\" ]; then exit 1; fi\n" + body + "\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	name := "rtk"
+	content := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'rtk 1.0.0\\n'; exit 0; fi\nif [ \"$1\" != \"rewrite\" ]; then exit 1; fi\n" + body + "\n"
+	if runtime.GOOS == "windows" {
+		name = "rtk.bat"
+		content = batFakeRtk(body)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func batFakeRtk(body string) string {
+	const header = "@echo off\r\nif \"%~1\"==\"--version\" (echo rtk 1.0.0 & exit /b 0)\r\nif not \"%~1\"==\"rewrite\" exit /b 1\r\n"
+	switch {
+	case strings.HasPrefix(body, "case"):
+		return header + "echo %~2 | findstr /b /c:\"rtk \" >nul\r\nif errorlevel 1 (echo rtk %~2) else (echo %~2)\r\n"
+	case strings.Contains(body, "exit 1"):
+		return header + "exit /b 1\r\n"
+	default:
+		return header + "echo rtk %~2\r\n"
+	}
 }
 
 func runRtkHookInput(t *testing.T, payload string, hook func() int) string {
@@ -1281,7 +1298,7 @@ func TestRunRtkHookDshDeniesRawGit(t *testing.T) {
 			if tc.deny {
 				var resp struct {
 					HookSpecificOutput struct {
-						HookEventName             string `json:"hookEventName"`
+						HookEventName            string `json:"hookEventName"`
 						PermissionDecision       string `json:"permissionDecision"`
 						PermissionDecisionReason string `json:"permissionDecisionReason"`
 					} `json:"hookSpecificOutput"`
@@ -1327,7 +1344,7 @@ func TestRunRtkHookCmdKimiDeniesRawGit(t *testing.T) {
 			if tc.deny {
 				var resp struct {
 					HookSpecificOutput struct {
-						HookEventName             string `json:"hookEventName"`
+						HookEventName            string `json:"hookEventName"`
 						PermissionDecision       string `json:"permissionDecision"`
 						PermissionDecisionReason string `json:"permissionDecisionReason"`
 					} `json:"hookSpecificOutput"`

@@ -3,11 +3,15 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestStableExecutableUnixRequiresExecutableBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX exec bit does not exist on Windows")
+	}
 	old := IsWin
 	IsWin = false
 	defer func() { IsWin = old }()
@@ -69,12 +73,17 @@ func TestStableExecutableRejectsCommandInjectionCharacters(t *testing.T) {
 
 func TestToklessPersistedAbsUsesInstallMarker(t *testing.T) {
 	oldWin := IsWin
-	IsWin = false
 	defer func() { IsWin = oldWin }()
+	if runtime.GOOS != "windows" {
+		IsWin = false
+	}
 	SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { SetHomeOverride("") })
 
 	path := filepath.Join(t.TempDir(), "tokless")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
 	if err := os.WriteFile(path, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -138,14 +147,19 @@ func TestSplitCommand(t *testing.T) {
 
 func TestStableExecutableAllowsPathsWithSpaces(t *testing.T) {
 	oldWin := IsWin
-	IsWin = false
 	defer func() { IsWin = oldWin }()
+	if runtime.GOOS != "windows" {
+		IsWin = false
+	}
 
 	dir := filepath.Join(t.TempDir(), "user with spaces", "bin")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(dir, "tokless")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
 	if err := os.WriteFile(exe, []byte("fake-bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}

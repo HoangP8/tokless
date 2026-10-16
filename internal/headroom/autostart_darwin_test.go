@@ -37,8 +37,11 @@ func TestProxyAutostartPlistBody(t *testing.T) {
 	if err := xml.Unmarshal([]byte(body), &pl); err != nil {
 		t.Fatalf("plist XML invalid: %v", err)
 	}
-	if pl.Label != proxyAutostartLabel {
-		t.Fatalf("label mismatch: %q", pl.Label)
+	// xml:"dict>string" on a plain string field keeps only the last match, so
+	// assert the Label key/value pair by content instead of decoding.
+	if !strings.Contains(body, "<key>Label</key>") ||
+		!strings.Contains(body, "<string>"+proxyAutostartLabel+"</string>") {
+		t.Fatalf("label mismatch:\n%s", body)
 	}
 	if len(pl.ProgramArguments) != 2 || pl.ProgramArguments[0] != "/Users/u/.local/bin/tokless" || pl.ProgramArguments[1] != "__proxy-run" {
 		t.Fatalf("ProgramArguments missing proxy-ensure:\n%s", body)
@@ -61,6 +64,6 @@ func TestLaunchctlServiceNotFoundRequiresExplicitError(t *testing.T) {
 }
 
 type plistBody struct {
-	Label            string   `xml:"dict>Label"`
-	ProgramArguments []string `xml:"dict>ProgramArguments>string"`
+	Label            string   `xml:"dict>string"`
+	ProgramArguments []string `xml:"dict>array>string"`
 }

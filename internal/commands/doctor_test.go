@@ -276,7 +276,14 @@ func TestDoctorAgentHeadroomIndentIsNestedWithoutDuplicateConnectors(t *testing.
 
 func TestDoctorContextModeStoreStatsCountsOnlyDBFiles(t *testing.T) {
 	home := t.TempDir()
-	root := filepath.Join(home, ".config", "opencode", "context-mode")
+	var root string
+	if util.IsWin {
+		appdata := filepath.Join(home, "AppData", "Roaming")
+		t.Setenv("APPDATA", appdata)
+		root = filepath.Join(appdata, "context-mode")
+	} else {
+		root = filepath.Join(home, ".config", "opencode", "context-mode")
+	}
 	for _, dir := range []string{"sessions", "content"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)

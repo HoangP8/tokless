@@ -420,9 +420,15 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	binDir := t.TempDir()
+	suffix := ""
+	bodyFor := func(version string) string { return "#!/bin/sh\nprintf '" + version + "'\n" }
+	if runtime.GOOS == "windows" {
+		suffix = ".bat"
+		bodyFor = func(version string) string { return "@echo off\r\necho " + version + "\r\n" }
+	}
 	for name, version := range map[string]string{"opencode": "1.9.0", "opencode2": "2.1.0"} {
-		bin := filepath.Join(binDir, name)
-		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '"+version+"'\n"), 0o755); err != nil {
+		bin := filepath.Join(binDir, name+suffix)
+		if err := os.WriteFile(bin, []byte(bodyFor(version)), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -492,6 +498,9 @@ func TestManagedHookCommandsCline(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(hooks, "PreToolUse")
+	if util.IsWin {
+		path += ".cjs"
+	}
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n# tokless-cline-rtk-v1\nexec '/tmp/tokless' rtk-hook cline\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

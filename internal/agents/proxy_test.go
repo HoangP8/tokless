@@ -77,6 +77,7 @@ func pinToklessProxyEnv(t *testing.T) {
 }
 
 func mixedProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -96,6 +97,7 @@ func mixedProxyTestHome(t *testing.T) {
 }
 
 func claudeProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -428,6 +430,7 @@ func TestDetectProxyConservativeStates(t *testing.T) {
 }
 
 func clineProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -668,6 +671,7 @@ supports_websockets = true
 }
 
 func codexProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -749,8 +753,11 @@ func TestConfigureCodexProxyUsesChatGPTOAuthWhenLoggedIn(t *testing.T) {
 	if strings.Contains(raw, "experimental_bearer_token") || strings.Contains(raw, "env_key") {
 		t.Fatalf("Codex config must preserve native OAuth auth:\n%s", raw)
 	}
-	if info, err := os.Stat(util.CodexPathsResolved().Config); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("Codex config mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	// Go does not emulate permission bits on Windows.
+	if !util.IsWin {
+		if info, err := os.Stat(util.CodexPathsResolved().Config); err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("Codex config mode = %v, %v; want 0600", info.Mode().Perm(), err)
+		}
 	}
 }
 
@@ -1177,6 +1184,7 @@ func openCodeProxySeed(foreign bool) string {
 }
 
 func opencodeProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -1219,6 +1227,7 @@ func TestOpenCodeProxyScenarios(t *testing.T) {
 }
 
 func ompProxyTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()
@@ -1728,10 +1737,12 @@ func TestAntigravityProxyLifecycle(t *testing.T) {
 	if changed, _ := ConfigureAntigravityProxy(); changed {
 		t.Fatal("second configure should be a no-op")
 	}
-	startup := filepath.Join(util.Home(), ".zshenv")
-	legacy := antigravityShellFenceHead + "\nexport " + antigravityProxyEnvKey + "=" + proxyTestURL + "\n# user shell setting\nexport " + antigravityCloudCodeKey + "=" + proxyTestURL + "\n" + antigravityShellFenceFoot + "\n"
-	if err := util.WriteFile(startup, legacy); err != nil {
-		t.Fatal(err)
+	if !util.IsWin {
+		startup := filepath.Join(util.Home(), ".zshenv")
+		legacy := antigravityShellFenceHead + "\nexport " + antigravityProxyEnvKey + "=" + proxyTestURL + "\n# user shell setting\nexport " + antigravityCloudCodeKey + "=" + proxyTestURL + "\n" + antigravityShellFenceFoot + "\n"
+		if err := util.WriteFile(startup, legacy); err != nil {
+			t.Fatal(err)
+		}
 	}
 	raw, ok := util.ReadFileSafe(envFile)
 	if !ok || !strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL=http://127.0.0.1:8787") {
@@ -1749,8 +1760,15 @@ func TestAntigravityProxyLifecycle(t *testing.T) {
 	if RemoveAntigravityProxy() {
 		t.Fatal("second remove should be a no-op")
 	}
-	if raw, ok := util.ReadFileSafe(startup); !ok || !strings.Contains(raw, "# user shell setting") || strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL") || strings.Contains(raw, "CLOUD_CODE_URL") {
-		t.Fatalf("legacy shell cleanup changed wrong content: %q", raw)
+	if util.IsWin {
+		if _, ok := util.ReadFileSafe(filepath.Join(util.Home(), ".zshenv")); ok {
+			t.Fatal("Windows lifecycle must not write shell startup files")
+		}
+	} else {
+		startup := filepath.Join(util.Home(), ".zshenv")
+		if raw, ok := util.ReadFileSafe(startup); !ok || !strings.Contains(raw, "# user shell setting") || strings.Contains(raw, "GOOGLE_GEMINI_BASE_URL") || strings.Contains(raw, "CLOUD_CODE_URL") {
+			t.Fatalf("legacy shell cleanup changed wrong content: %q", raw)
+		}
 	}
 }
 
@@ -2097,6 +2115,8 @@ func TestStashPrunesWhenAllProvidersDeleted(t *testing.T) {
 }
 
 func TestStashFileIsPrivate(t *testing.T) {
+	// POSIX permission bits do not exist on Windows.
+	skipOnWindows(t)
 	ompProxyTestHome(t)
 	if err := saveProxyRouteStash("omp", map[string]proxyRouteStashEntry{
 		"x": {Provider: "x"},

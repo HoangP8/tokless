@@ -94,6 +94,7 @@ func Which(bin string) string {
 			pe = ".EXE;.CMD;.BAT"
 		}
 		exts = strings.Split(pe, ";")
+		exts = append(exts, "") // bare name matches MSYS-style extensionless binaries
 	} else {
 		exts = []string{""}
 	}

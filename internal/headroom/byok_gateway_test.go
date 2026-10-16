@@ -586,6 +586,7 @@ func TestEndToEnd_HeadroomToBYOKGatewayToUpstream(t *testing.T) {
 }
 
 func TestLoadBYOKRoutesFailsOnCorruptedRegistry(t *testing.T) {
+	requireProcessIdentity(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
@@ -599,7 +600,7 @@ func TestLoadBYOKRoutesFailsOnCorruptedRegistry(t *testing.T) {
 		t.Fatalf("expected BYOK routes to be configured")
 	}
 
-	routesFile := filepath.Join(home, ".local", "share", "tokless", "headroom", "byok.routes.json")
+	routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
 	if err := os.WriteFile(routesFile, []byte("{invalid-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +621,7 @@ func TestStartBYOKGatewayFailsClosedOnCorruptedRegistry(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
-	routesFile := filepath.Join(home, ".local", "share", "tokless", "headroom", "byok.routes.json")
+	routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
 	if err := os.MkdirAll(filepath.Dir(routesFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -781,7 +782,7 @@ func TestBYOKGatewayFailsClosedOnDeletedRegistry(t *testing.T) {
 	}
 
 	// Delete the routes file
-	routesFile := filepath.Join(home, ".local", "share", "tokless", "headroom", "byok.routes.json")
+	routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
 	if err := os.Remove(routesFile); err != nil {
 		t.Fatal(err)
 	}
@@ -909,6 +910,16 @@ func TestBYOKGatewayLivezStatus(t *testing.T) {
 	}
 }
 
+// registryMissingMessage reports whether a BYOK reload degradation error
+// corresponds to a missing routes file. Windows surfaces deleted-file reads
+// as raw NTSTATUS codes that keep the "failed reading" prefix instead of the
+// friendly "not found" text.
+func registryMissingMessage(msg string) bool {
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "cannot find") ||
+		strings.Contains(msg, "failed reading BYOK routes")
+}
+
 func TestBYOKWatcherLiveRevocation(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -988,7 +999,7 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 	if !deletionFailedClosed {
 		t.Fatal("expected route lookup to fail closed after deletion within 100ms")
 	}
-	if byokReloadErr.Load() == nil || !strings.Contains(*byokReloadErr.Load(), "not found") {
+	if byokReloadErr.Load() == nil || !registryMissingMessage(*byokReloadErr.Load()) {
 		t.Fatalf("expected degradation error mentioning not found, got %v", byokReloadErr.Load())
 	}
 	close(stopWatcher)
@@ -1016,6 +1027,7 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 }
 
 func TestPersistByokGatewayOwnershipRoundTrip(t *testing.T) {
+	requireProcessIdentity(t)
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	identity, err := proxyIdentity(os.Getpid())
@@ -1038,6 +1050,7 @@ func TestPersistByokGatewayOwnershipRoundTrip(t *testing.T) {
 }
 
 func TestByokGatewayOwnedRejectsTamperedStartFingerprint(t *testing.T) {
+	requireProcessIdentity(t)
 	util.SetHomeOverride(t.TempDir())
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	identity, err := proxyIdentity(os.Getpid())

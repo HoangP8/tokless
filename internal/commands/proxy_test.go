@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/HoangP8/tokless/internal/agents"
+	"github.com/HoangP8/tokless/internal/core"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -20,6 +21,9 @@ func proxyCmdTestHome(t *testing.T) {
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
+	t.Setenv("TOKLESS_TEST", "1")
+	util.EnsureDir(core.GetAgent("codex").ConfigDir())
+	util.EnsureDir(core.GetAgent("claude").ConfigDir())
 	sandboxToklessPath(t)
 	bin := util.HeadroomBin()
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
@@ -442,8 +446,10 @@ model_provider = "local"
 	if _, ok := util.ReadFileSafe(filepath.Join(util.HeadroomPathsResolved().Root, "grok.proxy.stash.json")); ok {
 		t.Fatal("Grok stash survived command-facing configure failure")
 	}
-	if info, err := os.Stat(configFile); err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("config mode=%v err=%v", info.Mode().Perm(), err)
+	if !util.IsWin {
+		if info, err := os.Stat(configFile); err != nil || info.Mode().Perm() != 0o640 {
+			t.Fatalf("config mode=%v err=%v", info.Mode().Perm(), err)
+		}
 	}
 }
 
@@ -494,8 +500,10 @@ api_key = "sk-local"
 	if got, _ := util.ReadFileSafe(stashFile); got != stashBefore {
 		t.Fatal("Grok stash changed after command-facing remove failure")
 	}
-	if info, err := os.Stat(configFile); err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("config mode=%v err=%v", info.Mode().Perm(), err)
+	if !util.IsWin {
+		if info, err := os.Stat(configFile); err != nil || info.Mode().Perm() != 0o640 {
+			t.Fatalf("config mode=%v err=%v", info.Mode().Perm(), err)
+		}
 	}
 }
 

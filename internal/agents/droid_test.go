@@ -14,6 +14,7 @@ func setTestHome(t *testing.T) {
 	t.Helper()
 	pinToklessProxyEnv(t)
 	util.SetHomeOverride(t.TempDir())
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Cleanup(func() { util.SetHomeOverride("") })
 }
 

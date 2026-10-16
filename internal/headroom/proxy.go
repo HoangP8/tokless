@@ -48,15 +48,16 @@ type proxySupervisedState struct {
 }
 
 var (
-	proxyLiveZProbe = proxyLiveZ
-	proxySpawn      = spawnDetached
-	proxyIdentity   = identifyProcess
-	proxyKill       = killProcess
-	proxyWrite      = writeProxyOwnership
-	proxyGone       = processGone
-	proxyWait       = func(proc *os.Process) error { _, err := proc.Wait(); return err }
-	proxySleep      = time.Sleep
-	proxyNow        = time.Now
+	proxyLiveZProbe      = proxyLiveZ
+	proxySpawn           = spawnDetached
+	proxyIdentity        = identifyProcess
+	proxyKill            = killProcess
+	proxyFindProcess     = os.FindProcess
+	proxyWrite           = writeProxyOwnership
+	proxyGone            = processGone
+	proxyWait            = func(proc *os.Process) error { _, err := proc.Wait(); return err }
+	proxySleep           = time.Sleep
+	proxyNow             = time.Now
 	proxyServingPIDProbe = proxyServingPID
 	proxyProcessEnv      = readProcessEnv
 )
@@ -988,7 +989,7 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 		}
 		return fmt.Errorf("proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
-	proc, err := os.FindProcess(record.PID)
+	proc, err := proxyFindProcess(record.PID)
 	if err != nil {
 		return fmt.Errorf("failed to find headroom proxy pid %d: %w", record.PID, err)
 	}
@@ -1036,7 +1037,7 @@ func stopSupervisedDaemonWithRuntime(clearRuntime bool) error {
 		}
 		return fmt.Errorf("supervised proxy pid %d identity could not be verified — refusing to stop", state.PID)
 	}
-	proc, err := os.FindProcess(state.PID)
+	proc, err := proxyFindProcess(state.PID)
 	if err != nil {
 		return err
 	}
@@ -1117,7 +1118,7 @@ func (p processIdentityInfo) matches(executable string, args []string) bool {
 	if err != nil {
 		return false
 	}
-	if p.Executable == want && equalStrings(p.Args, args) {
+	if sameExecutablePath(p.Executable, want) && equalStrings(p.Args, args) {
 		return true
 	}
 	if len(p.Args) == 0 || !equalStrings(p.Args[1:], args) {
@@ -1126,19 +1127,37 @@ func (p processIdentityInfo) matches(executable string, args []string) bool {
 	launcher, err := normalizedExecutable(p.Args[0])
 	return err == nil && launcher == want
 }
+func (p processIdentityInfo) matchesRecord(r proxyOwnership) bool {
+	return p.Start == r.Start && sameExecutablePath(p.Executable, r.Executable) && equalStrings(p.Args, r.Args)
+}
+
+// sameExecutablePath reports whether two executable paths denote the same file.
+// Both sides must resolve; otherwise a bogus or moved path never matches a real
+// one. Symlinked temp dirs and Windows short/long names would otherwise read as
+// different executables.
+func sameExecutablePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	na, errA := normalizedExecutable(a)
+	nb, errB := normalizedExecutable(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return na == nb
+}
 func normalizedExecutable(path string) (string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", err
+	// Resolve parent-directory aliases (symlinks, Windows short names) but keep
+	// the file component literal, so two different executables in one directory
+	// never compare equal.
+	if resolved, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		return filepath.Clean(filepath.Join(resolved, filepath.Base(path))), nil
 	}
 	return filepath.Clean(path), nil
-}
-func (p processIdentityInfo) matchesRecord(r proxyOwnership) bool {
-	return p.Start == r.Start && p.Executable == r.Executable && equalStrings(p.Args, r.Args)
 }
 func (p processIdentityInfo) equal(other processIdentityInfo) bool {
 	return p.Start == other.Start && p.Executable == other.Executable && equalStrings(p.Args, other.Args)

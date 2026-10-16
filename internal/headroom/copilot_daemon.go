@@ -214,7 +214,7 @@ func StopCopilotProxy() error {
 		}
 		return fmt.Errorf("Copilot proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
-	proc, err := os.FindProcess(record.PID)
+	proc, err := proxyFindProcess(record.PID)
 	if err != nil {
 		return fmt.Errorf("failed to find Copilot proxy pid %d: %w", record.PID, err)
 	}

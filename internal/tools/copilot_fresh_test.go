@@ -12,6 +12,7 @@ import (
 )
 
 func copilotTestHome(t *testing.T) string {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("COPILOT_HOME", "")

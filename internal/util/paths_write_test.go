@@ -3,6 +3,7 @@ package util
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -19,6 +20,15 @@ func TestWriteFileModePreservesExistingPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("not a regular file: %v", info.Mode())
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "new" {
+		t.Fatalf("content = %q, err = %v; want new", got, err)
+	}
+	if runtime.GOOS == "windows" {
+		return // Windows models only the read-only bit
+	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("permissions changed: got %o, want 600", got)
 	}
@@ -32,6 +42,15 @@ func TestWriteFileModeUsesRequestedModeForNewFile(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("not a regular file: %v", info.Mode())
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "new" {
+		t.Fatalf("content = %q, err = %v; want new", got, err)
+	}
+	if runtime.GOOS == "windows" {
+		return // Windows models only the read-only bit
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("permissions incorrect: got %o, want 600", got)

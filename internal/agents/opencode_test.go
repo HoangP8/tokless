@@ -11,6 +11,7 @@ import (
 )
 
 func TestOpenCodeMajorVersion(t *testing.T) {
+	skipOnWindows(t)
 	for _, tc := range []struct {
 		version string
 		want    int
@@ -79,6 +80,7 @@ func TestOpenCodeTransportPluginPathUsesWindowsLayout(t *testing.T) {
 }
 
 func openCodeTestHome(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -329,6 +331,7 @@ func TestConfigureOpenCodeMcpHealsOutdatedV2Entry(t *testing.T) {
 }
 
 func TestOpenCodeInstalledMajorWithoutShim(t *testing.T) {
+	skipOnWindows(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)

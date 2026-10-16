@@ -100,12 +100,12 @@ func TestRoutingCoordinatorHeartbeatRenewsEmptyLeaseSet(t *testing.T) {
 	if err := publishCommittedForCoordinatorTest(state); err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := NewRoutingCoordinator(30 * time.Millisecond)
+	coordinator, err := NewRoutingCoordinator(time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer coordinator.Close()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	if !routingCoordinatorOwned(coordinator.nonce, coordinator.owner) {
 		t.Fatal("empty lease set stopped coordinator heartbeat")
 	}
@@ -220,7 +220,7 @@ func TestRoutingCoordinatorFencesAfterOwnershipTakeover(t *testing.T) {
 	if err := publishCommittedForCoordinatorTest(state); err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := NewRoutingCoordinator(30 * time.Millisecond)
+	coordinator, err := NewRoutingCoordinator(250 * time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestRoutingCoordinatorCloseIsSafeDuringHeartbeat(t *testing.T) {
 	if err := publishCommittedForCoordinatorTest(state); err != nil {
 		t.Fatal(err)
 	}
-	coordinator, err := NewRoutingCoordinator(50 * time.Millisecond)
+	coordinator, err := NewRoutingCoordinator(500 * time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}

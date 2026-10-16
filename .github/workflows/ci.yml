@@ -23,11 +23,17 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Build tokless binary
+        shell: bash
+        run: |
+          go build -o ./bin/ ./cmd/tokless
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+
       - name: Test
         env:
           CGO_ENABLED: "1"
         run: |
-          npm install -g context-mode@latest --silent || true
+          npm install -g context-mode@latest @colbymchenry/codegraph --silent || true
           go test -count=1 ./...
 
       - name: Build

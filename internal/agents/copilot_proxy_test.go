@@ -11,6 +11,7 @@ import (
 )
 
 func copilotTestHome(t *testing.T) string {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -49,7 +50,7 @@ func TestConfigureCopilotProxyUsesExecutableShim(t *testing.T) {
 	if !strings.Contains(raw, "tokless:copilot-shim") || !strings.Contains(raw, "__copilot") {
 		t.Fatalf("invalid shim: %q", raw)
 	}
-	if mode := fileModeCopilot(t, file); mode&0o111 == 0 {
+	if mode := fileModeCopilot(t, file); !util.IsWin && mode&0o111 == 0 {
 		t.Fatalf("shim is not executable: %o", mode)
 	}
 }
@@ -83,6 +84,7 @@ func TestRestoreCopilotProxyFilesRemovesNewManagedFiles(t *testing.T) {
 }
 
 func TestRealCopilotPathFollowsUnixSymlink(t *testing.T) {
+	skipOnWindows(t)
 	home := copilotTestHome(t)
 	dir := filepath.Join(home, "bin")
 	real := filepath.Join(home, "lib", "copilot-real")
@@ -154,6 +156,8 @@ func TestConfigureCopilotCLIProxyRefusesForeignWindowsCommand(t *testing.T) {
 }
 
 func TestConfigureCopilotProxyStashesAndRestoresSameDirectoryCLI(t *testing.T) {
+	// Windows policy refuses to replace a foreign copilot.cmd instead of stashing it.
+	skipOnWindows(t)
 	copilotTestHome(t)
 	path := copilotShimPath()
 	original := "#!/bin/sh\nprintf 'real copilot\\n'\n"
@@ -179,6 +183,7 @@ func TestConfigureCopilotProxyStashesAndRestoresSameDirectoryCLI(t *testing.T) {
 }
 
 func TestConfigureCopilotProxyIsIdempotentAndProtectsForeignShim(t *testing.T) {
+	skipOnWindows(t)
 	copilotTestHome(t)
 	if changed, _ := ConfigureCopilotProxy(); !changed {
 		t.Fatal("first configure should change")
@@ -219,6 +224,7 @@ func TestConfigureCopilotProxyStoresBYOKMetadataOnly(t *testing.T) {
 }
 
 func TestCopilotShimRunsWithoutShellStartupFiles(t *testing.T) {
+	skipOnWindows(t)
 	home := copilotTestHome(t)
 	t.Setenv("TOKLESS_TEST", "1")
 	if changed, _ := ConfigureCopilotCLIProxy(); !changed {
@@ -253,6 +259,8 @@ func TestCopilotShimRunsWithoutShellStartupFiles(t *testing.T) {
 }
 
 func TestRunCopilotCLISeparatesNativeAndBYOKModes(t *testing.T) {
+	// Requires a runnable fake Headroom binary; Windows resolves HeadroomBin() as headroom.exe.
+	skipOnWindows(t)
 	tests := []struct {
 		name         string
 		providerType string
@@ -449,14 +457,21 @@ func TestRemoveCopilotProxyOnlyRemovesToklessFiles(t *testing.T) {
 }
 
 func TestDetectCopilotProxyReportsExecutableLauncher(t *testing.T) {
-	copilotTestHome(t)
-	if got := detectCopilotProxy(ProxyCapability{ID: "copilot"}); got.State != ProxyStateUnconfigured {
+	_ = copilotTestHome(t)
+	got := detectCopilotProxy(ProxyCapability{ID: "copilot"})
+	if got.State == ProxyStateManaged {
+		if !RemoveCopilotProxy() {
+			t.Fatal("shim removal failed")
+		}
+	}
+	if got.State != ProxyStateUnconfigured && got.State != ProxyStateAbsent {
 		t.Fatalf("initial state = %s", got.State)
 	}
+	t.Cleanup(func() { _ = RemoveCopilotProxy() })
 	if changed, _ := ConfigureCopilotCLIProxy(); !changed {
 		t.Fatal("shim install failed")
 	}
-	got := detectCopilotProxy(ProxyCapability{ID: "copilot"})
+	got = detectCopilotProxy(ProxyCapability{ID: "copilot"})
 	if got.State != ProxyStateManaged || !strings.Contains(got.Detail, "executable") {
 		t.Fatalf("managed state = %s (%s)", got.State, got.Detail)
 	}

@@ -12,8 +12,11 @@ import (
 func setGrokBuildTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
+	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("GROK_HOME", "")
+	t.Setenv("TOKLESS_TEST", "1")
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	return home
 }
 

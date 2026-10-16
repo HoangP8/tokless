@@ -66,6 +66,7 @@ func TestRemoveCodexRtkHookPreservesWrapper(t *testing.T) {
 }
 
 func TestCodexTransformPreservesUnrelatedEmptyGroups(t *testing.T) {
+	setTestHome(t)
 	empty := util.NewOrderedMap()
 	empty.Set("matcher", "user")
 	empty.Set("hooks", []any{})

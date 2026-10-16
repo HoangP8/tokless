@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -114,7 +115,11 @@ func withCopilotTransaction(fn func() error) error {
 
 func rejectCopilotSymlinkPath(path string, allowLeaf bool) error {
 	clean := filepath.Clean(path)
-	for current := filepath.Clean(path); current != filepath.Dir(current); current = filepath.Dir(current) {
+	home := filepath.Clean(util.Home())
+	for current := clean; current != filepath.Dir(current); current = filepath.Dir(current) {
+		if current == home || home == "" || !underHome(current, home) {
+			break
+		}
 		if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
 			if allowLeaf && current == clean {
 				continue
@@ -123,6 +128,13 @@ func rejectCopilotSymlinkPath(path string, allowLeaf bool) error {
 		}
 	}
 	return nil
+}
+
+func underHome(path, home string) bool {
+	if home == "" || home == "." || home == string(os.PathSeparator) {
+		return false
+	}
+	return strings.HasPrefix(path, home+string(os.PathSeparator))
 }
 
 func restoreCopilotSnapshot(snapshot copilotFileSnapshot) error {

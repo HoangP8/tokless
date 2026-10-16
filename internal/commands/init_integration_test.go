@@ -38,9 +38,47 @@ func TestInitFailsBeforeWiringWithoutStableTokless(t *testing.T) {
 	}
 }
 
+func seedHeadroomOpenCodeTransportPlugin(t *testing.T) {
+	t.Helper()
+	root := filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages")
+	if util.IsWin {
+		root = filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "Lib", "site-packages")
+	}
+	if err := util.WriteFile(filepath.Join(root, "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pinAppDataEnv(t *testing.T, home string) {
+	t.Helper()
+	if !util.IsWin {
+		return
+	}
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+}
+
+func fakeUVPATH(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	suffix, body := "", "#!/bin/sh\nexit 0\n"
+	if util.IsWin {
+		suffix = ".bat"
+		body = "@echo off\r\nexit /b 0\r\n"
+	}
+	for _, name := range []string{"uv", "pjm", "pjm-mcp"} {
+		if err := os.WriteFile(filepath.Join(dir, name+suffix), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestInitSandboxWiring(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
+	fakeUVPATH(t)
 	tempdir := t.TempDir()
+	pinAppDataEnv(t, tempdir)
 
 	err := os.MkdirAll(filepath.Join(tempdir, ".claude"), 0755)
 	if err != nil {
@@ -71,9 +109,7 @@ func TestInitSandboxWiring(t *testing.T) {
 	t.Setenv("HOME", tempdir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
-	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
-		t.Fatal(err)
-	}
+	seedHeadroomOpenCodeTransportPlugin(t)
 
 	// Antigravity wiring is partly project-scoped — run from a sandbox project dir.
 	proj := filepath.Join(tempdir, "proj")
@@ -273,7 +309,9 @@ func TestInitSandboxWiring(t *testing.T) {
 
 func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
+	fakeUVPATH(t)
 	tempdir := t.TempDir()
+	pinAppDataEnv(t, tempdir)
 	for _, d := range []string{".claude", filepath.Join(".config", "opencode"), ".codex", filepath.Join(".gemini", "antigravity")} {
 		if err := os.MkdirAll(filepath.Join(tempdir, d), 0755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
@@ -283,9 +321,7 @@ func TestAutoIndexRtkIndependentOfCodegraph(t *testing.T) {
 	t.Setenv("HOME", tempdir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
-	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
-		t.Fatal(err)
-	}
+	seedHeadroomOpenCodeTransportPlugin(t)
 
 	proj := filepath.Join(tempdir, "proj")
 	if err := os.MkdirAll(filepath.Join(proj, ".git"), 0755); err != nil {
@@ -358,7 +394,9 @@ func getSHA256(path string) (string, error) {
 
 func TestInitIdempotent(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
+	fakeUVPATH(t)
 	tempdir := t.TempDir()
+	pinAppDataEnv(t, tempdir)
 
 	err := os.MkdirAll(filepath.Join(tempdir, ".claude"), 0755)
 	if err != nil {
@@ -377,9 +415,7 @@ func TestInitIdempotent(t *testing.T) {
 	t.Setenv("HOME", tempdir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tempdir, ".config"))
 	defer util.SetHomeOverride("")
-	if err := util.WriteFile(filepath.Join(util.HeadroomPathsResolved().Tools, "headroom-ai", "lib", "python3.13", "site-packages", "headroom", "providers", "opencode", "_dist", "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
-		t.Fatal(err)
-	}
+	seedHeadroomOpenCodeTransportPlugin(t)
 
 	// First Run
 	code := commands.RunInit(commands.InitOptions{

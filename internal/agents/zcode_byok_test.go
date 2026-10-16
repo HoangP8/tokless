@@ -11,6 +11,7 @@ import (
 // zcodeProxyTestHome pins the zcode config dir under a temp home and
 // returns the provider_config.json path.
 func zcodeProxyTestHome(t *testing.T) string {
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
 	pinToklessProxyEnv(t)
 	home := t.TempDir()

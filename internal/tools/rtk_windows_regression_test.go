@@ -37,6 +37,7 @@ func TestClaudeRtkHookCommandQuotesSpacedPath(t *testing.T) {
 func TestOverrideClaudeRtkHookMigratesManagedCommandsOnly(t *testing.T) {
 	dir := t.TempDir()
 	util.SetHomeOverride(dir)
+	t.Setenv("TOKLESS_TEST", "1")
 	defer util.SetHomeOverride("")
 
 	cp := util.ClaudeCodePaths()
@@ -85,6 +86,7 @@ func TestOverrideClaudeRtkHookMigratesManagedCommandsOnly(t *testing.T) {
 func TestRemoveClaudeRtkHookGroupPreservesUserSiblings(t *testing.T) {
 	dir := t.TempDir()
 	util.SetHomeOverride(dir)
+	t.Setenv("TOKLESS_TEST", "1")
 	defer util.SetHomeOverride("")
 	cp := util.ClaudeCodePaths()
 
@@ -141,6 +143,7 @@ func TestClaudeRtkHookManaged(t *testing.T) {
 func TestOverrideClaudeRtkHookPreservesMixedGroup(t *testing.T) {
 	dir := t.TempDir()
 	util.SetHomeOverride(dir)
+	t.Setenv("TOKLESS_TEST", "1")
 	defer util.SetHomeOverride("")
 	cp := util.ClaudeCodePaths()
 
@@ -171,6 +174,7 @@ func TestOverrideClaudeRtkHookPreservesMixedGroup(t *testing.T) {
 func TestOverrideClaudeRtkHookDeduplicatesManagedOnly(t *testing.T) {
 	dir := t.TempDir()
 	util.SetHomeOverride(dir)
+	t.Setenv("TOKLESS_TEST", "1")
 	defer util.SetHomeOverride("")
 	cp := util.ClaudeCodePaths()
 

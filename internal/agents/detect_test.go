@@ -552,6 +552,7 @@ func TestCleanupLegacyAntigravityContextModeNoLegacyIsNoop(t *testing.T) {
 func TestInstallAntigravityCodegraphPreInvocationIsFlat(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
+	t.Setenv("TOKLESS_TEST", "1")
 	defer util.SetHomeOverride("")
 
 	hooksFile := filepath.Join(home, ".gemini", "config", "hooks.json")

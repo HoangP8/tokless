@@ -17,9 +17,20 @@ func setupHeadroomHome(t *testing.T) string {
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", home+string(os.PathSeparator)+".config")
+	if util.IsWin {
+		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+		t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	}
 	fakeBin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakeBin, "tokless"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	shim := "#!/bin/sh\n"
+	if util.IsWin {
+		shim = "@echo off\r\nexit /b 0\r\n"
+		if err := os.WriteFile(filepath.Join(fakeBin, "tokless.bat"), []byte(shim), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TOKLESS_TEST", "1")
@@ -34,6 +45,16 @@ func setupHeadroomHome(t *testing.T) string {
 	plugin = filepath.Join(plugin, "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
 	if err := util.WriteFile(plugin, "export default async () => ({})\n"); err != nil {
 		t.Fatal(err)
+	}
+	// Hermetic agent state: existing config dirs make detectAgent's
+	// TOKLESS_TEST config fallback fire under any HOME, so proxy wiring
+	// runs for real instead of vacuously no-oping.
+	for _, id := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity"} {
+		if a := core.GetAgent(id); a != nil && a.ConfigDir != nil {
+			if err := util.EnsureDir(a.ConfigDir()); err != nil {
+				t.Fatalf("setup headroom home %s: %v", id, err)
+			}
+		}
 	}
 	t.Cleanup(func() { util.SetHomeOverride(""); agents.SetIdeProjectRoot(""); ConfigureInstructionConflicts(false) })
 	return home
@@ -78,6 +99,15 @@ func TestHeadroomWiresEverySupportedAgentIdempotently(t *testing.T) {
 	if err := util.WriteFile(grokConfig, "[models]\n\n[model_providers.demo]\nbase_url = \"https://demo.example/v1\"\napi_key = \"sk-demo\"\n"); err != nil {
 		t.Fatal(err)
 	}
+	// copilot/cline applicability and Detect are CLI-based; fake CLIs make
+	// them hermetically applicable under any HOME.
+	cliBin := t.TempDir()
+	for _, cli := range []string{"copilot", "cline"} {
+		if err := os.WriteFile(filepath.Join(cliBin, cli), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", cliBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, agent := range []string{"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "copilot", "cline"} {
 		t.Run(agent, func(t *testing.T) {
 			for i := 0; i < 2; i++ {

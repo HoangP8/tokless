@@ -228,6 +228,7 @@ func TestKiloRTKPluginDryRunAndForeignPreservation(t *testing.T) {
 	root := kiloToolProject(t)
 	home := t.TempDir()
 	util.SetHomeOverride(home)
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	t.Setenv("HOME", home)
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(root, "global-kilo"))
@@ -261,6 +262,7 @@ func TestKiloRTKPluginAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := kiloToolProject(t)
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(root, "global-kilo"))
 	binDir := t.TempDir()
 	kiloExecutableFixture(t, binDir, "rtk", "rtk")
@@ -292,6 +294,7 @@ func TestKiloGlobalRTKPathsOutsideGit(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
 	t.Setenv("KILO_CONFIG_DIR", "")
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
 	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(root, "opencode"))
 	if got := util.KiloPathsResolved().PluginsDir; got != filepath.Join(root, "xdg", "kilo", "plugin") {
@@ -435,6 +438,7 @@ func TestKiloRTKUnwireManagedAndForeignFiles(t *testing.T) {
 
 func TestKiloRTKOldGlobalCleanup(t *testing.T) {
 	root := kiloToolProject(t)
+	t.Setenv("TOKLESS_TEST", "1")
 	t.Setenv("KILO_CONFIG_DIR", filepath.Join(root, "global-kilo"))
 	oldGlobal := filepath.Join(util.KiloPathsResolved().PluginsDir, "tokless-rtk.ts")
 	newGlobal := filepath.Join(util.KiloPathsResolved().PluginsDir, "rtk.ts")
