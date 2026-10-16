@@ -14,3 +14,10 @@ skills-lock.json
 .refs/
 .claude/
 bin/
+
+.vscode/
+.projectmem/
+.codegraph/
+.tokless-write-*
+.github/copilot-instructions.md
+.github/hooks/
