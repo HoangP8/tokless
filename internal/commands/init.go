@@ -41,6 +41,135 @@ func hasToolForAgent(tools []*core.ToolManifest, agentID string) bool {
 	return false
 }
 
+// resolveToolSelection applies explicit, interactive, or persisted tool selection.
+func resolveToolSelection(opts InitOptions, allTools []*core.ToolManifest) ([]*core.ToolManifest, string) {
+	var selectedIDs []string
+	var mode string // "full" or "selected"
+	if opts.Tools != nil {
+		selectedIDs = opts.Tools
+		mode = "selected"
+	} else if util.IsInteractive() && !opts.DryRun {
+		modeChoice := util.SelectOne("Install tools", []util.SelectOption{
+			{Value: "full", Label: "Full (Default)", Selected: true},
+			{Value: "selected", Label: "Selected"},
+		})
+		if modeChoice == "selected" {
+			checklist := make([]util.MultiSelectOption, len(allTools))
+			for i, t := range allTools {
+				checklist[i] = util.MultiSelectOption{Value: t.ID, Label: t.Label, Hint: t.Homepage, Selected: true}
+			}
+			selectedIDs = util.MultiSelectWithoutStatus("Select tools to install", checklist)
+			mode = "selected"
+			if selectedIDs == nil {
+				selectedIDs = []string{}
+			}
+		} else {
+			mode = "full"
+			selectedIDs = nil // signal full set
+		}
+
+	} else {
+		saved := util.LoadSelection()
+		if saved == nil || saved.Mode == "full" {
+			mode = "full"
+			selectedIDs = nil
+		} else {
+			mode = "selected"
+			selectedIDs = saved.Tools
+		}
+	}
+
+	var filtered []*core.ToolManifest
+	if mode == "full" || selectedIDs == nil {
+		filtered = allTools
+	} else {
+		for _, t := range allTools {
+			if contains(selectedIDs, t.ID) {
+				filtered = append(filtered, t)
+			}
+		}
+	}
+	return filtered, mode
+}
+
+// runExcludedToolsUnwire removes excluded tools' managed config. A reported
+// no-op fails only when a presence signal still confirms managed config.
+func runExcludedToolsUnwire(agentID string, allTools, selected []*core.ToolManifest, opts InitOptions) []string {
+	var failed []string
+	selectedSet := map[string]bool{}
+	for _, t := range selected {
+		selectedSet[t.ID] = true
+	}
+	wired := func(tool *core.ToolManifest) bool {
+		if verify, ok := tool.WiredAnyFor[agentID]; ok {
+			if current := verify(); current != nil {
+				return *current
+			}
+			return false
+		}
+		if verify, ok := tool.VerifyFor[agentID]; ok {
+			if current := verify(); current != nil {
+				return *current
+			}
+		}
+		return false
+	}
+	stillConfigured := func(tool *core.ToolManifest) bool {
+		verify, ok := tool.WiredAnyFor[agentID]
+		if !ok {
+			return false
+		}
+		if current := verify(); current != nil {
+			return *current
+		}
+		return false
+	}
+	for _, tool := range allTools {
+		if selectedSet[tool.ID] {
+			continue
+		}
+		unwire, ok := tool.UnwireFor[agentID]
+		if !ok {
+			continue
+		}
+		if !wired(tool) {
+			continue
+		}
+		now, err := unwire(core.RunOpts{DryRun: opts.DryRun})
+		if err != nil || (!now && stillConfigured(tool)) {
+			if !opts.DryRun {
+				util.L.Err(tool.Label + " unwire failed for " + agentID)
+				failed = append(failed, tool.Label)
+				if err != nil {
+					util.L.Sub(err.Error())
+				}
+			}
+		}
+	}
+	return failed
+}
+
+// SaveSelectionIfNeeded persists the selection unless dry-run is enabled.
+func saveSelectionIfNeeded(mode string, tools []*core.ToolManifest, dryRun bool) string {
+	if dryRun {
+		return mode
+	}
+	var toolIDs []string
+	if mode == "full" || len(tools) == len(core.ListTools()) {
+		toolIDs = []string{}
+		mode = "full"
+	} else {
+		for _, t := range tools {
+			toolIDs = append(toolIDs, t.ID)
+		}
+		mode = "selected"
+	}
+	if err := util.SaveSelection(mode, toolIDs); err != nil {
+		util.L.Err("cannot persist tool selection: " + err.Error())
+	}
+	return mode
+}
+
 // detectAgents probes all agents concurrently.
 func detectAgents(allAgents []*core.AgentManifest) (map[string]bool, map[string]string) {
 	results := make([]core.Detection, len(allAgents))
@@ -81,16 +210,7 @@ func RunInit(opts InitOptions) int {
 	var failures map[string][]string
 
 	allTools := core.ListTools()
-	var tools []*core.ToolManifest
-	if opts.Tools != nil {
-		for _, t := range allTools {
-			if contains(opts.Tools, t.ID) {
-				tools = append(tools, t)
-			}
-		}
-	} else {
-		tools = allTools
-	}
+	tools, selectionMode := resolveToolSelection(opts, allTools)
 
 	needNode, needGit := false, false
 	minNode := 0
@@ -155,14 +275,22 @@ func RunInit(opts InitOptions) int {
 		requested = opts.Agents
 	case !util.IsInteractive():
 		// Non-interactive shell: wire each detected agent supported by a selected tool.
-		for _, a := range allAgents {
-			if installedIDs[a.ID] && hasToolForAgent(tools, a.ID) {
-				requested = append(requested, a.ID)
+		if len(tools) == 0 {
+			for _, a := range allAgents {
+				if installedIDs[a.ID] {
+					requested = append(requested, a.ID)
+				}
+			}
+		} else {
+			for _, a := range allAgents {
+				if installedIDs[a.ID] && hasToolForAgent(tools, a.ID) {
+					requested = append(requested, a.ID)
+				}
 			}
 		}
 		util.SetQuiet(false)
 		util.L.Raw("")
-		if len(requested) == 0 {
+		if len(requested) == 0 && len(tools) > 0 {
 			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " Non-interactive shell and no compatible agents detected — nothing to wire.")
 			util.L.Raw("  " + util.C.Gray("Run tokless in a terminal to pick agents, or: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
 			util.L.Raw("")
@@ -170,13 +298,24 @@ func RunInit(opts InitOptions) int {
 		}
 		labels := make([]string, len(requested))
 		for i, id := range requested {
-			labels[i] = core.GetAgent(id).Label
+			agent := core.GetAgent(id)
+			if agent != nil {
+				labels[i] = agent.Label
+			}
 		}
-		util.L.Raw("  " + util.C.Gray("Non-interactive shell — auto-selecting installed agents: ") + util.C.Bold(joinComma(labels)))
-		util.L.Raw("  " + util.C.Gray("To choose explicitly: ") + util.C.Cyan("tokless --agents <claude,opencode,codex>"))
+		if len(requested) > 0 {
+			util.L.Raw("  " + util.C.Gray("Non-interactive shell — auto-selecting installed agents: ") + util.C.Bold(joinComma(labels)))
+			util.L.Raw("  " + util.C.Gray("To choose explicitly: ") + util.C.Cyan("tokless --agents <claude,opencode,codex>"))
+		}
 	default:
 		var optsList []util.MultiSelectOption
 		for _, a := range allAgents {
+			if len(tools) == 0 {
+				if installedIDs[a.ID] {
+					optsList = append(optsList, util.MultiSelectOption{Value: a.ID, Label: a.Label})
+				}
+				continue
+			}
 			if !installedIDs[a.ID] || !hasToolForAgent(tools, a.ID) {
 				continue
 			}
@@ -187,13 +326,18 @@ func RunInit(opts InitOptions) int {
 			optsList = append(optsList, opt)
 		}
 		if len(optsList) == 0 {
-			util.L.Raw("")
-			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " No compatible agents detected — nothing to wire.")
-			util.L.Raw("  " + util.C.Gray("Install an agent, then re-run tokless; or select one explicitly: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
-			util.L.Raw("")
-			return 0
+			if len(tools) == 0 {
+				requested = nil
+			} else {
+				util.L.Raw("")
+				util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " No compatible agents detected — nothing to wire.")
+				util.L.Raw("  " + util.C.Gray("Install an agent, then re-run tokless; or select one explicitly: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
+				util.L.Raw("")
+				return 0
+			}
+		} else {
+			requested = util.MultiSelect("Select agents to install tokless", optsList)
 		}
-		requested = util.MultiSelect("Select agents to install tokless", optsList)
 	}
 
 	var wireIDs, skipped []string
@@ -201,7 +345,7 @@ func RunInit(opts InitOptions) int {
 		if installedIDs[id] {
 			wireIDs = append(wireIDs, id)
 		} else {
-			wireIDs = append(wireIDs, id)
+			skipped = append(skipped, id)
 		}
 	}
 	for _, id := range skipped {
@@ -274,13 +418,20 @@ func RunInit(opts InitOptions) int {
 		}
 		util.SetQuiet(false)
 		for id, failed := range failures {
-			util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + core.GetAgent(id).Label + ": " + joinComma(failed) + " not wired.")
-			printFailureDetail(map[string]string{core.GetAgent(id).Label: wireLogs[id]})
+			agent := core.GetAgent(id)
+			if agent == nil {
+				continue
+			}
+			util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + agent.Label + ": " + joinComma(failed) + " not wired.")
+			printFailureDetail(map[string]string{agent.Label: wireLogs[id]})
 		}
-		if len(skipped) == 0 {
+		if len(requested) == 0 && len(tools) > 0 {
 			util.L.Raw("  " + util.C.Gray("Nothing selected. Tools are installed; re-run to wire an agent."))
 		}
 		util.L.Raw("")
+		if len(failures) > 0 {
+			return 1
+		}
 		return 0
 	}
 
@@ -290,6 +441,9 @@ func RunInit(opts InitOptions) int {
 		agent := core.GetAgent(agentID)
 		wireBar.Begin(agent.Label)
 		var failed []string
+		if unwireFailed := runExcludedToolsUnwire(agentID, allTools, tools, opts); len(unwireFailed) > 0 {
+			failed = append(failed, unwireFailed...)
+		}
 		wireOut, _ := util.CaptureLogs(func() error {
 			for ti, tool := range tools {
 				fn, ok := tool.WireFor[agentID]
@@ -319,7 +473,7 @@ func RunInit(opts InitOptions) int {
 				if res, err := fn(core.RunOpts{DryRun: opts.DryRun, Upgrade: opts.Upgrade}); err == nil {
 					okWire = res
 				}
-				if okWire && !opts.DryRun && os.Getenv("TOKLESS_TEST") != "1" && !tool.InstructionOnly {
+				if okWire && !opts.DryRun && !tool.InstructionOnly {
 					if verify, ok := tool.VerifyFor[agentID]; ok {
 						r := verify()
 						okWire = r != nil && *r
@@ -391,6 +545,7 @@ func RunInit(opts InitOptions) int {
 	if len(failures) > 0 {
 		return 1
 	}
+	saveSelectionIfNeeded(selectionMode, tools, opts.DryRun)
 	return 0
 }
 

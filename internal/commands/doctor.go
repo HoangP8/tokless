@@ -412,6 +412,9 @@ func doctorMissingTools(tools []*core.ToolManifest, agentID string) []string {
 		if tool.InstructionOnly {
 			continue
 		}
+		if !util.IsToolSelected(tool.ID) {
+			continue
+		}
 		verify, ok := tool.VerifyFor[agentID]
 		if !ok {
 			if tool.ID == "codegraph" || tool.ID == "context-mode" || tool.ID == "projectmem" {
@@ -521,8 +524,18 @@ func doctorAgentRows(r agentReport) []string {
 		return rows
 	}
 
+	var selectedInstr []*core.ToolManifest
+	for _, tool := range core.ListTools() {
+		if tool.InstructionOnly && util.IsToolSelected(tool.ID) {
+			selectedInstr = append(selectedInstr, tool)
+		}
+	}
+
 	for _, tool := range core.ListTools() {
 		if tool.InstructionOnly {
+			continue
+		}
+		if !util.IsToolSelected(tool.ID) {
 			continue
 		}
 		verify, ok := tool.VerifyFor[r.id]
@@ -602,12 +615,51 @@ func doctorAgentRows(r agentReport) []string {
 		}
 	}
 
-	if cfg := agentConfigFile(r.id); cfg != "" {
-		rows = append(rows, util.C.Green(util.Sym.Check)+" config → "+util.C.Gray(tildePath(cfg)))
+	if len(selectedInstr) > 0 {
+		allConfigured := true
+		var instructionRows []string
+		for i, tool := range selectedInstr {
+			mark := util.C.Gray(util.Sym.Bullet)
+			status := "not configured"
+			configured := false
+			unsupported := false
+			if r.id == "cursor" {
+				configured = cursorInstructionRuleConfigured(tool.ID)
+			} else if verify := tool.VerifyFor[r.id]; verify != nil {
+				if passed := verify(); passed != nil && *passed {
+					configured = true
+				}
+			} else if _, ok := tool.WireFor[r.id]; ok {
+				configured = toolindex.HasOwner(r.id, tool.ID)
+				unsupported = !configured
+			} else {
+				unsupported = true
+			}
+			if configured {
+				mark = util.C.Green(util.Sym.Check)
+				status = "configured"
+			} else if unsupported {
+				status = "status unavailable"
+			}
+			if status != "configured" {
+				allConfigured = false
+			}
+			prefix := "  ├─ "
+			if i == len(selectedInstr)-1 {
+				prefix = "  └─ "
+			}
+			instructionRows = append(instructionRows, prefix+mark+" "+tool.Label+util.C.Dim(" ("+status+")"))
+		}
+		mark := util.C.Yellow(util.Sym.Warn)
+		if allConfigured {
+			mark = util.C.Green(util.Sym.Check)
+		}
+		rows = append(rows, mark+" instructions")
+		rows = append(rows, instructionRows...)
 	}
 
-	if ins := toolindex.InstructionPath(r.id); ins != "" {
-		rows = append(rows, util.C.Green(util.Sym.Check)+" instructions → "+util.C.Gray(tildePath(ins)))
+	if cfg := agentConfigFile(r.id); cfg != "" {
+		rows = append(rows, util.C.Green(util.Sym.Check)+" config → "+util.C.Gray(tildePath(cfg)))
 	}
 
 	if len(r.runtime) > 0 {
@@ -619,6 +671,37 @@ func doctorAgentRows(r agentReport) []string {
 	}
 
 	return rows
+}
+
+func cursorInstructionRuleConfigured(toolID string) bool {
+	for _, spec := range util.CursorProjectRuleSpecs() {
+		if spec.Owner != toolID {
+			continue
+		}
+		path := filepath.Join(".cursor", "rules", spec.Filename)
+		for _, root := range cursorRuleWorkspaceCandidates() {
+			raw, ok := util.ReadFileSafe(filepath.Join(root, path))
+			if ok && raw == util.CursorProjectRuleContent(spec) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cursorRuleWorkspaceCandidates() []string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	if root := findProjectDir(cwd); looksLikeProject(root) {
+		roots = append(roots, root)
+	}
+	if !contains(roots, cwd) {
+		roots = append(roots, cwd)
+	}
+	return roots
 }
 
 func endpointPort(endpoint string) string {

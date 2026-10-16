@@ -513,6 +513,8 @@ func TestInitAgentFullyWiredExcludesInstructionOnly(t *testing.T) {
 }
 
 func TestDoctorMissingToolsExcludesInstructionOnly(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
 	missing := doctorMissingTools([]*core.ToolManifest{
 		{
 			Label:           "Caveman",
@@ -530,5 +532,177 @@ func TestDoctorMissingToolsExcludesInstructionOnly(t *testing.T) {
 	}, "agent")
 	if len(missing) != 1 || missing[0] != "RTK" {
 		t.Fatalf("missing = %v", missing)
+	}
+}
+
+func TestDoctorMissingToolsOmitsDeselected(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"rtk"}); err != nil {
+		t.Fatal(err)
+	}
+	missing := doctorMissingTools([]*core.ToolManifest{
+		{
+			ID:    "codegraph",
+			Label: "CodeGraph",
+			VerifyFor: map[string]core.VerifyFn{
+				"agent": func() *bool { return core.BoolPtr(false) },
+			},
+		},
+		{
+			ID:    "rtk",
+			Label: "RTK",
+			VerifyFor: map[string]core.VerifyFn{
+				"agent": func() *bool { return core.BoolPtr(false) },
+			},
+		},
+	}, "agent")
+	if len(missing) != 1 || missing[0] != "RTK" {
+		t.Fatalf("deselected codegraph should be omitted from missing: %v", missing)
+	}
+}
+
+func TestDoctorAgentRowsOmitsDeselectedRegularTools(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"rtk"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join(doctorAgentRows(agentReport{id: "codex", label: "Codex", installed: true}), "\n")
+	if !strings.Contains(rows, "RTK → ") {
+		t.Fatalf("selected RTK row missing: %s", rows)
+	}
+	for _, unwanted := range []string{"CodeGraph", "ContextMode", "ProjectMem", "Headroom"} {
+		if strings.Contains(rows, unwanted) {
+			t.Fatalf("deselected tool %q should be omitted: %s", unwanted, rows)
+		}
+	}
+}
+
+func TestDoctorAgentRowsOmitsDeselectedInstructionTools(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"rtk", "codegraph"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join(doctorAgentRows(agentReport{id: "claude", label: "Claude", installed: true}), "\n")
+	for _, unwanted := range []string{"Ponytail", "Caveman", "Karpathy", "instructions →"} {
+		if strings.Contains(rows, unwanted) {
+			t.Fatalf("deselected instruction tool leaked into doctor rows: %q in %s", unwanted, rows)
+		}
+	}
+}
+
+func TestDoctorAgentRowsShowsSelectedInstructionBranchWithStatus(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"ponytail", "caveman", "principles"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{"ponytail", "caveman", "principles"} {
+		if !toolindex.WriteOwner("claude", owner) {
+			t.Fatalf("failed to wire %s for claude", owner)
+		}
+	}
+	rows := strings.Join(doctorAgentRows(agentReport{id: "claude", label: "Claude", installed: true}), "\n")
+	if !strings.Contains(rows, util.Sym.Check+" instructions") {
+		t.Fatalf("Instructions branch header missing: %s", rows)
+	}
+	if !strings.Contains(rows, "Ponytail") || !strings.Contains(rows, "Caveman") || !strings.Contains(rows, "Karpathy Principles") {
+		t.Fatalf("selected instruction tools missing: %s", rows)
+	}
+	if !strings.Contains(rows, "(configured)") {
+		t.Fatalf("configured status missing: %s", rows)
+	}
+	if !strings.Contains(rows, "└─ ") {
+		t.Fatalf("last instruction row should use └─ connector: %s", rows)
+	}
+	if strings.Contains(rows, "(not configured)") {
+		t.Fatalf("wired instruction tools should not show not configured: %s", rows)
+	}
+}
+
+func TestDoctorAgentRowsSelectedInstructionNotConfiguredShowsNotConfigured(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"ponytail", "caveman", "principles"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join(doctorAgentRows(agentReport{id: "amp", label: "Amp", installed: true}), "\n")
+	if !strings.Contains(rows, "Ponytail (status unavailable)") || !strings.Contains(rows, "Caveman (status unavailable)") {
+		t.Fatalf("instruction-only tools without verification must report unavailable, not false negative: %s", rows)
+	}
+	if strings.Contains(rows, "Ponytail (not configured)") || strings.Contains(rows, "Caveman (not configured)") {
+		t.Fatalf("missing VerifyFor must not report not configured: %s", rows)
+	}
+	if strings.Contains(rows, util.Sym.Check+" instructions") {
+		t.Fatalf("unwired instruction branch should not show success: %s", rows)
+	}
+	if strings.Contains(rows, "(configured)") {
+		t.Fatalf("unwired instruction tool should not show configured: %s", rows)
+	}
+}
+
+func TestDoctorAgentRowsInstructionWithoutVerifyUsesOwnerAPI(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"principles"}); err != nil {
+		t.Fatal(err)
+	}
+	if !toolindex.WriteOwner("amp", "principles") {
+		t.Fatal("failed to wire principles for amp")
+	}
+	rows := strings.Join(doctorAgentRows(agentReport{id: "amp", label: "Amp", installed: true}), "\n")
+	if !strings.Contains(rows, "Karpathy Principles (configured)") {
+		t.Fatalf("owner marker should report configured without VerifyFor: %s", rows)
+	}
+}
+
+func TestDoctorAgentRowsCursorInstructionsUseGeneratedRules(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"principles"}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+	spec := util.CursorProjectRuleSpecs()[0]
+	rule := filepath.Join(workspace, ".cursor", "rules", spec.Filename)
+	if err := os.MkdirAll(filepath.Dir(rule), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rule, []byte(util.CursorProjectRuleContent(spec)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := strings.Join(doctorAgentRows(agentReport{id: "cursor", label: "Cursor", installed: true}), "\n")
+	if !strings.Contains(rows, "Karpathy Principles (configured)") {
+		t.Fatalf("generated Cursor rule must report configured: %s", rows)
+	}
+	if strings.Contains(rows, "Karpathy Principles (not configured)") {
+		t.Fatalf("generated Cursor rule falsely reported not configured: %s", rows)
+	}
+}
+
+func TestDoctorAgentRowsNoSelectedInstructionOmitsBranch(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := util.SaveSelection("selected", []string{"rtk", "codegraph"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Join(doctorAgentRows(agentReport{id: "claude", label: "Claude", installed: true}), "\n")
+	if strings.Contains(rows, "instructions") {
+		t.Fatalf("no selected instruction tools should omit Instructions branch: %s", rows)
 	}
 }

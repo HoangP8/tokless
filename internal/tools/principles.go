@@ -59,7 +59,7 @@ func principlesVerifyFor(agent string) func() bool {
 
 var principles = &core.ToolManifest{
 	ID:              "principles",
-	Label:           "Principles",
+	Label:           "Karpathy Principles",
 	Description:     "Meta-rules for thinking before coding, simplicity, surgical changes, and goal-driven execution.",
 	Homepage:        "https://github.com/multica-ai/andrej-karpathy-skills",
 	InstallHint:     "Instruction-only — no install needed.",

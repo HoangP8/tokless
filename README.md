@@ -45,6 +45,13 @@
     <tr>
       <td align="center" width="140"><a href="https://github.com/can1357/oh-my-pi"><img src="https://raw.githubusercontent.com/can1357/oh-my-pi/main/assets/icon.svg" width="36" height="36" alt="Oh My Pi" /></a><br/><b>Oh My Pi</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
       <td align="center" width="140"><a href="https://cline.bot/"><img src="https://raw.githubusercontent.com/cline/cline/main/assets/icons/icon.png" width="36" height="36" alt="Cline" /></a><br/><b>Cline</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://github.com/deepseek-ai/deepseek-harness"><b>DeepSeek Harness</b></a><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://github.com/zai-org/ZCode"><b>ZCode</b></a><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20Desktop-2ea44f" alt="✓ CLI + Desktop" /></td>
+      <td align="center" width="140"><a href="https://ampcode.com/"><b>Amp</b></a><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+    </tr>
+    <tr>
+      <td align="center" width="140"><a href="https://github.com/MoonshotAI/kimi-code"><b>Kimi Code</b></a><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://github.com/CommandCodeAI/command-code"><b>Command Code</b></a><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
       <td align="center" width="140">&nbsp;</td>
@@ -167,7 +174,7 @@ tokless proxy down   Restore Tokless-owned routing
 Flags:
 ```
 --agents <list>   Subset: claude,opencode,opencode2,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor,amp,kimi,cmd,dsh,zcode
---tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode
+--tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode,headroom,projectmem
 --dry-run         Preview, no writes
 --verbose         Every step
 --yes             Skip confirmations

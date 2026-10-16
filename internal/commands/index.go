@@ -75,9 +75,13 @@ func RunIndex(opts InitOptions, auto bool) int {
 
 	var indexable []*core.ToolManifest
 	for _, t := range core.ListTools() {
-		if t.IndexProject != nil {
-			indexable = append(indexable, t)
+		if t.IndexProject == nil {
+			continue
 		}
+		if !util.IsToolSelected(t.ID) {
+			continue
+		}
+		indexable = append(indexable, t)
 	}
 
 	if !auto {
@@ -98,7 +102,9 @@ func RunIndex(opts InitOptions, auto bool) int {
 	failed := 0
 	for _, t := range indexable {
 		if auto && t.ID == "codegraph" {
-			runCodegraphAutoIndex(dir)
+			if util.IsToolSelected("codegraph") {
+				runCodegraphAutoIndex(dir)
+			}
 			continue
 		}
 		if t.IndexReady != nil && !t.IndexReady() {
@@ -165,6 +171,9 @@ func runCodegraphAutoIndex(dir string) int {
 
 // RunCodegraphIndexHook handles `tokless agy-hook codegraph-index`.
 func RunCodegraphIndexHook() int {
+	if !util.IsToolSelected("codegraph") {
+		return 0
+	}
 	input, _ := io.ReadAll(os.Stdin)
 	dir := resolveHookProjectDirFromInput(input)
 	if dir == "" {
@@ -175,17 +184,28 @@ func RunCodegraphIndexHook() int {
 
 // RunGrokSessionStartHook initializes CodeGraph for a new Grok workspace.
 func RunGrokSessionStartHook() int {
+	if !util.IsToolSelected("codegraph") && !util.IsToolSelected("projectmem") {
+		return 0
+	}
 	input, _ := io.ReadAll(os.Stdin)
 	dir := resolveHookProjectDirFromInput(input)
 	if dir == "" {
 		return 0
 	}
-	tools.RefreshProjectmemRuleFiles(dir)
-	return runCodegraphAutoIndex(dir)
+	if util.IsToolSelected("projectmem") {
+		tools.RefreshProjectmemRuleFiles(dir)
+	}
+	if util.IsToolSelected("codegraph") {
+		return runCodegraphAutoIndex(dir)
+	}
+	return 0
 }
 
 // RunCursorProjectRulesHook refreshes project rules on Cursor workspace startup.
 func RunCursorProjectRulesHook() int {
+	if !util.IsToolSelected("principles") && !util.IsToolSelected("caveman") && !util.IsToolSelected("ponytail") && !util.IsToolSelected("codegraph") && !util.IsToolSelected("context-mode") && !util.IsToolSelected("projectmem") {
+		return 0
+	}
 	input, _ := io.ReadAll(os.Stdin)
 	for _, root := range resolveHookProjectDirs(input) {
 		project := findProjectDir(root)
@@ -197,7 +217,9 @@ func RunCursorProjectRulesHook() int {
 				util.L.Err(err.Error())
 			}
 		}
-		tools.RefreshProjectmemRuleFiles(project)
+		if util.IsToolSelected("projectmem") {
+			tools.RefreshProjectmemRuleFiles(project)
+		}
 	}
 	return 0
 }

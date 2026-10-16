@@ -31,6 +31,51 @@ func TestInstallCursorProjectRules(t *testing.T) {
 	}
 }
 
+func TestInstallCursorProjectRulesRespectsSelection(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Cleanup(func() { SetHomeOverride("") })
+	if err := SaveSelection("selected", []string{"principles"}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	if ok, err := InstallCursorProjectRules(workspace, false); err != nil || !ok {
+		t.Fatalf("install selected rule: ok=%v err=%v", ok, err)
+	}
+	rulesDir := filepath.Join(workspace, ".cursor", "rules")
+	for _, spec := range CursorProjectRuleSpecs() {
+		_, err := os.Stat(filepath.Join(rulesDir, spec.Filename))
+		if spec.Owner == "principles" && err != nil {
+			t.Errorf("selected rule missing: %v", err)
+		}
+		if spec.Owner != "principles" && !os.IsNotExist(err) {
+			t.Errorf("unselected rule %s was installed", spec.Owner)
+		}
+	}
+	generated := filepath.Join(rulesDir, "response-style.mdc")
+	if err := os.WriteFile(generated, []byte(CursorProjectRuleContent(CursorProjectRuleSpecs()[1])), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(rulesDir, "user-rule.mdc")
+	if err := os.WriteFile(foreign, []byte("user authored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSelection("selected", []string{"principles"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := InstallCursorProjectRules(workspace, false); err != nil || !ok {
+		t.Fatalf("remove deselected rule: ok=%v err=%v", ok, err)
+	}
+	if _, err := os.Stat(generated); !os.IsNotExist(err) {
+		t.Fatal("generated deselected rule should be removed")
+	}
+	if got, err := os.ReadFile(foreign); err != nil || string(got) != "user authored" {
+		t.Fatalf("foreign rule changed: %q, %v", got, err)
+	}
+}
+
 func TestInstallCursorProjectRulesDryRunAndKeepExisting(t *testing.T) {
 	workspace := t.TempDir()
 	if ok, err := InstallCursorProjectRules(workspace, true); err != nil || !ok {

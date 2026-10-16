@@ -76,6 +76,14 @@ func InstallCursorProjectRules(workspace string, dryRun bool) (bool, error) {
 	}
 	for _, spec := range cursorProjectRuleSpecs {
 		path := filepath.Join(rulesDir, spec.Filename)
+		if !IsToolSelected(spec.Owner) {
+			if current, err := os.ReadFile(path); err == nil && string(current) == CursorProjectRuleContent(spec) {
+				if err := os.Remove(path); err != nil {
+					return false, fmt.Errorf("remove Cursor rule %s: %w", spec.Filename, err)
+				}
+			}
+			continue
+		}
 		if _, err := os.Stat(path); err == nil {
 			continue
 		}

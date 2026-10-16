@@ -94,7 +94,7 @@ func helpText() string {
 }
 
 var agentSubset = []string{"claude", "opencode", "opencode2", "codex", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "cursor", "amp", "kimi", "dsh", "zcode"}
-var toolSubset = []string{"rtk", "codegraph", "context-mode", "headroom", "projectmem"}
+var toolSubset = []string{"rtk", "caveman", "codegraph", "context-mode", "headroom", "ponytail", "projectmem", "principles"}
 
 // termWidth returns the terminal width in columns.
 func termWidth() int {
