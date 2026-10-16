@@ -16,6 +16,8 @@ func EnsureInstructionSeparators(agentIDs []string) {
 			path = util.ClaudeCodePaths().Instructions
 		case "opencode":
 			path = util.OpenCodePathsResolved().Instructions
+		case "opencode2":
+			path = util.OpenCodePathsV2().Instructions
 		case "codex":
 			path = util.CodexPathsResolved().Instructions
 		case "antigravity":

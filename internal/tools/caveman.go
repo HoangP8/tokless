@@ -82,6 +82,7 @@ var caveman = &core.ToolManifest{
 	WireFor: map[string]core.AgentFn{
 		"claude":      cavemanWireFor("claude"),
 		"opencode":    cavemanWireFor("opencode"),
+		"opencode2":   cavemanWireFor("opencode2"),
 		"codex":       cavemanWireFor("codex"),
 		"antigravity": cavemanWireFor("antigravity"),
 		"copilot":     cavemanWireCopilot(),
@@ -100,6 +101,7 @@ var caveman = &core.ToolManifest{
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      cavemanUnwireFor("claude"),
 		"opencode":    cavemanUnwireFor("opencode"),
+		"opencode2":   cavemanUnwireFor("opencode2"),
 		"codex":       cavemanUnwireFor("codex"),
 		"antigravity": cavemanUnwireFor("antigravity"),
 		"copilot":     cavemanUnwireFor("copilot"),
@@ -113,6 +115,7 @@ var caveman = &core.ToolManifest{
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      cavemanVerifyFor("claude"),
 		"opencode":    cavemanVerifyFor("opencode"),
+		"opencode2":   cavemanVerifyFor("opencode2"),
 		"codex":       cavemanVerifyFor("codex"),
 		"antigravity": cavemanVerifyFor("antigravity"),
 		"copilot":     cavemanVerifyFor("copilot"),

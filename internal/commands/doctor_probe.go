@@ -419,16 +419,30 @@ func managedHookCommands(agentID string) []string {
 }
 
 func managedRuntimeFiles(agentID string) []runtimeFile {
+	if agentID != "opencode" {
+		return managedRuntimeFilesForMajor(agentID, opencodeMajorVersionForDoctor())
+	}
+	majors := agents.OpenCodeInstalledMajors()
+	if len(majors) == 0 {
+		majors = []int{1}
+	}
+	var files []runtimeFile
+	for _, major := range majors {
+		files = append(files, managedRuntimeFilesForMajor(agentID, major)...)
+	}
+	return files
+}
+
+func managedRuntimeFilesForMajor(agentID string, opencodeMajor int) []runtimeFile {
 	pathFor := func(path string, markers ...string) runtimeFile {
 		return runtimeFile{path: path, markers: markers}
 	}
 	switch agentID {
 	case "opencode":
-		files := []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
-		if opencodeMajorVersionForDoctor() == 2 {
-			files = append(files, pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk-v2.ts"), "export default", "async setup", `ctx.tool.hook("execute.before"`))
+		if opencodeMajor == 2 {
+			return []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk-v2.ts"), "TOKLESS_BIN", "rtk-rewrite", "export default", "async setup", `ctx.tool.hook("execute.before"`)}
 		}
-		return files
+		return []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts"), "TOKLESS_BIN", "rtk-rewrite", "tool.execute.before")}
 	case "pi":
 		return []runtimeFile{pathFor(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
 	case "omp":

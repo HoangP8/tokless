@@ -138,6 +138,25 @@ func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
 	return ctxVerifyOpenCode(), nil
 }
 
+func ctxWireOpenCodeV2(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would add 'context-mode' to OpenCode v2 opencode.json plugin[]")
+		return true, nil
+	}
+	op := util.OpenCodePathsV2()
+	_ = util.EnsureDir(op.Dir)
+	cfg := loadOrdered(op.Config)
+	removeContextModePlugin(cfg)
+	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	mcpConfigure("opencode2", "context-mode")
+	WriteOwner("opencode2", "context-mode")
+	if !isTest() {
+		cleanAllContextModeCache()
+		runPostinstallInOpenCodeCache()
+	}
+	return ctxVerifyOpenCodeV2(), nil
+}
+
 func ctxWireKilo(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
@@ -427,6 +446,25 @@ func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
+func ctxUnwireOpenCodeV2(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	op := util.OpenCodePathsV2()
+	raw, ok := util.ReadFileSafe(op.Config)
+	if ok {
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			cfg = util.NewOrderedMap()
+		}
+		removeContextModePlugin(cfg)
+		_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
+	}
+	mcpRemove("opencode2", "context-mode")
+	RemoveOwner("opencode2", "context-mode")
+	return true, nil
+}
+
 func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		return true, nil
@@ -552,6 +590,40 @@ func ctxWiredAnyOpenCode() bool {
 					if _, has := sm.Get("context-mode"); has {
 						return true
 					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func ctxWiredAnyOpenCodeV2() bool {
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsV2().Config)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	if pv, ok := cfg.Get("plugin"); ok {
+		if arr, ok := pv.([]any); ok {
+			for _, p := range arr {
+				if s, ok := p.(string); ok && pluginIsContextMode(s) {
+					return true
+				}
+			}
+		}
+	}
+	if mv, ok := cfg.Get("mcp"); ok {
+		if mm, ok := mv.(*util.OrderedMap); ok {
+			if _, has := mm.Get("context-mode"); has {
+				return true
+			}
+			if servers, ok := mm.Get("servers"); ok {
+				if sm, ok := servers.(*util.OrderedMap); ok {
+					_, has := sm.Get("context-mode")
+					return has
 				}
 			}
 		}
@@ -727,6 +799,29 @@ func ctxVerifyOpenCode() bool {
 	return agents.OpenCodeMcpMatches(cfg, "context-mode", command)
 }
 
+func ctxVerifyOpenCodeV2() bool {
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsV2().Config)
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	if pv, ok := cfg.Get("plugin"); ok {
+		if arr, ok := pv.([]any); ok {
+			for _, p := range arr {
+				if s, ok := p.(string); ok && pluginIsContextMode(s) {
+					return false
+				}
+			}
+		}
+	}
+	spawn := util.PickMcpSpawn("context-mode")
+	command := append([]string{spawn.Command}, spawn.Args...)
+	return agents.OpenCodeMcpMatches(cfg, "context-mode", command)
+}
+
 func codexHookDirs(activeCodexDir string) []string {
 	dirs := []string{activeCodexDir}
 	if cwd, err := os.Getwd(); err == nil {
@@ -765,9 +860,10 @@ var contextMode = &core.ToolManifest{
 	MinNodeMajor: contextModeMinNode,
 	Install:      ctxEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":   ctxWireClaude,
-		"opencode": ctxWireOpenCode,
-		"codex":    ctxWireCodex,
+		"claude":    ctxWireClaude,
+		"opencode":  ctxWireOpenCode,
+		"opencode2": ctxWireOpenCodeV2,
+		"codex":     ctxWireCodex,
 		"cursor": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				return true, nil
@@ -809,9 +905,10 @@ var contextMode = &core.ToolManifest{
 		"amp":   ctxWireHarness("amp"), "kimi": ctxWireHarness("kimi"), "cmd": ctxWireHarness("cmd"), "dsh": ctxWireHarness("dsh"), "zcode": ctxWireHarness("zcode"),
 	},
 	UnwireFor: map[string]core.AgentFn{
-		"claude":   ctxUnwireClaude,
-		"opencode": ctxUnwireOpenCode,
-		"codex":    ctxUnwireCodex,
+		"claude":    ctxUnwireClaude,
+		"opencode":  ctxUnwireOpenCode,
+		"opencode2": ctxUnwireOpenCodeV2,
+		"codex":     ctxUnwireCodex,
 		"cursor": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				return true, nil
@@ -844,9 +941,10 @@ var contextMode = &core.ToolManifest{
 		"amp":   ctxUnwireHarness("amp"), "kimi": ctxUnwireHarness("kimi"), "cmd": ctxUnwireHarness("cmd"), "dsh": ctxUnwireHarness("dsh"), "zcode": ctxUnwireHarness("zcode"),
 	},
 	VerifyFor: map[string]core.VerifyFn{
-		"claude":   func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
-		"opencode": func() *bool { return core.BoolPtr(ctxVerifyOpenCode()) },
-		"codex":    func() *bool { return core.BoolPtr(ctxVerifyCodex()) },
+		"claude":    func() *bool { return core.BoolPtr(ctxVerifyClaude()) },
+		"opencode":  func() *bool { return core.BoolPtr(ctxVerifyOpenCode()) },
+		"opencode2": func() *bool { return core.BoolPtr(ctxVerifyOpenCodeV2()) },
+		"codex":     func() *bool { return core.BoolPtr(ctxVerifyCodex()) },
 		"cursor": func() *bool {
 			return core.BoolPtr(agents.CursorMcpHas("context-mode") && agents.HasCursorMcpPermissions("context-mode"))
 		},
@@ -881,10 +979,11 @@ var contextMode = &core.ToolManifest{
 		},
 	},
 	WiredAnyFor: map[string]core.VerifyFn{
-		"claude":   func() *bool { return core.BoolPtr(ctxWiredAnyClaude()) },
-		"opencode": func() *bool { return core.BoolPtr(ctxWiredAnyOpenCode()) },
-		"codex":    func() *bool { return core.BoolPtr(ctxWiredAnyCodex()) },
-		"cursor":   func() *bool { return core.BoolPtr(mcpHas("cursor", "context-mode", true)) }, "grok": func() *bool { return core.BoolPtr(mcpHas("grok", "context-mode", true)) }, "omp": func() *bool { return core.BoolPtr(mcpHas("omp", "context-mode", true)) }, "kilo": func() *bool { return core.BoolPtr(mcpHas("kilo", "context-mode", true)) }, "cline": func() *bool { return core.BoolPtr(mcpHas("cline", "context-mode", true)) },
+		"claude":    func() *bool { return core.BoolPtr(ctxWiredAnyClaude()) },
+		"opencode":  func() *bool { return core.BoolPtr(ctxWiredAnyOpenCode()) },
+		"opencode2": func() *bool { return core.BoolPtr(ctxWiredAnyOpenCodeV2()) },
+		"codex":     func() *bool { return core.BoolPtr(ctxWiredAnyCodex()) },
+		"cursor":    func() *bool { return core.BoolPtr(mcpHas("cursor", "context-mode", true)) }, "grok": func() *bool { return core.BoolPtr(mcpHas("grok", "context-mode", true)) }, "omp": func() *bool { return core.BoolPtr(mcpHas("omp", "context-mode", true)) }, "kilo": func() *bool { return core.BoolPtr(mcpHas("kilo", "context-mode", true)) }, "cline": func() *bool { return core.BoolPtr(mcpHas("cline", "context-mode", true)) },
 		"droid":       func() *bool { return core.BoolPtr(agents.DroidMcpHas("context-mode")) },
 		"pi":          func() *bool { return core.BoolPtr(agents.PiMcpHas("context-mode")) },
 		"antigravity": func() *bool { return core.BoolPtr(agents.AntigravityMcpHas("context-mode")) },

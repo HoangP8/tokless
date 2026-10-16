@@ -87,9 +87,9 @@ func openCodeTestHome(t *testing.T) {
 	t.Cleanup(func() { util.SetHomeOverride("") })
 }
 
-func openCodeCommandJSON(t *testing.T, toolID string) string {
+func openCodeCommandJSON(t *testing.T, agentID, toolID string) string {
 	t.Helper()
-	b, err := json.Marshal(openCodeMcpCommand(toolID))
+	b, err := json.Marshal(openCodeMcpCommand(agentID, toolID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func openCodeCommandJSON(t *testing.T, toolID string) string {
 
 func TestOpenCodeMcpDualShapeRead(t *testing.T) {
 	openCodeTestHome(t)
-	command := openCodeCommandJSON(t, "context-mode")
+	command := openCodeCommandJSON(t, "opencode", "context-mode")
 
 	v2 := `{"mcp":{"servers":{"context-mode":{"type":"local","command":` + command + `,"disabled":false}}}}`
 	cfg := util.TryParseJsonc(v2)
@@ -108,7 +108,7 @@ func TestOpenCodeMcpDualShapeRead(t *testing.T) {
 	if !OpenCodeMcpHas(cfg, "context-mode") {
 		t.Fatal("v2 shape must be detected by OpenCodeMcpHas")
 	}
-	if !OpenCodeMcpMatches(cfg, "context-mode", openCodeMcpCommand("context-mode")) {
+	if !OpenCodeMcpMatches(cfg, "context-mode", openCodeMcpCommand("opencode2", "context-mode")) {
 		t.Fatal("v2 shape must match the desired command")
 	}
 
@@ -120,14 +120,14 @@ func TestOpenCodeMcpDualShapeRead(t *testing.T) {
 	if !OpenCodeMcpHas(cfg, "context-mode") {
 		t.Fatal("v1 shape must be detected by OpenCodeMcpHas")
 	}
-	if !OpenCodeMcpMatches(cfg, "context-mode", openCodeMcpCommand("context-mode")) {
+	if !OpenCodeMcpMatches(cfg, "context-mode", openCodeMcpCommand("opencode", "context-mode")) {
 		t.Fatal("v1 shape must match the desired command")
 	}
 }
 
 func TestOpenCodeMcpDualShapeDisabledNotWired(t *testing.T) {
 	openCodeTestHome(t)
-	command := openCodeCommandJSON(t, "context-mode")
+	command := openCodeCommandJSON(t, "opencode", "context-mode")
 
 	v1Disabled := `{"mcp":{"context-mode":{"type":"local","command":` + command + `,"enabled":false}}}`
 	if OpenCodeMcpHas(util.TryParseJsonc(v1Disabled), "context-mode") {
@@ -142,7 +142,7 @@ func TestOpenCodeMcpDualShapeDisabledNotWired(t *testing.T) {
 
 func TestConfigureOpenCodeMcpWritesV1WhenOnlyV2Present(t *testing.T) {
 	openCodeTestHome(t)
-	command := openCodeCommandJSON(t, "projectmem")
+	command := openCodeCommandJSON(t, "opencode", "projectmem")
 	body := `{"mcp":{"servers":{"projectmem":{"type":"local","command":` + command + `,"disabled":false}}}}`
 	if err := util.WriteFile(util.OpenCodePathsResolved().Config, body); err != nil {
 		t.Fatal(err)
@@ -159,55 +159,114 @@ func TestConfigureOpenCodeMcpWritesV1WhenOnlyV2Present(t *testing.T) {
 	mcp, _ := mapChild(cfg, "mcp")
 	if entry, has := mcp.Get("projectmem"); !has {
 		t.Fatalf("canonical v1 entry not written: %s", raw)
-	} else if em, ok := entry.(*util.OrderedMap); !ok || !openCodeMcpEntryEnabled(em) || !openCodeMcpEntryCommandMatches(em, openCodeMcpCommand("projectmem")) {
+	} else if em, ok := entry.(*util.OrderedMap); !ok || !openCodeMcpEntryEnabled(em) || !openCodeMcpEntryCommandMatches(em, openCodeMcpCommand("opencode", "projectmem")) {
 		t.Fatalf("v1 entry not healed to canonical form: %s", raw)
 	}
 }
 
-func TestConfigureOpenCodeMcpWritesV2WhenServersMapExists(t *testing.T) {
+func TestConfigureOpenCodeMcpV1WritesRootShape(t *testing.T) {
 	openCodeTestHome(t)
-	body := `{"mcp":{"servers":{}},"theme":"dark"}`
-	if err := util.WriteFile(util.OpenCodePathsResolved().Config, body); err != nil {
+	path := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(path, `{"mcp":{"servers":{}},"theme":"dark"}`); err != nil {
 		t.Fatal(err)
 	}
-	changed, _ := ConfigureOpenCodeMcp("projectmem")
-	if !changed {
+	if changed, _ := ConfigureOpenCodeMcpV1("projectmem"); !changed {
 		t.Fatal("missing v1 entry must be written")
 	}
-	raw, _ := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	raw, _ := util.ReadFileSafe(path)
 	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		t.Fatalf("config unparsable after write: %s", raw)
-	}
 	mcp, _ := mapChild(cfg, "mcp")
-	if _, has := mcp.Get("projectmem"); !has {
-		t.Fatalf("canonical v1 entry not written: %s", raw)
+	entry, has := mcp.Get("projectmem")
+	if !has {
+		t.Fatalf("v1 entry missing: %s", raw)
 	}
-	servers, ok := mapChild(mcp, "servers")
-	if !ok {
-		t.Fatalf("v2 servers map lost: %s", raw)
+	em, ok := entry.(*util.OrderedMap)
+	if !ok || !openCodeMcpEntryEnabled(em) || !openCodeMcpEntryCommandMatches(em, openCodeMcpCommand("opencode", "projectmem")) {
+		t.Fatalf("v1 entry invalid: %s", raw)
 	}
-	if _, has := servers.Get("projectmem"); !has {
-		t.Fatalf("v2 servers entry not updated: %s", raw)
+	if _, has := mapChild(mcp, "servers"); !has {
+		t.Fatalf("existing v2 shape lost: %s", raw)
 	}
-	if !OpenCodeMcpMatches(cfg, "projectmem", openCodeMcpCommand("projectmem")) {
-		t.Fatal("written entry does not match desired command")
+	if changed, _ := ConfigureOpenCodeMcpV1("projectmem"); changed {
+		t.Fatal("second configure must be idempotent")
 	}
 }
 
-func TestRemoveOpenCodeMcpRemovesBothShapes(t *testing.T) {
+func TestConfigureOpenCodeMcpV2WritesServersShape(t *testing.T) {
 	openCodeTestHome(t)
-	command := openCodeCommandJSON(t, "codegraph")
+	v1Path := util.OpenCodePathsResolved().Config
+	v2Path := util.OpenCodePathsV2().Config
+	if err := util.WriteFile(v1Path, `{"theme":"dark"}`); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := util.ReadFileSafe(v1Path)
+	if changed, _ := ConfigureOpenCodeMcpV2("projectmem"); !changed {
+		t.Fatal("missing v2 entry must be written")
+	}
+	raw, _ := util.ReadFileSafe(v2Path)
+	cfg := util.TryParseJsonc(raw)
+	mcp, _ := mapChild(cfg, "mcp")
+	servers, ok := mapChild(mcp, "servers")
+	if !ok {
+		t.Fatalf("v2 servers map missing: %s", raw)
+	}
+	entry, has := servers.Get("projectmem")
+	em, valid := entry.(*util.OrderedMap)
+	if !has || !valid || !openCodeMcpEntryEnabled(em) || !openCodeMcpEntryCommandMatches(em, openCodeMcpCommand("opencode2", "projectmem")) {
+		t.Fatalf("v2 entry invalid: %s", raw)
+	}
+	if v1Path != v2Path {
+		after, exists := util.ReadFileSafe(v1Path)
+		if !exists || after != before {
+			t.Fatalf("v1 config changed: %s", after)
+		}
+	}
+}
+
+func TestRemoveOpenCodeMcpV1RemovesRootOnly(t *testing.T) {
+	openCodeTestHome(t)
+	command := openCodeCommandJSON(t, "opencode", "codegraph")
 	body := `{"mcp":{"codegraph":{"type":"local","command":` + command + `,"enabled":true},"servers":{"codegraph":{"type":"local","command":` + command + `,"disabled":false}}}}`
 	if err := util.WriteFile(util.OpenCodePathsResolved().Config, body); err != nil {
 		t.Fatal(err)
 	}
-	if !RemoveOpenCodeMcp("codegraph") {
-		t.Fatal("dual-shape remove must report removal")
+	if !RemoveOpenCodeMcpV1("codegraph") {
+		t.Fatal("v1 remove must report removal")
 	}
 	raw, _ := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
-	if strings.Contains(raw, "codegraph") {
-		t.Fatalf("codegraph entry survived removal: %s", raw)
+	cfg := util.TryParseJsonc(raw)
+	mcp, _ := mapChild(cfg, "mcp")
+	if _, exists := mcp.Get("codegraph"); exists {
+		t.Fatalf("v1 entry survived: %s", raw)
+	}
+	if _, exists := mapChild(mcp, "servers"); !exists || !strings.Contains(raw, `"codegraph"`) {
+		t.Fatalf("v2 entry was removed: %s", raw)
+	}
+}
+
+func TestRemoveOpenCodeMcpV2RemovesServersOnly(t *testing.T) {
+	openCodeTestHome(t)
+	command := openCodeCommandJSON(t, "opencode2", "codegraph")
+	body := `{"mcp":{"codegraph":{"type":"local","command":` + command + `,"enabled":true},"servers":{"codegraph":{"type":"local","command":` + command + `,"disabled":false}}}}`
+	if err := util.WriteFile(util.OpenCodePathsV2().Config, body); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveOpenCodeMcpV2("codegraph") {
+		t.Fatal("v2 remove must report removal")
+	}
+	raw, _ := util.ReadFileSafe(util.OpenCodePathsV2().Config)
+	cfg := util.TryParseJsonc(raw)
+	mcp, _ := mapChild(cfg, "mcp")
+	if _, exists := mcp.Get("codegraph"); !exists {
+		t.Fatalf("v1 entry was removed: %s", raw)
+	}
+	if _, exists := mcp.Get("codegraph"); !exists {
+		t.Fatalf("v1 entry was removed: %s", raw)
+	}
+	if servers, exists := mapChild(mcp, "servers"); exists {
+		if _, exists := servers.Get("codegraph"); exists {
+			t.Fatalf("v2 entry survived: %s", raw)
+		}
 	}
 }
 
@@ -228,38 +287,44 @@ func TestRemoveOpenCodeMcpLeavesForeignEntry(t *testing.T) {
 
 func TestConfigureOpenCodeMcpHealsOutdatedV2Entry(t *testing.T) {
 	openCodeTestHome(t)
-	body := `{"mcp":{"servers":{"context-mode":{"type":"local","command":["context-mode","serve"],"disabled":false}}}}`
-	if err := util.WriteFile(util.OpenCodePathsResolved().Config, body); err != nil {
+	v1Path := util.OpenCodePathsResolved().Config
+	v2Path := util.OpenCodePathsV2().Config
+	staleV1 := `{"mcp":{"context-mode":{"type":"local","command":["old"],"enabled":true}}}`
+	if err := util.WriteFile(v1Path, staleV1); err != nil {
 		t.Fatal(err)
 	}
-	changed, _ := ConfigureOpenCodeMcp("context-mode")
+	body := `{"mcp":{"servers":{"context-mode":{"type":"local","command":["context-mode","serve"],"disabled":false}}}}`
+	if err := util.WriteFile(v2Path, body); err != nil {
+		t.Fatal(err)
+	}
+	changed, _ := ConfigureOpenCodeMcpV2("context-mode")
 	if !changed {
 		t.Fatal("outdated v2 entry must be healed and rewritten")
 	}
-	raw, _ := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	raw, _ := util.ReadFileSafe(v2Path)
 	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		t.Fatalf("config unparsable after heal: %s", raw)
-	}
 	mcp, _ := mapChild(cfg, "mcp")
 	servers, ok := mapChild(mcp, "servers")
 	if !ok {
 		t.Fatalf("v2 servers map lost after heal: %s", raw)
 	}
 	entry, has := servers.Get("context-mode")
-	if !has {
-		t.Fatalf("context-mode entry missing after heal: %s", raw)
+	em, valid := entry.(*util.OrderedMap)
+	if !has || !valid || !openCodeMcpEntryCommandMatches(em, openCodeMcpCommand("opencode2", "context-mode")) || !openCodeMcpEntryEnabled(em) {
+		t.Fatalf("v2 entry not healed: %s", raw)
 	}
-	em, ok := entry.(*util.OrderedMap)
-	if !ok {
-		t.Fatalf("context-mode entry is not an object: %s", raw)
-	}
-	expected := openCodeMcpCommand("context-mode")
-	if !openCodeMcpEntryCommandMatches(em, expected) {
-		t.Fatalf("v2 entry not healed to canonical command: %s", raw)
-	}
-	if !openCodeMcpEntryEnabled(em) {
-		t.Fatal("healed v2 entry must be enabled (disabled != true)")
+	if v1Path != v2Path {
+		gotV1, exists := util.ReadFileSafe(v1Path)
+		if !exists {
+			t.Fatalf("v1 config missing after v2 heal")
+		}
+		v1Cfg := util.TryParseJsonc(gotV1)
+		v1Mcp, _ := mapChild(v1Cfg, "mcp")
+		entry, has := v1Mcp.Get("context-mode")
+		em, valid := entry.(*util.OrderedMap)
+		if !has || !valid || !openCodeMcpEntryCommandMatches(em, []string{"old"}) {
+			t.Fatalf("stale v1 entry changed by v2 heal: %s", gotV1)
+		}
 	}
 }
 

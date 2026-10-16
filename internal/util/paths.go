@@ -229,6 +229,33 @@ func opencodeConfigDir() string {
 	return filepath.Join(Home(), ".config", "opencode")
 }
 
+func opencodeConfigDirV2() string {
+	v1Dir := opencodeConfigDir()
+	v2Dir := filepath.Join(filepath.Dir(v1Dir), filepath.Base(v1Dir)+"2")
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		v2Dir = filepath.Join(x, "opencode2")
+	}
+	legacyDir := filepath.Join(Home(), ".opencode2")
+	for _, dir := range []string{v1Dir, v2Dir, legacyDir} {
+		for _, name := range []string{"opencode2.jsonc", "opencode2.json", "opencode2.config.json"} {
+			if Exists(filepath.Join(dir, name)) {
+				return dir
+			}
+		}
+	}
+	for _, dir := range []string{v1Dir, v2Dir, legacyDir} {
+		for _, name := range []string{"opencode.jsonc", "opencode.json", "config.json"} {
+			if Exists(filepath.Join(dir, name)) {
+				return dir
+			}
+		}
+		if dir == v2Dir && Exists(dir) {
+			return dir
+		}
+	}
+	return v1Dir
+}
+
 func EnsureDir(p string) error { return os.MkdirAll(p, 0o755) }
 
 func ReadFileSafe(p string) (string, bool) {
@@ -360,6 +387,25 @@ func OpenCodePathsResolved() OpenCodePaths {
 	for _, c := range candidates {
 		if Exists(c) {
 			config = c
+			break
+		}
+	}
+	return OpenCodePaths{
+		Dir:          dir,
+		Config:       config,
+		Instructions: filepath.Join(dir, "AGENTS.md"),
+		PluginsDir:   filepath.Join(dir, "plugins"),
+		RulesDir:     filepath.Join(dir, "rules"),
+	}
+}
+
+func OpenCodePathsV2() OpenCodePaths {
+	dir := opencodeConfigDirV2()
+	config := filepath.Join(dir, "opencode.jsonc")
+	for _, name := range []string{"opencode2.jsonc", "opencode2.json", "opencode2.config.json", "opencode.jsonc", "opencode.json", "config.json"} {
+		candidate := filepath.Join(dir, name)
+		if Exists(candidate) {
+			config = candidate
 			break
 		}
 	}

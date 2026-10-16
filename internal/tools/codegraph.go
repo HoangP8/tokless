@@ -361,6 +361,13 @@ func codegraphWire(agent string) core.AgentFn {
 		if opts.DryRun {
 			return codegraphRealInstall(opts, agent), nil
 		}
+		if agent == "opencode2" {
+			if !codegraphConfigureMcp(agent) {
+				return false, nil
+			}
+			WriteOwner(agent, "codegraph")
+			return codegraphVerify(agent), nil
+		}
 		if agent == "copilot" {
 			return codegraphWireCopilot(opts)
 		}
@@ -460,6 +467,8 @@ func unwireAutoIndex(agent string) {
 		unwireCodexAutoIndex()
 	case "opencode":
 		unwireOpencodeAutoIndex()
+	case "opencode2":
+		unwireOpencodeV2AutoIndex()
 	case "antigravity":
 		unwireGeminiAutoIndex()
 	case "copilot":
@@ -478,9 +487,10 @@ var codegraph = &core.ToolManifest{
 	IndexProject: codegraphIndexProject,
 	IndexReady:   func() bool { return isTest() || util.ResolveCodegraphBin() != "" },
 	WireFor: map[string]core.AgentFn{
-		"claude":   codegraphWire("claude"),
-		"opencode": codegraphWire("opencode"),
-		"codex":    codegraphWire("codex"),
+		"claude":    codegraphWire("claude"),
+		"opencode":  codegraphWire("opencode"),
+		"opencode2": codegraphWire("opencode2"),
+		"codex":     codegraphWire("codex"),
 		"cursor": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				return true, nil
@@ -527,6 +537,11 @@ var codegraph = &core.ToolManifest{
 			agents.RemoveOpenCodeMcp("codegraph")
 			unwireAutoIndex("opencode")
 			RemoveOwner("opencode", "codegraph")
+			return true, nil
+		},
+		"opencode2": func(core.RunOpts) (bool, error) {
+			agents.RemoveOpenCodeMcpV2("codegraph")
+			RemoveOwner("opencode2", "codegraph")
 			return true, nil
 		},
 		"codex": func(core.RunOpts) (bool, error) {
@@ -631,6 +646,7 @@ var codegraph = &core.ToolManifest{
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { return core.BoolPtr(codegraphVerify("claude")) },
 		"opencode":    func() *bool { return core.BoolPtr(codegraphVerify("opencode")) },
+		"opencode2":   func() *bool { return core.BoolPtr(codegraphVerify("opencode2")) },
 		"codex":       func() *bool { return core.BoolPtr(codegraphVerify("codex")) },
 		"cursor":      func() *bool { return core.BoolPtr(codegraphVerify("cursor")) },
 		"antigravity": func() *bool { return core.BoolPtr(codegraphVerify("antigravity")) },
@@ -644,9 +660,10 @@ var codegraph = &core.ToolManifest{
 		"amp":         func() *bool { return core.BoolPtr(codegraphVerify("amp")) }, "kimi": func() *bool { return core.BoolPtr(codegraphVerify("kimi")) }, "cmd": func() *bool { return core.BoolPtr(codegraphVerify("cmd")) }, "dsh": func() *bool { return core.BoolPtr(codegraphVerify("dsh")) }, "zcode": func() *bool { return core.BoolPtr(codegraphVerify("zcode")) },
 	},
 	WiredAnyFor: map[string]core.VerifyFn{
-		"claude":   func() *bool { return core.BoolPtr(mcpHas("claude", "codegraph", true)) },
-		"opencode": func() *bool { return core.BoolPtr(mcpHas("opencode", "codegraph", true)) },
-		"codex":    func() *bool { return core.BoolPtr(mcpHas("codex", "codegraph", true)) }, "cursor": func() *bool { return core.BoolPtr(mcpHas("cursor", "codegraph", true)) }, "antigravity": func() *bool { return core.BoolPtr(mcpHas("antigravity", "codegraph", true)) }, "copilot": func() *bool { return core.BoolPtr(mcpHas("copilot", "codegraph", true)) }, "droid": func() *bool { return core.BoolPtr(mcpHas("droid", "codegraph", true)) }, "grok": func() *bool { return core.BoolPtr(mcpHas("grok", "codegraph", true)) }, "pi": func() *bool { return core.BoolPtr(mcpHas("pi", "codegraph", true)) }, "omp": func() *bool { return core.BoolPtr(mcpHas("omp", "codegraph", true)) }, "kilo": func() *bool { return core.BoolPtr(mcpHas("kilo", "codegraph", true)) }, "cline": func() *bool { return core.BoolPtr(mcpHas("cline", "codegraph", true)) },
+		"claude":    func() *bool { return core.BoolPtr(mcpHas("claude", "codegraph", true)) },
+		"opencode":  func() *bool { return core.BoolPtr(mcpHas("opencode", "codegraph", true)) },
+		"opencode2": func() *bool { return core.BoolPtr(mcpHas("opencode2", "codegraph", true)) },
+		"codex":     func() *bool { return core.BoolPtr(mcpHas("codex", "codegraph", true)) }, "cursor": func() *bool { return core.BoolPtr(mcpHas("cursor", "codegraph", true)) }, "antigravity": func() *bool { return core.BoolPtr(mcpHas("antigravity", "codegraph", true)) }, "copilot": func() *bool { return core.BoolPtr(mcpHas("copilot", "codegraph", true)) }, "droid": func() *bool { return core.BoolPtr(mcpHas("droid", "codegraph", true)) }, "grok": func() *bool { return core.BoolPtr(mcpHas("grok", "codegraph", true)) }, "pi": func() *bool { return core.BoolPtr(mcpHas("pi", "codegraph", true)) }, "omp": func() *bool { return core.BoolPtr(mcpHas("omp", "codegraph", true)) }, "kilo": func() *bool { return core.BoolPtr(mcpHas("kilo", "codegraph", true)) }, "cline": func() *bool { return core.BoolPtr(mcpHas("cline", "codegraph", true)) },
 		"amp": func() *bool { return core.BoolPtr(mcpHas("amp", "codegraph", true)) }, "kimi": func() *bool { return core.BoolPtr(mcpHas("kimi", "codegraph", true)) }, "cmd": func() *bool { return core.BoolPtr(mcpHas("cmd", "codegraph", true)) }, "dsh": func() *bool { return core.BoolPtr(mcpHas("dsh", "codegraph", true)) }, "zcode": func() *bool { return core.BoolPtr(mcpHas("zcode", "codegraph", true)) },
 	},
 }

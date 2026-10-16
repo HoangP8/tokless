@@ -73,6 +73,7 @@ var principles = &core.ToolManifest{
 	WireFor: map[string]core.AgentFn{
 		"claude":      principlesWireFor("claude"),
 		"opencode":    principlesWireFor("opencode"),
+		"opencode2":   principlesWireFor("opencode2"),
 		"codex":       principlesWireFor("codex"),
 		"antigravity": principlesWireFor("antigravity"),
 		"copilot": func(opts core.RunOpts) (bool, error) {
@@ -103,6 +104,7 @@ var principles = &core.ToolManifest{
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      principlesUnwireFor("claude"),
 		"opencode":    principlesUnwireFor("opencode"),
+		"opencode2":   principlesUnwireFor("opencode2"),
 		"codex":       principlesUnwireFor("codex"),
 		"antigravity": principlesUnwireFor("antigravity"),
 		"copilot":     principlesUnwireFor("copilot"),
@@ -124,6 +126,7 @@ var principles = &core.ToolManifest{
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      func() *bool { v := principlesVerifyFor("claude")(); return &v },
 		"opencode":    func() *bool { v := principlesVerifyFor("opencode")(); return &v },
+		"opencode2":   func() *bool { v := principlesVerifyFor("opencode2")(); return &v },
 		"codex":       func() *bool { v := principlesVerifyFor("codex")(); return &v },
 		"antigravity": func() *bool { v := principlesVerifyFor("antigravity")(); return &v },
 		"copilot":     func() *bool { v := principlesVerifyFor("copilot")(); return &v },

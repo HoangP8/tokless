@@ -532,7 +532,35 @@ func openCodeRtkPluginPath() string {
 }
 
 func openCodeRtkV2PluginPath() string {
-	return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk-v2.ts")
+	return filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
+}
+
+func opencodeBinaryPresent() bool {
+	if os.Getenv("TOKLESS_TEST") == "1" {
+		return false
+	}
+	for _, bin := range []string{"opencode2", "opencode"} {
+		if util.FindBinary(bin, nil) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func opencodeV2ProbeFailed() bool {
+	if os.Getenv("TOKLESS_TEST") == "1" && os.Getenv("TOKLESS_TEST_OPENCODE_PROBE") != "1" {
+		return false
+	}
+	for _, bin := range []string{"opencode2", filepath.Join(util.Home(), ".opencode2", "bin", "opencode2"), filepath.Join(util.Home(), ".local", "bin", "opencode2")} {
+		path := util.FindBinary(bin, nil)
+		if filepath.IsAbs(bin) {
+			path = bin
+		}
+		if path != "" && util.Exists(path) && agents.OpenCodeMajorVersion(path) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 const openCodeRtkV2Plugin = `const TOKLESS_BIN = %s
@@ -624,6 +652,42 @@ func rtkWireClaude() core.AgentFn {
 	}
 }
 
+func rtkWireOpenCodeV2() core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if opts.DryRun {
+			util.L.Sub("[dry-run] would install OpenCode v2 RTK plugin")
+			return true, nil
+		}
+		exe := util.ToklessPersistedAbs()
+		if exe == "" {
+			return false, nil
+		}
+		pluginPath := openCodeRtkV2PluginPath()
+		if err := util.EnsureDir(filepath.Dir(pluginPath)); err != nil {
+			return false, err
+		}
+		if err := util.WriteFile(pluginPath, fmt.Sprintf(openCodeRtkV2Plugin, strconv.Quote(exe))); err != nil {
+			return false, err
+		}
+		return rtkOpenCodeV2PluginValid(), nil
+	}
+}
+
+func rtkVerifyOpenCodeV2() *bool {
+	return core.BoolPtr(rtkOpenCodeV2PluginValid())
+}
+
+func rtkUnwireOpenCodeV2(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		return true, nil
+	}
+	if err := os.Remove(openCodeRtkV2PluginPath()); err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	RemoveOwner("opencode2", "rtk")
+	return !rtkOpenCodeV2PluginValid(), nil
+}
+
 func rtkWireOpenCode() core.AgentFn {
 	return func(opts core.RunOpts) (bool, error) {
 		if opts.DryRun {
@@ -634,23 +698,71 @@ func rtkWireOpenCode() core.AgentFn {
 		if exe == "" {
 			return false, nil
 		}
-		path := openCodeRtkPluginPath()
-		if err := util.EnsureDir(filepath.Dir(path)); err != nil {
-			return false, err
+		if opencodeV2ProbeFailed() {
+			return false, nil
 		}
-		if err := util.WriteFile(path, fmt.Sprintf(openCodeRtkPlugin, strconv.Quote(exe))); err != nil {
-			return false, err
+		majors := agents.OpenCodeInstalledMajors()
+		if len(majors) == 0 {
+			if opencodeBinaryPresent() {
+				return false, nil
+			}
+			majors = []int{1}
 		}
-		if err := util.WriteFile(openCodeRtkV2PluginPath(), fmt.Sprintf(openCodeRtkV2Plugin, strconv.Quote(exe))); err != nil {
-			return false, err
+		for _, major := range majors {
+			pluginPath := openCodeRtkPluginPath()
+			plugin := openCodeRtkPlugin
+			if major == 2 {
+				pluginPath = openCodeRtkV2PluginPath()
+				plugin = openCodeRtkV2Plugin
+			}
+			if err := util.EnsureDir(filepath.Dir(pluginPath)); err != nil {
+				return false, err
+			}
+			if err := util.WriteFile(pluginPath, fmt.Sprintf(plugin, strconv.Quote(exe))); err != nil {
+				return false, err
+			}
 		}
-		return rtkOpenCodePluginValid(), nil
+		if !rtkOpenCodePluginValid() {
+			return false, nil
+		}
+		return true, nil
 	}
 }
 
-func rtkOpenCodePluginValid() bool {
+func rtkOpenCodeV1PluginValid() bool {
 	raw, ok := util.ReadFileSafe(openCodeRtkPluginPath())
 	return ok && strings.Contains(raw, "tool.execute.before") && strings.Contains(raw, "rtk-rewrite") && strings.Contains(raw, "TOKLESS_BIN")
+}
+
+func rtkOpenCodeV2PluginValid() bool {
+	raw, ok := util.ReadFileSafe(openCodeRtkV2PluginPath())
+	return ok && strings.Contains(raw, `ctx.tool.hook("execute.before"`) && strings.Contains(raw, "rtk-rewrite") && strings.Contains(raw, "TOKLESS_BIN")
+}
+
+func rtkOpenCodePluginValid() bool {
+	if opencodeV2ProbeFailed() {
+		return false
+	}
+	majors := agents.OpenCodeInstalledMajors()
+	if len(majors) == 0 {
+		if opencodeBinaryPresent() {
+			return false
+		}
+		majors = []int{1}
+	}
+	for _, major := range majors {
+		if !rtkOpenCodePluginValidForMajor(major) {
+			return false
+		}
+	}
+	return true
+}
+
+func rtkOpenCodePluginValidForMajor(major int) bool {
+	if major == 2 {
+		return rtkOpenCodeV2PluginValid()
+	}
+	return rtkOpenCodeV1PluginValid()
 }
 
 const piRtkExtension = `const TOKLESS_BIN = %s
@@ -1294,9 +1406,10 @@ var rtk = &core.ToolManifest{
 	Channel:     core.ChannelGitHub,
 	Install:     rtkEnsureInstalled,
 	WireFor: map[string]core.AgentFn{
-		"claude":   rtkWireClaude(),
-		"opencode": rtkWireOpenCode(),
-		"codex":    rtkWireCodex(),
+		"claude":    rtkWireClaude(),
+		"opencode":  rtkWireOpenCode(),
+		"opencode2": rtkWireOpenCodeV2(),
+		"codex":     rtkWireCodex(),
 		"cursor": func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				return true, nil
@@ -1361,14 +1474,14 @@ var rtk = &core.ToolManifest{
 			return true, nil
 		},
 		"opencode": func(core.RunOpts) (bool, error) {
-			for _, p := range []string{openCodeRtkPluginPath(), openCodeRtkV2PluginPath()} {
-				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-					return false, err
-				}
+			p := openCodeRtkPluginPath()
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				return false, err
 			}
 			RemoveOwner("opencode", "rtk")
-			return !rtkOpenCodePluginValid(), nil
+			return !rtkOpenCodeV1PluginValid(), nil
 		},
+		"opencode2": rtkUnwireOpenCodeV2,
 		"codex": func(core.RunOpts) (bool, error) {
 			agents.RemoveCodexRtkHook()
 			RemoveOwner("codex", "rtk")
@@ -1444,6 +1557,7 @@ var rtk = &core.ToolManifest{
 		"opencode": func() *bool {
 			return core.BoolPtr(rtkOpenCodePluginValid())
 		},
+		"opencode2": rtkVerifyOpenCodeV2,
 		"codex": func() *bool {
 			return core.BoolPtr(agents.HasCodexRtkHook())
 		},

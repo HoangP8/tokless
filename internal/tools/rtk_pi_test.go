@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,25 +57,129 @@ func TestRtkPiDryRun(t *testing.T) {
 	}
 }
 
-func TestRtkOpenCodeWritesV1AndV2Plugins(t *testing.T) {
+func TestRtkOpenCodeWritesOnlyDetectedPlugin(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("PATH", filepath.Join(tmp, "empty"))
+	t.Setenv("TOKLESS_TEST", "1")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if _, err := rtkWireOpenCode()(core.RunOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if !util.Exists(openCodeRtkPluginPath()) || util.Exists(openCodeRtkV2PluginPath()) {
+		t.Fatal("no detected runtime must install v1 fallback only")
+	}
+	if !rtkOpenCodeV1PluginValid() {
+		t.Fatal("v1 fallback plugin should validate")
+	}
+}
+
+func TestRtkOpenCodeWritesDetectedVersions(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 	t.Setenv("TOKLESS_TEST", "1")
 	t.Cleanup(func() { util.SetHomeOverride("") })
-	if _, err := rtkWireOpenCode()(core.RunOpts{}); err != nil { t.Fatal(err) }
+	binDir := t.TempDir()
+	for name, version := range map[string]string{"opencode": "1.9.0", "opencode2": "2.1.0"} {
+		bin := filepath.Join(binDir, name)
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '"+version+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+	t.Setenv("TOKLESS_TEST", "1")
+	if _, err := rtkWireOpenCode()(core.RunOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if !util.Exists(openCodeRtkPluginPath()) || !util.Exists(openCodeRtkV2PluginPath()) {
+		t.Fatal("mixed install must write both plugins")
+	}
+	if !rtkOpenCodePluginValid() {
+		t.Fatal("both detected plugins should validate")
+	}
+}
+
+func TestRtkOpenCodeUnparsableV2ProbeDoesNotClaimV1Wired(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("TOKLESS_TEST", "1")
+	t.Setenv("TOKLESS_TEST_OPENCODE_PROBE", "1")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "opencode2")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'OpenCode version unknown\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	if err := os.MkdirAll(filepath.Dir(openCodeRtkPluginPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(openCodeRtkPluginPath(), []byte(fmt.Sprintf(openCodeRtkPlugin, `"tokless"`)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rtkOpenCodePluginValid() {
+		t.Fatal("unparsable opencode2 must not validate a v1-only plugin")
+	}
+	if ok, err := rtkWireOpenCode()(core.RunOpts{}); err != nil || ok {
+		t.Fatalf("wire = %v, %v; want false without error", ok, err)
+	}
+}
+
+func TestRtkOpenCodeWritesV1AndV2Plugins(t *testing.T) {
+	tmp := t.TempDir()
+	util.SetHomeOverride(tmp)
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("TOKLESS_TEST", "1")
+	binDir := t.TempDir()
+	for name, version := range map[string]string{"opencode": "1.2.3", "opencode2": "2.1.0"} {
+		bin := filepath.Join(binDir, name)
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\\nprintf '"+version+"'\\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if ran, err := rtk.WireFor["opencode2"](core.RunOpts{}); err != nil || !ran {
+		t.Fatalf("v2 wire = %v, %v", ran, err)
+	}
+	if !util.Exists(openCodeRtkV2PluginPath()) {
+		t.Fatal("v2 wire did not create v2 plugin")
+	}
+	if ran, err := rtk.WireFor["opencode"](core.RunOpts{}); err != nil || !ran {
+		t.Fatalf("v1 wire = %v, %v", ran, err)
+	}
 	for path, markers := range map[string][]string{openCodeRtkPluginPath(): {"TOKLESS_BIN", "tool.execute.before"}, openCodeRtkV2PluginPath(): {"export default", "async setup", `ctx.tool.hook("execute.before"`}} {
-		raw, ok := util.ReadFileSafe(path); if !ok { t.Fatalf("missing plugin %s", path) }
-		for _, marker := range markers { if !strings.Contains(raw, marker) { t.Errorf("%s missing %q", path, marker) } }
+		raw, ok := util.ReadFileSafe(path)
+		if !ok {
+			t.Fatalf("missing plugin %s", path)
+		}
+		for _, marker := range markers {
+			if !strings.Contains(raw, marker) {
+				t.Errorf("%s missing %q", path, marker)
+			}
+		}
 	}
 	if ok, err := rtk.UnwireFor["opencode"](core.RunOpts{}); err != nil || !ok {
-		t.Fatalf("unwire = %v, %v", ok, err)
+		t.Fatalf("v1 unwire = %v, %v", ok, err)
 	}
-	for _, path := range []string{openCodeRtkPluginPath(), openCodeRtkV2PluginPath()} {
-		if util.Exists(path) {
-			t.Fatalf("plugin survived unwire: %s", path)
-		}
+	if util.Exists(openCodeRtkPluginPath()) {
+		t.Fatal("v1 plugin survived v1 unwire")
+	}
+	if !util.Exists(openCodeRtkV2PluginPath()) {
+		t.Fatal("v1 unwire removed v2 plugin")
+	}
+	if ok, err := rtk.UnwireFor["opencode2"](core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("v2 unwire = %v, %v", ok, err)
+	}
+	if util.Exists(openCodeRtkV2PluginPath()) {
+		t.Fatal("v2 plugin survived v2 unwire")
 	}
 }
 

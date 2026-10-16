@@ -1,6 +1,7 @@
 package util
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -39,6 +40,62 @@ func TestOpenCodeConfigDirPrecedence(t *testing.T) {
 	expectedHomeDir := filepath.Join(homeDir, ".config", "opencode")
 	if pathsHome.Dir != expectedHomeDir {
 		t.Errorf("Expected Dir to be %s, got %s", expectedHomeDir, pathsHome.Dir)
+	}
+}
+
+func TestOpenCodePathsV2Resolution(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	t.Setenv("HOME", home)
+	xdg := filepath.Join(home, "xdg")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("OPENCODE_CONFIG", "")
+
+	v1Dir := filepath.Join(xdg, "opencode")
+	v2Dir := filepath.Join(xdg, "opencode2")
+	if got := OpenCodePathsV2().Dir; got != v1Dir {
+		t.Fatalf("default V2 dir = %q, want shared fallback %q", got, v1Dir)
+	}
+
+	if err := EnsureDir(v1Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFile(filepath.Join(v1Dir, "opencode2.jsonc"), `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := OpenCodePathsV2().Dir; got != v1Dir {
+		t.Fatalf("marker V2 dir = %q, want %q", got, v1Dir)
+	}
+	if err := os.Remove(filepath.Join(v1Dir, "opencode2.jsonc")); err != nil {
+		t.Fatal(err)
+	}
+	if got := OpenCodePathsV2().Dir; got != v1Dir {
+		t.Fatalf("after marker removed V2 dir = %q, want %q", got, v1Dir)
+	}
+	if err := WriteFile(filepath.Join(v2Dir, "opencode.jsonc"), `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := OpenCodePathsV2().Dir; got != v2Dir {
+		t.Fatalf("existing V2 dir = %q, want %q", got, v2Dir)
+	}
+
+	if err := os.RemoveAll(v2Dir); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(home, ".opencode2")
+	if err := WriteFile(filepath.Join(legacy, "opencode.jsonc"), `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := OpenCodePathsV2().Dir; got != legacy {
+		t.Fatalf("legacy V2 dir = %q, want %q", got, legacy)
+	}
+	if err := os.RemoveAll(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := OpenCodePathsV2().Dir, OpenCodePathsResolved().Dir; got != want {
+		t.Fatalf("shared fallback = %q, want v1 dir %q", got, want)
 	}
 }
 

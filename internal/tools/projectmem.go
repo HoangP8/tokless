@@ -859,6 +859,8 @@ func projectmemExtensionPath(agent string) string {
 		return filepath.Join(util.KiloPathsResolved().PluginsDir, "projectmem-context.ts")
 	case "opencode":
 		return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "projectmem-context.ts")
+	case "opencode2":
+		return filepath.Join(util.OpenCodePathsV2().PluginsDir, "projectmem-context.ts")
 	}
 	return ""
 }
@@ -871,7 +873,7 @@ func writeProjectmemExtension(agent string) bool {
 	}
 	_ = os.Remove(filepath.Join(filepath.Dir(path), "tokless-projectmem.ts"))
 	tmpl := piProjectmemExtension
-	if agent == "kilo" || agent == "opencode" {
+	if agent == "kilo" || agent == "opencode" || agent == "opencode2" {
 		tmpl = kiloProjectmemPlugin
 	}
 	if util.WriteFile(path, fmt.Sprintf(tmpl, strconv.Quote(exe))) != nil {
@@ -894,7 +896,7 @@ func removeProjectmemExtension(agent string) {
 	}
 	if path := projectmemExtensionPath(agent); path != "" {
 		_ = os.Remove(filepath.Join(filepath.Dir(path), "tokless-projectmem.ts"))
-		if agent == "opencode" {
+		if agent == "opencode" || agent == "opencode2" {
 			_ = os.Remove(filepath.Join(filepath.Dir(path), "projectmem-context-v2.ts"))
 		}
 	}
@@ -1126,7 +1128,7 @@ func projectmemInstallSessionPush(agent string) bool {
 			agents.InstallCopilotIdeProjectmemHookSafe() == nil
 	case "antigravity":
 		return agents.InstallAntigravityProjectmemHook()
-	case "pi", "omp", "kilo", "opencode":
+	case "pi", "omp", "kilo", "opencode", "opencode2":
 		return writeProjectmemExtension(agent)
 	}
 	return true
@@ -1144,7 +1146,7 @@ func projectmemHasSessionPush(agent string) bool {
 		return agents.HasCopilotProjectmemHook() && agents.HasCopilotIdeProjectmemHook()
 	case "antigravity":
 		return agents.HasAntigravityProjectmemHook()
-	case "pi", "omp", "kilo", "opencode":
+	case "pi", "omp", "kilo", "opencode", "opencode2":
 		return hasProjectmemExtension(agent)
 	}
 	return true
@@ -1163,7 +1165,7 @@ func projectmemRemoveSessionPush(agent string) {
 		_ = agents.RemoveCopilotIdeProjectmemHookSafe()
 	case "antigravity":
 		agents.RemoveAntigravityProjectmemHook()
-	case "pi", "omp", "kilo", "opencode":
+	case "pi", "omp", "kilo", "opencode", "opencode2":
 		removeProjectmemExtension(agent)
 	}
 }
@@ -1254,7 +1256,7 @@ func projectmemIndexProject(dir string, opts core.RunOpts) (bool, error) {
 }
 
 func init() {
-	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "amp", "kimi", "cmd", "dsh", "zcode"} {
+	for _, agent := range []string{"claude", "opencode", "opencode2", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "amp", "kimi", "cmd", "dsh", "zcode"} {
 		a := agent
 		projectmem.WireFor[a] = func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
@@ -1303,8 +1305,8 @@ func init() {
 		}
 		agentIDForHas := agentID
 		projectmem.WiredAnyFor[agentIDForHas] = func() *bool {
-			if agentIDForHas == "opencode" {
-				return core.BoolPtr(mcpHas("opencode", "projectmem", true))
+			if agentIDForHas == "opencode" || agentIDForHas == "opencode2" {
+				return core.BoolPtr(mcpHas("opencode2", "projectmem", true))
 			}
 			return core.BoolPtr(projectmemVerify(agentIDForHas))
 		}

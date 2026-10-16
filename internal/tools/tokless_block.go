@@ -22,6 +22,8 @@ func instructionPath(agent string) string {
 		return util.ClaudeCodePaths().Instructions
 	case "opencode":
 		return util.OpenCodePathsResolved().Instructions
+	case "opencode2":
+		return util.OpenCodePathsV2().Instructions
 	case "codex":
 		return util.CodexPathsResolved().Instructions
 	case "antigravity":

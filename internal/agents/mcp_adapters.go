@@ -516,6 +516,14 @@ func openCodeMcpConfig() *util.OrderedMap {
 	return util.TryParseJsonc(raw)
 }
 
+func openCodeMcpConfigV2() *util.OrderedMap {
+	raw, ok := util.ReadFileSafe(util.OpenCodePathsV2().Config)
+	if !ok {
+		return nil
+	}
+	return util.TryParseJsonc(raw)
+}
+
 // --- grok ---
 
 // grokMcpBounded reports whether the tool uses tokless's bounded MCP spawn.
@@ -571,6 +579,27 @@ var opencodeMcpAdapter = agentMcpAdapter{
 	},
 	has: func(req core.McpRequest) bool {
 		cfg := openCodeMcpConfig()
+		if cfg == nil {
+			return false
+		}
+		if req.AnyShape {
+			return OpenCodeMcpHas(cfg, req.ToolID)
+		}
+		return OpenCodeMcpMatches(cfg, req.ToolID, req.Command)
+	},
+}
+
+var opencode2McpAdapter = agentMcpAdapter{
+	id: "opencode2",
+	configure: func(req core.McpRequest) core.McpReply {
+		changed, file := ConfigureOpenCodeMcpV2(req.ToolID)
+		return core.McpReply{Changed: changed, File: file}
+	},
+	remove: func(req core.McpRequest) core.McpReply {
+		return core.McpReply{Changed: RemoveOpenCodeMcpV2(req.ToolID), File: util.OpenCodePathsV2().Config}
+	},
+	has: func(req core.McpRequest) bool {
+		cfg := openCodeMcpConfigV2()
 		if cfg == nil {
 			return false
 		}
@@ -831,6 +860,7 @@ var agentMcpAdapters = map[string]core.McpAdapter{
 	"zcode":       zcodeMcpAdapter,
 	"claude":      claudeMcpAdapter,
 	"opencode":    opencodeMcpAdapter,
+	"opencode2":   opencode2McpAdapter,
 	"codex":       codexMcpAdapter,
 	"cursor":      cursorMcpAdapter,
 	"antigravity": antigravityMcpAdapter,
@@ -853,6 +883,7 @@ func init() {
 	zcode.Mcp = zcodeMcpAdapter
 	claude.Mcp = claudeMcpAdapter
 	opencode.Mcp = opencodeMcpAdapter
+	opencode2.Mcp = opencode2McpAdapter
 	codex.Mcp = codexMcpAdapter
 	cursor.Mcp = cursorMcpAdapter
 	antigravity.Mcp = antigravityMcpAdapter

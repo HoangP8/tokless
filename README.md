@@ -30,7 +30,7 @@
   <table>
     <tr>
       <td align="center" width="140"><a href="https://github.com/anthropics/claude-code"><img src="assets/agents/claude.jpg" width="48" height="48" alt="Claude Code" /></a><br/><b>Claude Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE%20%2B%20Desktop-2ea44f" alt="✓ CLI + IDE + Desktop" /></td>
-      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20Desktop-2ea44f" alt="✓ CLI + Desktop" /></td>
+      <td align="center" width="140"><a href="https://github.com/anomalyco/opencode"><img src="assets/agents/opencode.png" width="48" height="48" alt="OpenCode" /></a><br/><b>OpenCode</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20Desktop%20%2B%20v1%2Fv2-2ea44f" alt="✓ CLI + Desktop + v1/v2" /></td>
       <td align="center" width="140"><a href="https://github.com/openai/codex"><img src="assets/agents/codex.jpg" width="48" height="48" alt="Codex" /></a><br/><b>Codex</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE%20%2B%20Desktop-2ea44f" alt="✓ CLI + IDE + Desktop" /></td>
       <td align="center" width="140"><a href="https://antigravity.google"><img src="assets/agents/antigravity.png" width="48" height="48" alt="Antigravity" /></a><br/><b>Antigravity</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE-2ea44f" alt="✓ CLI + IDE" /></td>
       <td align="center" width="140"><a href="https://github.com/github/copilot-cli"><img src="assets/agents/copilot.jpg" width="48" height="48" alt="GitHub Copilot" /></a><br/><b>GitHub Copilot</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20IDE-2ea44f" alt="✓ CLI + IDE" /></td>
@@ -166,7 +166,7 @@ tokless proxy down   Restore Tokless-owned routing
 
 Flags:
 ```
---agents <list>   Subset: claude,opencode,codex,antigravity,copilot,droid,pi,grok,omp,cline,cursor
+--agents <list>   Subset: claude,opencode,opencode2,codex,antigravity,copilot,droid,grok,pi,omp,kilo,cline,cursor,amp,kimi,cmd,dsh,zcode
 --tools <list>    Subset: rtk,caveman,ponytail,codegraph,context-mode
 --dry-run         Preview, no writes
 --verbose         Every step

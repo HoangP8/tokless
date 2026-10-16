@@ -99,6 +99,7 @@ command:
 	}
 	path, err := exec.LookPath(argv[0])
 	if err != nil {
+		util.L.Err("mcp spawn: executable not found: " + argv[0])
 		return 1
 	}
 	if err := ensureProxyForAgent(agent); err != nil {

@@ -19,13 +19,21 @@ import (
 var toklessOpenCodeBYOKPlugin []byte
 
 // openCodeMcpCommand returns the canonical spawn command for a tool.
-func openCodeMcpCommand(toolID string) []string {
+func openCodeMcpCommand(agentID, toolID string) []string {
 	if toolID == "codegraph" {
-		spawn := util.WrapAutoIndex("opencode", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
+		spawn := util.WrapAutoIndex(agentID, util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 		return append([]string{spawn.Command}, spawn.Args...)
 	}
 	spawn := util.McpSpawnFor(toolID)
 	return append([]string{spawn.Command}, spawn.Args...)
+}
+
+// openCodeAgentID returns the manifest agent label for the v1/v2 config shape.
+func openCodeAgentID(v2 bool) string {
+	if v2 {
+		return "opencode2"
+	}
+	return "opencode"
 }
 
 // openCodeMcpEntryEnabled reports enabled != false (v1) and disabled != true (v2).
@@ -48,18 +56,25 @@ func openCodeMcpEntryCommandMatches(entry *util.OrderedMap, command []string) bo
 	return anyArrEq(v, command)
 }
 
-// openCodeMcpFind returns the v1 or v2 entry for toolID, whichever exists.
-func openCodeMcpFind(mcp *util.OrderedMap, toolID string) (*util.OrderedMap, bool) {
+// openCodeMcpRootEntry returns the v1 root entry for toolID, if present.
+func openCodeMcpRootEntry(mcp *util.OrderedMap, toolID string) (*util.OrderedMap, bool) {
 	if v, ok := mcp.Get(toolID); ok {
 		if em, ok := v.(*util.OrderedMap); ok {
 			return em, true
 		}
 	}
-	if servers, ok := mapChild(mcp, "servers"); ok {
-		if v, ok := servers.Get(toolID); ok {
-			if em, ok := v.(*util.OrderedMap); ok {
-				return em, true
-			}
+	return nil, false
+}
+
+// openCodeMcpServerEntry returns the v2 servers entry for toolID, if present.
+func openCodeMcpServerEntry(mcp *util.OrderedMap, toolID string) (*util.OrderedMap, bool) {
+	servers, ok := mapChild(mcp, "servers")
+	if !ok {
+		return nil, false
+	}
+	if v, ok := servers.Get(toolID); ok {
+		if em, ok := v.(*util.OrderedMap); ok {
+			return em, true
 		}
 	}
 	return nil, false
@@ -74,8 +89,13 @@ func OpenCodeMcpHas(cfg *util.OrderedMap, toolID string) bool {
 	if !ok {
 		return false
 	}
-	entry, ok := openCodeMcpFind(mcp, toolID)
-	return ok && openCodeMcpEntryEnabled(entry)
+	if em, ok := openCodeMcpRootEntry(mcp, toolID); ok && openCodeMcpEntryEnabled(em) {
+		return true
+	}
+	if em, ok := openCodeMcpServerEntry(mcp, toolID); ok && openCodeMcpEntryEnabled(em) {
+		return true
+	}
+	return false
 }
 
 // OpenCodeMcpMatches reports whether either MCP config shape has the enabled command.
@@ -87,22 +107,43 @@ func OpenCodeMcpMatches(cfg *util.OrderedMap, toolID string, command []string) b
 	if !ok {
 		return false
 	}
-	entry, ok := openCodeMcpFind(mcp, toolID)
-	return ok && openCodeMcpEntryEnabled(entry) && openCodeMcpEntryCommandMatches(entry, command)
+	if em, ok := openCodeMcpRootEntry(mcp, toolID); ok && openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
+		return true
+	}
+	if em, ok := openCodeMcpServerEntry(mcp, toolID); ok && openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
+		return true
+	}
+	return false
 }
 
-// ConfigureOpenCodeMcp writes the MCP entry and syncs existing v1/v2 shapes.
-func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
+// ConfigureOpenCodeMcp writes the v1 MCP entry.
+func ConfigureOpenCodeMcp(toolID string) (bool, string) {
+	return ConfigureOpenCodeMcpV1(toolID)
+}
+
+func ConfigureOpenCodeMcpV1(toolID string) (changed bool, file string) {
 	p := util.OpenCodePathsResolved()
-	_ = util.EnsureDir(p.Dir)
-	raw, exists := util.ReadFileSafe(p.Config)
-	if !exists && util.Exists(p.Config) {
-		return false, p.Config
+	return configureOpenCodeMcp(toolID, p.Config, false)
+}
+
+func ConfigureOpenCodeMcpV2(toolID string) (changed bool, file string) {
+	p := util.OpenCodePathsV2()
+	return configureOpenCodeMcp(toolID, p.Config, true)
+}
+
+func configureOpenCodeMcp(toolID, file string, v2 bool) (changed bool, path string) {
+	path = file
+	if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+		return false, path
+	}
+	raw, exists := util.ReadFileSafe(path)
+	if !exists && util.Exists(path) {
+		return false, path
 	}
 	cfg := util.TryParseJsonc(raw)
 	if cfg == nil {
 		if strings.TrimSpace(raw) != "" {
-			return false, p.Config
+			return false, path
 		}
 		cfg = util.NewOrderedMap()
 	}
@@ -112,59 +153,41 @@ func ConfigureOpenCodeMcp(toolID string) (changed bool, file string) {
 	mcp, ok := mapChild(cfg, "mcp")
 	if !ok {
 		if _, exists := cfg.Get("mcp"); exists {
-			return false, p.Config
+			return false, path
 		}
 		mcp = util.NewOrderedMap()
 		cfg.Set("mcp", mcp)
 	}
-
-	command := openCodeMcpCommand(toolID)
-
-	v1NeedsUpdate := true
-	if entry, has := mcp.Get(toolID); has {
-		if em, isMap := entry.(*util.OrderedMap); isMap &&
-			openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
-			v1NeedsUpdate = false
-		}
-	}
-
-	var servers *util.OrderedMap
-	serversExists := false
-	if s, has := mapChild(mcp, "servers"); has {
-		servers, serversExists = s, true
-	}
-	v2NeedsUpdate := serversExists
-	if serversExists {
-		if entry, has := servers.Get(toolID); has {
-			if em, isMap := entry.(*util.OrderedMap); isMap &&
-				openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
-				v2NeedsUpdate = false
+	parent := mcp
+	if v2 {
+		parent, ok = mapChild(mcp, "servers")
+		if !ok {
+			if _, exists := mcp.Get("servers"); exists {
+				return false, path
 			}
+			parent = util.NewOrderedMap()
+			mcp.Set("servers", parent)
 		}
 	}
-
-	if !v1NeedsUpdate && !v2NeedsUpdate {
-		return false, p.Config
+	command := openCodeMcpCommand(openCodeAgentID(v2), toolID)
+	if entry, has := parent.Get(toolID); has {
+		if em, isMap := entry.(*util.OrderedMap); isMap && openCodeMcpEntryEnabled(em) && openCodeMcpEntryCommandMatches(em, command) {
+			return false, path
+		}
 	}
-
-	if v1NeedsUpdate {
-		v1 := util.NewOrderedMap()
-		v1.Set("type", "local")
-		v1.Set("command", toAnySlice(command))
-		v1.Set("enabled", true)
-		mcp.Set(toolID, v1)
+	entry := util.NewOrderedMap()
+	entry.Set("type", "local")
+	entry.Set("command", toAnySlice(command))
+	if v2 {
+		entry.Set("disabled", false)
+	} else {
+		entry.Set("enabled", true)
 	}
-	if serversExists && v2NeedsUpdate {
-		v2 := util.NewOrderedMap()
-		v2.Set("type", "local")
-		v2.Set("command", toAnySlice(command))
-		v2.Set("disabled", false)
-		servers.Set(toolID, v2)
+	parent.Set(toolID, entry)
+	if err := util.WriteFile(path, util.StringifyJSON(cfg)); err != nil {
+		return false, path
 	}
-	if err := util.WriteFile(p.Config, util.StringifyJSON(cfg)); err != nil {
-		return false, p.Config
-	}
-	return true, p.Config
+	return true, path
 }
 
 func ensureOpenCodeEnabledProvider(path, provider string) (changed, ok bool) {
@@ -200,8 +223,22 @@ func ensureOpenCodeEnabledProvider(path, provider string) (changed, ok bool) {
 }
 
 func RemoveOpenCodeMcp(toolID string) bool {
+	removedV1 := RemoveOpenCodeMcpV1(toolID)
+	removedV2 := RemoveOpenCodeMcpV2(toolID)
+	return removedV1 || removedV2
+}
+
+func RemoveOpenCodeMcpV1(toolID string) bool {
 	p := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(p.Config)
+	return removeOpenCodeMcp(toolID, p.Config, false)
+}
+
+func RemoveOpenCodeMcpV2(toolID string) bool {
+	return removeOpenCodeMcp(toolID, util.OpenCodePathsV2().Config, true)
+}
+
+func removeOpenCodeMcp(toolID, path string, v2 bool) bool {
+	raw, ok := util.ReadFileSafe(path)
 	if !ok {
 		return false
 	}
@@ -217,29 +254,30 @@ func RemoveOpenCodeMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	command := openCodeMcpCommand(toolID)
-	removed := false
-
-	if existing, has := mcp.Get(toolID); has {
-		if em, isMap := existing.(*util.OrderedMap); isMap && openCodeMcpEntryCommandMatches(em, command) {
-			mcp.Delete(toolID)
-			removed = true
+	parent := mcp
+	if v2 {
+		parent, ok = mapChild(mcp, "servers")
+		if !ok {
+			return false
 		}
 	}
-
-	if servers, ok := mapChild(mcp, "servers"); ok {
-		if existing, has := servers.Get(toolID); has {
-			if em, isMap := existing.(*util.OrderedMap); isMap && openCodeMcpEntryCommandMatches(em, command) {
-				servers.Delete(toolID)
-				removed = true
-			}
-		}
-	}
-
-	if !removed {
+	command := openCodeMcpCommand(openCodeAgentID(v2), toolID)
+	existing, has := parent.Get(toolID)
+	if !has {
 		return false
 	}
-	return util.WriteFile(p.Config, util.StringifyJSON(cfg)) == nil
+	entry, isMap := existing.(*util.OrderedMap)
+	if !isMap || !openCodeMcpEntryCommandMatches(entry, command) {
+		return false
+	}
+	parent.Delete(toolID)
+	if v2 && parent.Len() == 0 {
+		mcp.Delete("servers")
+	}
+	if mcp.Len() == 0 {
+		cfg.Delete("mcp")
+	}
+	return util.WriteFile(path, util.StringifyJSON(cfg)) == nil
 }
 
 // --- OpenCode headroom HTTP proxy ---
@@ -855,6 +893,18 @@ func OpenCodeInstalledMajor() int {
 	return 0
 }
 
+func OpenCodeInstalledMajors() []int {
+	var majors []int
+	seen := map[int]bool{}
+	for _, bin := range openCodeBinaryPaths() {
+		if major := OpenCodeMajorVersion(bin); major != 0 && !seen[major] {
+			seen[major] = true
+			majors = append(majors, major)
+		}
+	}
+	return majors
+}
+
 // opencodeDesktopPaths probes the OpenCode Desktop (Electron) install.
 func opencodeDesktopPaths() []string {
 	switch goosForDetect {
@@ -878,9 +928,38 @@ var opencode = &core.AgentManifest{
 	ConfigDir: func() string { return util.OpenCodePathsResolved().Dir },
 	Detect: func() core.Detection {
 		bins := opencodeKnownBinDirs()
-		if OpenCodeInstalledMajor() == 2 {
+		majors := OpenCodeInstalledMajors()
+		if containsInt(majors, 1) {
 			return core.Detection{Installed: true, Source: "cli"}
+		}
+		if len(majors) > 0 {
+			return core.Detection{Installed: false, Source: ""}
 		}
 		return detectAgent("opencode", util.OpenCodePathsResolved().Dir, bins, opencodeDesktopPaths())
 	},
+}
+
+var opencode2 = &core.AgentManifest{
+	ID:        "opencode2",
+	Label:     "OpenCode v2",
+	Homepage:  "https://github.com/anomalyco/opencode",
+	CLIBin:    "opencode2",
+	ConfigDir: func() string { return util.OpenCodePathsV2().Dir },
+	Detect: func() core.Detection {
+		for _, major := range OpenCodeInstalledMajors() {
+			if major == 2 {
+				return core.Detection{Installed: true, Source: "cli"}
+			}
+		}
+		return core.Detection{Installed: false, Source: ""}
+	},
+}
+
+func containsInt(xs []int, want int) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

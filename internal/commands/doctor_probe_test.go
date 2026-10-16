@@ -399,7 +399,7 @@ func TestManagedRuntimeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(op.PluginsDir, "tokless-rtk.ts")
-	if err := os.WriteFile(path, []byte("const TOKLESS_BIN = \"tokless\"\nrtk-rewrite"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("const TOKLESS_BIN = \"tokless\"\ntool.execute.before rtk-rewrite"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	files := managedRuntimeFiles("opencode")
@@ -411,6 +411,58 @@ func TestManagedRuntimeFiles(t *testing.T) {
 	}
 	if detail := probeRuntimeFile(runtimeFile{path: path, markers: []string{"missing"}}); !strings.Contains(detail, "invalid") {
 		t.Fatalf("invalid detail = %q", detail)
+	}
+}
+
+func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	binDir := t.TempDir()
+	for name, version := range map[string]string{"opencode": "1.9.0", "opencode2": "2.1.0"} {
+		bin := filepath.Join(binDir, name)
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '"+version+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir)
+	files := managedRuntimeFiles("opencode")
+	if len(files) != 2 {
+		t.Fatalf("mixed install runtime files = %+v, want v1 and v2 plugins", files)
+	}
+	if files[0].path == files[1].path {
+		t.Fatalf("runtime plugins must be distinct: %+v", files)
+	}
+	for _, file := range files {
+		if detail := probeRuntimeFile(file); detail != "" {
+			t.Errorf("missing plugin %s detail = %q, want no detail for absent plugin", file.path, detail)
+		}
+	}
+}
+
+func TestManagedRuntimeFilesOpenCodeVersion(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	plugins := util.OpenCodePathsResolved().PluginsDir
+	v2Path := filepath.Join(plugins, "tokless-rtk-v2.ts")
+	if err := os.MkdirAll(plugins, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(v2Path, []byte("TOKLESS_BIN rtk-rewrite export default async setup ctx.tool.hook(\"execute.before\""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v2Files := managedRuntimeFilesForMajor("opencode", 2)
+	if len(v2Files) != 1 || v2Files[0].path != v2Path {
+		t.Fatalf("v2 files = %+v, want only v2 plugin", v2Files)
+	}
+	if detail := probeRuntimeFile(v2Files[0]); detail != "" {
+		t.Fatalf("v2 probe: %q", detail)
+	}
+	v1Files := managedRuntimeFilesForMajor("opencode", 1)
+	if len(v1Files) != 1 || v1Files[0].path == v2Path {
+		t.Fatalf("v1 files = %+v, want only v1 plugin", v1Files)
 	}
 }
 

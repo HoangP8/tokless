@@ -1776,6 +1776,7 @@ var codex = &core.AgentManifest{
 func Register() {
 	core.RegisterAgent(claude)
 	core.RegisterAgent(opencode)
+	core.RegisterAgent(opencode2)
 	core.RegisterAgent(codex)
 	core.RegisterAgent(cursor)
 	core.RegisterAgent(antigravity)

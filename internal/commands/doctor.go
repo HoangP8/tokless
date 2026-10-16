@@ -33,6 +33,9 @@ func toolConfigLocation(agentID, toolID string) (path, key string) {
 	case "opencode":
 		path = util.OpenCodePathsResolved().Config
 		key = "mcp." + toolID
+	case "opencode2":
+		path = util.OpenCodePathsV2().Config
+		key = "mcp.servers." + toolID
 	case "codex":
 		path = util.CodexPathsResolved().Config
 		key = "mcp_servers." + toolID

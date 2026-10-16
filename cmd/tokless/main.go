@@ -93,7 +93,7 @@ func helpText() string {
 		util.C.Gray("Docs: https://github.com/HoangP8/tokless")
 }
 
-var agentSubset = []string{"claude", "opencode", "codex", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "cursor", "amp", "kimi", "dsh", "zcode"}
+var agentSubset = []string{"claude", "opencode", "opencode2", "codex", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "cursor", "amp", "kimi", "dsh", "zcode"}
 var toolSubset = []string{"rtk", "codegraph", "context-mode", "headroom", "projectmem"}
 
 // termWidth returns the terminal width in columns.
@@ -178,7 +178,7 @@ func proxyHelpText() string {
 		"  If you edit a managed setting, down refuses to overwrite it.\n\n" +
 		"  down --agents <list> leaves shared Headroom running for other agents.\n" +
 		util.C.Bold("Flags:") + "\n" +
-		"  --agents <list>    Limit to: claude,codex,opencode,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity,amp,kimi,dsh,zcode (default: all; --agent alias)\n" +
+		"  --agents <list>    Limit to: claude,opencode,opencode2,codex,omp,kilo,pi,droid,grok,copilot,cline,cursor,antigravity,amp,kimi,dsh,zcode (default: all; --agent alias)\n" +
 		"  --dry-run          Show what would be wired without changing anything\n" +
 		"  --help             Show this help\n"
 }

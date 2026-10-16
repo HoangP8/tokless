@@ -82,6 +82,7 @@ var ponytail = &core.ToolManifest{
 	WireFor: map[string]core.AgentFn{
 		"claude":      ponytailWireFor("claude"),
 		"opencode":    ponytailWireFor("opencode"),
+		"opencode2":   ponytailWireFor("opencode2"),
 		"codex":       ponytailWireFor("codex"),
 		"antigravity": ponytailWireFor("antigravity"),
 		"copilot":     ponytailWireCopilot(),
@@ -100,6 +101,7 @@ var ponytail = &core.ToolManifest{
 	UnwireFor: map[string]core.AgentFn{
 		"claude":      ponytailUnwireFor("claude"),
 		"opencode":    ponytailUnwireFor("opencode"),
+		"opencode2":   ponytailUnwireFor("opencode2"),
 		"codex":       ponytailUnwireFor("codex"),
 		"antigravity": ponytailUnwireFor("antigravity"),
 		"copilot":     ponytailUnwireFor("copilot"),
@@ -113,6 +115,7 @@ var ponytail = &core.ToolManifest{
 	VerifyFor: map[string]core.VerifyFn{
 		"claude":      ponytailVerifyFor("claude"),
 		"opencode":    ponytailVerifyFor("opencode"),
+		"opencode2":   ponytailVerifyFor("opencode2"),
 		"codex":       ponytailVerifyFor("codex"),
 		"antigravity": ponytailVerifyFor("antigravity"),
 		"copilot":     ponytailVerifyFor("copilot"),

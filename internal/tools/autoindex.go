@@ -70,9 +70,19 @@ func opencodeAutoIndexPath() string {
 	return filepath.Join(util.OpenCodePathsResolved().Dir, "plugins", "tokless-codegraph-init.js")
 }
 
+func opencodeV2AutoIndexPath() string {
+	return filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-codegraph-init.js")
+}
+
+func unwireOpencodeV2AutoIndex() {
+	_ = os.Remove(opencodeV2AutoIndexPath())
+}
+
 func unwireOpencodeAutoIndex() {
 	_ = os.Remove(opencodeAutoIndexPath())
+	_ = os.Remove(opencodeV2AutoIndexPath())
 	if win := util.WindowsHomeFromWSL(); win != "" {
+
 		_ = os.Remove(filepath.Join(win, ".config", "opencode", "plugins", "tokless-codegraph-init.js"))
 	}
 }
