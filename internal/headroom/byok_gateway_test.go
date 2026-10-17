@@ -986,21 +986,27 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 		t.Fatal("expected byokReloadErr to be set after corruption")
 	}
 
-	// 3. Delete file -> fails closed and preserves degradation error
+	// 3. Delete file -> fails closed and preserves degradation error.
+	// Gate on the degradation message, not on route state: step 2 already
+	// emptied the route table, so waiting for lookups to fail would exit
+	// before the watcher observes the deletion and then assert against step
+	// 2's stale message. Only a watcher that read a missing file can produce
+	// a registryMissingMessage error here.
 	_ = os.Remove(byokRoutesPath())
-	var deletionFailedClosed bool
-	for i := 0; i < 10; i++ {
+	deletionFailedClosed := false
+	for i := 0; i < 200; i++ {
 		time.Sleep(10 * time.Millisecond)
-		if _, exists := lookupBYOKRoute("opencode:live-test"); !exists {
+		if err := byokReloadErr.Load(); err != nil && registryMissingMessage(*err) {
 			deletionFailedClosed = true
 			break
 		}
 	}
 	if !deletionFailedClosed {
-		t.Fatal("expected route lookup to fail closed after deletion within 100ms")
+		_, statErr := os.Stat(byokRoutesPath())
+		t.Fatalf("expected degradation error mentioning not found within 2s, got %v (routes file still present: %v)", byokReloadErr.Load(), statErr == nil)
 	}
-	if byokReloadErr.Load() == nil || !registryMissingMessage(*byokReloadErr.Load()) {
-		t.Fatalf("expected degradation error mentioning not found, got %v", byokReloadErr.Load())
+	if _, exists := lookupBYOKRoute("opencode:live-test"); exists {
+		t.Fatal("expected route lookup to fail closed after deletion")
 	}
 	close(stopWatcher)
 	<-doneWatcher
