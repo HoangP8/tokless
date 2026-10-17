@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="502" viewBox="0 0 960 502" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="550" viewBox="0 0 960 550" role="img" aria-labelledby="title desc">
   <title id="title">Tokless terminal install flow</title>
-  <desc id="desc">Tokless terminal UI showing tool setup, a seven-agent picker, and its Caveman and Ponytail instruction wiring.</desc>
+  <desc id="desc">Tokless terminal UI: the command prompt, the tool installer with progress bars, then a harness picker listing seven harnesses, and the final wired confirmation.</desc>
   <defs>
     <linearGradient id="surface" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#161b22"/>
@@ -27,31 +27,35 @@
   </defs>
 
   <g filter="url(#shadow)">
-    <rect x="10" y="10" width="940" height="482" rx="12" fill="url(#surface)" stroke="#30363d"/>
+    <rect x="10" y="10" width="940" height="530" rx="12" fill="url(#surface)" stroke="#30363d"/>
     <rect x="10" y="10" width="940" height="38" rx="12" fill="url(#titlebar)"/>
     <rect x="10" y="34" width="940" height="14" fill="url(#titlebar)"/>
   </g>
-  <rect x="11" y="49" width="938" height="442" rx="0 0 11 11" fill="url(#grain)"/>
+  <rect x="11" y="49" width="938" height="490" rx="0 0 11 11" fill="url(#grain)"/>
   <circle cx="33" cy="29" r="6" fill="#ff5f56"/><circle cx="53" cy="29" r="6" fill="#ffbd2e"/><circle cx="73" cy="29" r="6" fill="#27c93f"/>
   <text x="480" y="34" text-anchor="middle" class="mono muted" font-size="12">tokless — setup</text>
 
   <g class="mono" font-size="14">
-    <text x="34" y="78"><tspan class="green">$ </tspan><tspan class="text">tokless</tspan></text>
-    <text x="34" y="108"><tspan class="dim">┌─ </tspan><tspan class="purple strong">Tools</tspan></text>
-    <text x="34" y="136" class="dim">│</text><text x="59" y="136" class="green">✔</text><text x="84" y="136" class="text">RTK</text><text x="228" y="136" class="dim">[</text><text x="237" y="136" class="green">████████████████</text><text x="372" y="136" class="dim">]</text><text x="381" y="136" class="dim">100%</text><text x="430" y="136" class="muted">v1.2.3</text>
-    <text x="34" y="160" class="dim">│</text><text x="59" y="160" class="green">✔</text><text x="84" y="160" class="text">CodeGraph</text><text x="228" y="160" class="dim">[</text><text x="237" y="160" class="green">████████████████</text><text x="372" y="160" class="dim">]</text><text x="381" y="160" class="dim">100%</text><text x="430" y="160" class="muted">v1.2.3</text>
-    <text x="34" y="184" class="dim">│</text><text x="59" y="184" class="green">✔</text><text x="84" y="184" class="text">Context-Mode</text><text x="228" y="184" class="dim">[</text><text x="237" y="184" class="green">████████████████</text><text x="372" y="184" class="dim">]</text><text x="381" y="184" class="dim">100%</text><text x="430" y="184" class="muted">v1.2.3</text>
-    <text x="34" y="208" class="dim">│</text>
-    <text x="34" y="238"><tspan class="purple strong">● Select agents to install tokless</tspan></text>
+    <text x="34" y="76"><tspan class="green">$ </tspan><tspan class="text">tokless</tspan></text>
 
-    <text x="34" y="268" class="dim">│</text><text x="68" y="268" class="cyan strong">❯</text><text x="85" y="268" class="green">◉</text><text x="110" y="268" class="cyan strong">Claude Code</text><text x="245" y="268" class="green strong">✓</text><text x="262" y="268" class="green">[READY]</text>
-    <text x="34" y="292" class="dim">│</text><text x="85" y="292" class="dim">◯</text><text x="110" y="292" class="text">OpenCode</text><text x="262" y="292" class="green">[READY]</text>
-    <text x="34" y="316" class="dim">│</text><text x="85" y="316" class="dim">◯</text><text x="110" y="316" class="text">Codex</text><text x="262" y="316" class="green">[READY]</text>
-    <text x="34" y="340" class="dim">│</text><text x="85" y="340" class="dim">◯</text><text x="110" y="340" class="text">Antigravity</text><text x="262" y="340" class="green">[READY]</text>
-    <text x="34" y="364" class="dim">│</text><text x="85" y="364" class="dim">◯</text><text x="110" y="364" class="text">GitHub Copilot</text><text x="262" y="364" class="green">[READY]</text>
-    <text x="34" y="388" class="dim">│</text><text x="85" y="388" class="dim">◯</text><text x="110" y="388" class="text">Factory Droid</text><text x="262" y="388" class="green">[READY]</text>
-    <text x="34" y="412" class="dim">│</text><text x="85" y="412" class="dim">◯</text><text x="110" y="412" class="text">Pi</text><text x="262" y="412" class="green">[READY]</text>
-    <text x="34" y="438"><tspan class="dim">  ────────────────────────────────────────────────────────────</tspan></text>
-    <text x="34" y="464" font-size="12"><tspan class="orange">↑/↓</tspan><tspan class="dim"> move · </tspan><tspan class="orange">&lt;space&gt;</tspan><tspan class="dim"> select · </tspan><tspan class="orange">&lt;a&gt;</tspan><tspan class="dim"> all · </tspan><tspan class="orange">&lt;enter&gt;</tspan><tspan class="dim"> confirm</tspan></text>
+    <text x="34" y="108"><tspan class="dim">┌─ </tspan><tspan class="purple strong">Install tools</tspan></text>
+    <text x="34" y="132" class="dim">│</text><text x="59" y="132" class="green">✔</text><text x="84" y="132" class="text">RTK</text><text x="228" y="132" class="dim">[</text><text x="237" y="132" class="green">████████████████</text><text x="372" y="132" class="dim">]</text><text x="381" y="132" class="dim">100%</text>
+    <text x="34" y="156" class="dim">│</text><text x="59" y="156" class="green">✔</text><text x="84" y="156" class="text">CodeGraph</text><text x="228" y="156" class="dim">[</text><text x="237" y="156" class="green">████████████████</text><text x="372" y="156" class="dim">]</text><text x="381" y="156" class="dim">100%</text>
+    <text x="34" y="180" class="dim">│</text><text x="59" y="180" class="green">✔</text><text x="84" y="180" class="text">Context-Mode</text><text x="228" y="180" class="dim">[</text><text x="237" y="180" class="green">████████████████</text><text x="372" y="180" class="dim">]</text><text x="381" y="180" class="dim">100%</text>
+    <text x="34" y="204" class="dim">│</text><text x="59" y="204" class="green">✔</text><text x="84" y="204" class="text">Headroom</text><text x="228" y="204" class="dim">[</text><text x="237" y="204" class="green">████████████████</text><text x="372" y="204" class="dim">]</text><text x="381" y="204" class="dim">100%</text>
+    <text x="34" y="228" class="dim">│</text><text x="59" y="228" class="green">✔</text><text x="84" y="228" class="text">ProjectMem</text><text x="228" y="228" class="dim">[</text><text x="237" y="228" class="green">████████████████</text><text x="372" y="228" class="dim">]</text><text x="381" y="228" class="dim">100%</text>
+    <text x="34" y="252" class="dim">│</text><text x="84" y="252" class="text">principles · ponytail · caveman</text><text x="400" y="252" class="dim">rules</text>
+
+    <text x="34" y="286"><tspan class="purple strong">● Select harnesses to wire tokless to</tspan></text>
+    <text x="34" y="310" class="dim">│</text><text x="68" y="310" class="cyan strong">❯</text><text x="85" y="310" class="green">◉</text><text x="110" y="310" class="cyan strong">Claude Code</text><text x="262" y="310" class="green">[READY]</text>
+    <text x="34" y="334" class="dim">│</text><text x="85" y="334" class="dim">◯</text><text x="110" y="334" class="text">OpenCode</text><text x="262" y="334" class="green">[READY]</text>
+    <text x="34" y="358" class="dim">│</text><text x="85" y="358" class="dim">◯</text><text x="110" y="358" class="text">Codex</text><text x="262" y="358" class="green">[READY]</text>
+    <text x="34" y="382" class="dim">│</text><text x="85" y="382" class="dim">◯</text><text x="110" y="382" class="text">Antigravity</text><text x="262" y="382" class="green">[READY]</text>
+    <text x="34" y="406" class="dim">│</text><text x="85" y="406" class="dim">◯</text><text x="110" y="406" class="text">GitHub Copilot</text><text x="262" y="406" class="green">[READY]</text>
+    <text x="34" y="430" class="dim">│</text><text x="85" y="430" class="dim">◯</text><text x="110" y="430" class="text">Factory Droid</text><text x="262" y="430" class="green">[READY]</text>
+    <text x="34" y="454" class="dim">│</text><text x="85" y="454" class="dim">◯</text><text x="110" y="454" class="text">Pi</text><text x="262" y="454" class="green">[READY]</text>
+
+    <text x="34" y="486"><tspan class="green strong">✔ Wired 7 harnesses</tspan><tspan class="dim"> — tokless active</tspan></text>
+    <text x="34" y="518" font-size="11"><tspan class="orange">↑↓</tspan><tspan class="dim"> navigate · </tspan><tspan class="orange">space</tspan><tspan class="dim"> toggle · </tspan><tspan class="orange">a</tspan><tspan class="dim"> all · </tspan><tspan class="orange">enter</tspan><tspan class="dim"> confirm</tspan></text>
   </g>
 </svg>
