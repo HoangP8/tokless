@@ -9,7 +9,9 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-const clineProviderName = "openai-compatible"
+const clineProviderName = "tokless-headroom"
+const clineProviderType = "openai-compatible"
+const clineLegacyProviderName = "openai-compatible"
 
 func clineProvidersFile() string {
 	return filepath.Join(util.ClinePathsResolved().DataDir, "settings", "providers.json")
@@ -21,7 +23,7 @@ func clineProviderStateFile() string {
 // clineDesiredProvider is the managed openai-compatible provider entry.
 func clineDesiredProvider() *util.OrderedMap {
 	env := util.NewOrderedMap()
-	env.Set("provider", clineProviderName)
+	env.Set("provider", clineProviderType)
 	env.Set("apiKey", proxyWireKey())
 	env.Set("model", "deepseek-v4-flash")
 	env.Set("baseUrl", ProxyEndpointFor("cline"))
@@ -88,7 +90,7 @@ func clineRoutedProvider(existing *util.OrderedMap, register bool) (*util.Ordere
 		}
 	}
 	headers.Set(headroomBaseURLHeader, upstream)
-	routed.Set("provider", clineProviderName)
+	routed.Set("provider", clineProviderType)
 	routed.Set("baseUrl", ProxyEndpointFor("cline"))
 	routed.Set("headers", headers)
 	return cloned, true, rollback
@@ -131,7 +133,7 @@ func clineManagedValues(v any) bool {
 	if !ok {
 		return false
 	}
-	for key, want := range map[string]any{"provider": clineProviderName, "baseUrl": ProxyEndpointFor("cline")} {
+	for key, want := range map[string]any{"provider": clineProviderType, "baseUrl": ProxyEndpointFor("cline")} {
 		have, present := settings.Get(key)
 		if !present || !jsonValueEqual(have, want) {
 			return false
@@ -158,6 +160,17 @@ func settingsValue(settings *util.OrderedMap, key string) any {
 	return v
 }
 
+// clineReservedSlot returns the managed reserved slot, preferring the
+// namespaced one. A user-owned entry is never reported.
+func clineReservedSlot(providers *util.OrderedMap) (string, any, bool) {
+	for _, name := range []string{clineProviderName, clineLegacyProviderName} {
+		if v, ok := providers.Get(name); ok && clineManagedValues(v) {
+			return name, v, true
+		}
+	}
+	return "", nil, false
+}
+
 func ConfigureClineProxy() (bool, string) {
 	var changed bool
 	var file string
@@ -178,69 +191,48 @@ func configureClineProxyLocked() (bool, string) {
 	}
 	statePath := clineProviderStateFile()
 	stateRaw, stateExists := util.ReadFileSafe(statePath)
-	stateCreated := false
+	stateContent := ""
 	cfg, providers, err := clineProviderConfig(raw)
 	if err != nil {
 		return false, file
 	}
 	if selected, ok := cfg.Get("lastUsedProvider"); ok {
 		selectedName, isString := selected.(string)
-		if !isString || selectedName != clineProviderName {
+		if !isString || (selectedName != clineProviderName && selectedName != clineLegacyProviderName) {
 			return false, file
 		}
 	}
-	desired := clineDesiredProvider()
+	slot, existing, managed := clineReservedSlot(providers)
 	changed := false
-	stateContent := ""
-	var rollbackRoute func()
 	committed := false
 	defer func() {
-		if !committed && rollbackRoute != nil {
-			rollbackRoute()
+		if !committed && stateContent != "" {
+			if current, ok := util.ReadFileSafe(statePath); ok && current == stateContent {
+				_ = os.Remove(statePath)
+			}
 		}
 	}()
-	if existing, ok := providers.Get(clineProviderName); ok {
+	switch {
+	case managed:
 		existingMap, existingOK := existing.(*util.OrderedMap)
-		if !existingOK {
+		if !existingOK || !stateExists {
 			return false, file
 		}
-		var routed *util.OrderedMap
-		if clineManagedValues(existing) {
-			if !stateExists {
-				return false, file
-			}
-			routed = existingMap
-		} else {
-			var routedOK bool
-			routed, routedOK, rollbackRoute = clineRoutedProvider(existingMap, true)
-			if !routedOK {
-				return false, file
-			}
-		}
-		if !stateExists {
-			state := util.NewOrderedMap()
-			state.Set("provider", existing)
-			if v, ok := cfg.Get("lastUsedProvider"); ok {
-				state.Set("lastUsedProvider", v)
-			} else {
-				state.Set("lastUsedProvider", nil)
-			}
-			stateContent = util.StringifyJSON(state)
-			if err := clineWriteFileGuarded(statePath, stateContent, stateRaw, stateExists); err != nil {
-				return false, file
-			}
-			stateExists = true
-			stateCreated = true
-			changed = true
-		}
-		if stateRaw, ok := util.ReadFileSafe(statePath); !ok || !clineStateMatchesRoute(stateRaw, existing, routed) {
+		if stateRaw, ok := util.ReadFileSafe(statePath); !ok || !clineStateMatchesRoute(stateRaw, existing, existingMap) {
 			return false, file
 		}
-		if !jsonValueEqual(existing, routed) {
-			providers.Set(clineProviderName, routed)
+		if slot == clineLegacyProviderName {
+			if occupied, occupiedOK := providers.Get(clineProviderName); occupiedOK && !clineManagedValues(occupied) && !jsonValueEqual(occupied, existingMap) {
+				return false, file
+			}
+			providers.Delete(clineLegacyProviderName)
+			providers.Set(clineProviderName, existingMap)
 			changed = true
 		}
-	} else {
+	default:
+		if occupied, ok := providers.Get(clineProviderName); ok && !clineManagedValues(occupied) {
+			return false, file
+		}
 		state := util.NewOrderedMap()
 		state.Set("provider", nil)
 		if v, ok := cfg.Get("lastUsedProvider"); ok {
@@ -252,8 +244,7 @@ func configureClineProxyLocked() (bool, string) {
 		if err := clineWriteFileGuarded(statePath, stateContent, stateRaw, stateExists); err != nil {
 			return false, file
 		}
-		stateCreated = true
-		providers.Set(clineProviderName, desired)
+		providers.Set(clineProviderName, clineDesiredProvider())
 		changed = true
 	}
 	if v, ok := cfg.Get("lastUsedProvider"); !ok || v != clineProviderName {
@@ -264,15 +255,27 @@ func configureClineProxyLocked() (bool, string) {
 		return false, file
 	}
 	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, exists); err != nil {
-		if stateCreated {
-			if current, ok := util.ReadFileSafe(statePath); ok && current == stateContent {
-				_ = os.Remove(statePath)
-			}
-		}
 		return false, file
 	}
 	committed = true
+	if managed && slot == clineLegacyProviderName {
+		if err := clineMigrateBYOKRoute(); err != nil {
+			util.L.Err("cline BYOK route migration failed: " + err.Error())
+		}
+	}
 	return true, file
+}
+
+// clineMigrateBYOKRoute moves a legacy BYOK route onto the namespaced slot.
+func clineMigrateBYOKRoute() error {
+	previous, exists := util.ReadBYOKRoute("cline:" + clineLegacyProviderName)
+	if !exists {
+		return nil
+	}
+	if _, _, err := util.UpsertBYOKRoute("cline:"+clineProviderName, previous.Protocol, previous.Upstream); err != nil {
+		return err
+	}
+	return deleteBYOKRoute("cline", clineLegacyProviderName)
 }
 
 func clineStateMatchesRoute(raw string, original, current any) bool {
@@ -329,8 +332,8 @@ func removeClineProxyLocked() bool {
 	if err != nil {
 		return false
 	}
-	existing, ok := providers.Get(clineProviderName)
-	if !ok || !clineManagedValues(existing) {
+	slot, existing, managed := clineReservedSlot(providers)
+	if !managed {
 		return false
 	}
 	if stateRaw, stateOK := util.ReadFileSafe(clineProviderStateFile()); stateOK {
@@ -342,9 +345,9 @@ func removeClineProxyLocked() bool {
 			return false
 		}
 		if v, exists := state.Get("provider"); exists && v != nil {
-			providers.Set(clineProviderName, v)
+			providers.Set(slot, v)
 		} else {
-			providers.Delete(clineProviderName)
+			providers.Delete(slot)
 		}
 		if v, exists := state.Get("lastUsedProvider"); exists && v != nil {
 			cfg.Set("lastUsedProvider", v)
@@ -352,28 +355,30 @@ func removeClineProxyLocked() bool {
 			cfg.Delete("lastUsedProvider")
 		}
 	} else {
-		providers.Delete(clineProviderName)
+		providers.Delete(slot)
 		if v, exists := cfg.Get("lastUsedProvider"); exists {
-			if name, ok := v.(string); ok && name == clineProviderName {
+			if name, ok := v.(string); ok && (name == clineProviderName || name == clineLegacyProviderName) {
 				cfg.Delete("lastUsedProvider")
 			}
 		}
 	}
-	prevRoute, hasPrev := util.ReadBYOKRoute("cline:" + clineProviderName)
-	if err := deleteBYOKRoute("cline", clineProviderName); err != nil {
-		return false
+	var deletedRoutes []BYOKRoute
+	for _, name := range []string{clineProviderName, clineLegacyProviderName} {
+		if route, exists := util.ReadBYOKRoute("cline:" + name); exists {
+			deletedRoutes = append(deletedRoutes, route)
+			if err := deleteBYOKRoute("cline", name); err != nil {
+				restoreDeletedBYOKRoutes([]BYOKRoute{route})
+				return false
+			}
+		}
 	}
 	if err := clineWriteFileGuarded(file, util.StringifyJSON(cfg), raw, true); err != nil {
-		if hasPrev {
-			restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
-		}
+		restoreDeletedBYOKRoutes(deletedRoutes)
 		return false
 	}
 	if err := os.Remove(clineProviderStateFile()); err != nil && !os.IsNotExist(err) {
 		_ = clineWriteFileGuarded(file, raw, util.StringifyJSON(cfg), true)
-		if hasPrev {
-			restoreDeletedBYOKRoutes([]BYOKRoute{prevRoute})
-		}
+		restoreDeletedBYOKRoutes(deletedRoutes)
 		return false
 	}
 	return true
@@ -388,8 +393,8 @@ func ClineProxyWired() bool {
 	if err != nil {
 		return false
 	}
-	v, ok := providers.Get(clineProviderName)
-	return ok && clineManagedValues(v)
+	_, _, managed := clineReservedSlot(providers)
+	return managed
 }
 
 func detectClineProxy(cap ProxyCapability) ProxyDetection {
@@ -406,6 +411,13 @@ func detectClineProxy(cap ProxyCapability) ProxyDetection {
 	}
 	v, ok := providers.Get(clineProviderName)
 	if !ok {
+		legacy, legacyOK := providers.Get(clineLegacyProviderName)
+		switch {
+		case legacyOK && clineManagedValues(legacy):
+			return proxyDetection(cap.ID, "legacy managed provider", ProxyStateManaged)
+		case legacyOK:
+			return proxyDetection(cap.ID, "legacy reserved provider differs", ProxyStateUnconfigured)
+		}
 		return proxyDetection(cap.ID, "reserved provider absent", ProxyStateUnconfigured)
 	}
 	if clineManagedValues(v) {

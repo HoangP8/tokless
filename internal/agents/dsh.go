@@ -134,13 +134,24 @@ func dshFindPluginBlock(lines []string, pluginID string) (start, end int, ok boo
 		return 0, 0, false
 	}
 	end = len(lines)
+	blockIndent := len(lines[start]) - len(strings.TrimLeft(lines[start], " "))
 	for i := start + 1; i < len(lines); i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "- id: ") {
+		if dshPluginEntryLine(lines[i], blockIndent) {
 			end = i
 			break
 		}
 	}
 	return start, end, true
+}
+
+// dshPluginEntryLine reports whether line begins a sibling plugin entry at
+// block indent.
+func dshPluginEntryLine(line string, indent int) bool {
+	trimmed := strings.TrimLeft(line, " ")
+	if len(line)-len(trimmed) > indent {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "- id: ")
 }
 
 // dshProviderSpan locates the `providers:` mapping and a named provider entry
@@ -571,10 +582,12 @@ func configureDshProxyLocked() (changed bool, file string) {
 		var n int
 		lines, n = dshUpsertHeader(lines, provLine, provEnd, byokRouteHeaderKey, routeHeader)
 		changedAny = changedAny || n > 0
-		// Recompute the provider span; header inserts shifted line indices.
+		// Recompute the span and block: inserts move the block boundary.
+		start, end, _ = dshFindPluginBlock(lines, "llm-pi-ai")
 		_, provLine, provEnd, _ = dshProviderSpan(lines, start, end, provider.ID)
 		lines, n = dshUpsertHeader(lines, provLine, provEnd, dshHeadroomBaseURLHeader, origin)
 		changedAny = changedAny || n > 0
+		start, end, _ = dshFindPluginBlock(lines, "llm-pi-ai")
 		_, provLine, provEnd, _ = dshProviderSpan(lines, start, end, provider.ID)
 		lines, n = dshUpsertHeader(lines, provLine, provEnd, dshHeadroomOriginalPathHdr, chatPath)
 		changedAny = changedAny || n > 0
@@ -587,7 +600,10 @@ func configureDshProxyLocked() (changed bool, file string) {
 		}
 	}
 	if !changedAny {
-		rollback()
+		if err := saveProxyRouteStash("dsh", stash); err != nil {
+			rollback()
+			return false, file
+		}
 		return false, file
 	}
 	if err := saveProxyRouteStash("dsh", stash); err != nil {

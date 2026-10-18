@@ -451,9 +451,14 @@ func TestClineProxyLifecycle(t *testing.T) {
 		t.Fatalf("configure: changed=%v wired=%v", changed, ClineProxyWired())
 	}
 	raw, _ := util.ReadFileSafe(file)
-	for _, want := range []string{`"apiKey": "user-key"`, `"model": "user-model"`, `"x-user": "keep"`, `"baseUrl": "http://127.0.0.1:8787/v1"`, `"x-headroom-base-url": "https://api.user.test"`} {
+	for _, want := range []string{`"apiKey": "user-key"`, `"model": "user-model"`, `"x-user": "keep"`, `"baseUrl": "https://api.user.test/v1"`} {
 		if !strings.Contains(raw, want) {
-			t.Fatalf("routed Cline config missing %s: %s", want, raw)
+			t.Fatalf("user Cline provider missing %s: %s", want, raw)
+		}
+	}
+	for _, want := range []string{`"` + clineProviderName + `"`, `"lastUsedProvider": "` + clineProviderName + `"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("managed Cline provider missing %s: %s", want, raw)
 		}
 	}
 	if changed, _ := ConfigureClineProxy(); changed {
@@ -473,19 +478,19 @@ func TestClineProxyLifecycle(t *testing.T) {
 	}
 }
 
-func TestClineProxyRefusesForeignReservedProvider(t *testing.T) {
+func TestClineProxyRefusesForeignActiveProvider(t *testing.T) {
 	clineProxyTestHome(t)
 	file := clineProvidersFile()
-	seed := `{"providers":{"openai-compatible":{"settings":{"provider":"openai-compatible","model":"user-model","baseUrl":"not-a-url"}}}}`
+	seed := `{"lastUsedProvider":"anthropic","providers":{"anthropic":{"settings":{"provider":"anthropic","apiKey":"user-key","model":"claude-sonnet-4"}}}}`
 	if err := util.WriteFile(file, seed); err != nil {
 		t.Fatal(err)
 	}
 	if changed, _ := ConfigureClineProxy(); changed || ClineProxyWired() {
-		t.Fatal("invalid foreign Cline provider was adopted")
+		t.Fatal("configure replaced a foreign active Cline provider")
 	}
 	raw, _ := util.ReadFileSafe(file)
 	if raw != seed {
-		t.Fatal("foreign Cline provider changed")
+		t.Fatalf("foreign active Cline provider changed:\n%s", raw)
 	}
 }
 
@@ -2814,8 +2819,11 @@ func TestMixedProviderProxyKeepsDistinctUpstreams(t *testing.T) {
 		t.Fatalf("codex oauth must omit %s:\n%s", headroomBaseURLHeader, codexRaw)
 	}
 	clineRaw, _ := util.ReadFileSafe(clineProvidersFile())
-	if !strings.Contains(clineRaw, `"x-headroom-base-url": "https://api.user.test"`) {
-		t.Fatalf("cline header missing:\n%s", clineRaw)
+	if !strings.Contains(clineRaw, `"lastUsedProvider": "`+clineProviderName+`"`) {
+		t.Fatalf("cline managed provider not selected:\n%s", clineRaw)
+	}
+	if !strings.Contains(clineRaw, `"baseUrl": "https://api.user.test/v1"`) || strings.Contains(clineRaw, headroomBaseURLHeader) {
+		t.Fatalf("cline user provider must stay untouched:\n%s", clineRaw)
 	}
 	piRaw, _ := util.ReadFileSafe(piModelsFile())
 	if !strings.Contains(piRaw, `"x-headroom-base-url": "https://provider.example"`) {

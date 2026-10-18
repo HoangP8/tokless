@@ -667,6 +667,8 @@ func argsEq(a any, b []string) bool {
 const (
 	droidProxyDisplayName  = "Headroom Proxy"
 	droidProxyProviderKind = "generic-chat-completion-api"
+	droidProxyMarkerKey    = "toklessManaged"
+	droidProxyMarkerValue  = "headroom"
 )
 
 func droidModelRoute(model *util.OrderedMap) (id, base string, headers *util.OrderedMap, ok bool) {
@@ -751,6 +753,15 @@ func droidNativeRoutes(cfg *util.OrderedMap, stash map[string]proxyRouteStashEnt
 					continue
 				}
 			}
+			if entry, stashed := stash[id]; stashed && entry.Upstream != "" {
+				upstream = entry.Upstream
+				if entry.BaseURL != "" {
+					base = entry.BaseURL
+				}
+				if _, hasHeader := headers.Get(headroomBaseURLHeader); hasHeader {
+					headers.Set(headroomBaseURLHeader, upstream)
+				}
+			}
 		}
 		if current, exists := headers.Get(headroomBaseURLHeader); exists {
 			currentString, currentOK := current.(string)
@@ -830,6 +841,13 @@ func droidGatewayBase(base string) bool {
 
 // droidEntryManaged reports the reserved headroom entry, ignoring droid-rewritten id/index/noImageSupport; other extras mean foreign.
 func droidEntryManaged(em, desired *util.OrderedMap) bool {
+	if droidEntryShapeManaged(em, desired) {
+		return true
+	}
+	return droidEntryShapeManaged(em, droidProxyEntryLegacy(ProxyEndpointFor("droid")))
+}
+
+func droidEntryShapeManaged(em, desired *util.OrderedMap) bool {
 	normalized := util.NewOrderedMap()
 	for _, k := range em.Keys() {
 		switch k {
@@ -842,8 +860,21 @@ func droidEntryManaged(em, desired *util.OrderedMap) bool {
 	return jsonEqual(normalized, desired)
 }
 
+// droidEntryMarked reports whether Tokless tagged the entry as its own.
+func droidEntryMarked(em *util.OrderedMap) bool {
+	value, ok := em.Get(droidProxyMarkerKey)
+	return ok && value == droidProxyMarkerValue
+}
+
 // droidProxyEntry builds the customModels entry pointing at the headroom daemon.
 func droidProxyEntry(endpoint string) *util.OrderedMap {
+	entry := droidProxyEntryLegacy(endpoint)
+	entry.Set(droidProxyMarkerKey, droidProxyMarkerValue)
+	return entry
+}
+
+// droidProxyEntryLegacy builds the unmarked shape older Tokless versions wrote.
+func droidProxyEntryLegacy(endpoint string) *util.OrderedMap {
 	entry := util.NewOrderedMap()
 	entry.Set("model", proxyWireModel())
 	entry.Set("displayName", droidProxyDisplayName)
@@ -960,25 +991,45 @@ func configureDroidProxyLocked() (changed bool, file string) {
 		}
 		models = arr
 	}
-	for _, existing := range models {
+	upgraded := false
+	owned := false
+	for i, existing := range models {
 		em, isMap := existing.(*util.OrderedMap)
 		if !isMap {
 			continue
 		}
 		model, _ := em.Get("model")
 		display, _ := em.Get("displayName")
-		if model == proxyWireModel() && display == droidProxyDisplayName {
-			if jsonEqual(em, desired) {
-				return nativeDone, f
-			}
-			baseURL, _ := em.Get("baseUrl")
-			if baseURL != endpoint {
-				return false, f
-			}
-			// Matching identity is not ownership proof. Refuse to replace a
-			// same-endpoint entry that contains fields Tokless did not create.
+		if model != proxyWireModel() || display != droidProxyDisplayName {
+			continue
+		}
+		if jsonEqual(em, desired) {
+			return nativeDone, f
+		}
+		if droidEntryMarked(em) {
+			models[i] = desired
+			upgraded = true
+			owned = true
+			continue
+		}
+		baseURL, _ := em.Get("baseUrl")
+		if baseURL != endpoint {
 			return false, f
 		}
+		if !droidEntryShapeManaged(em, droidProxyEntryLegacy(endpoint)) {
+			return false, f
+		}
+		owned = true
+	}
+	if upgraded {
+		cfg.Set("customModels", models)
+		if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
+			return false, f
+		}
+		return true, f
+	}
+	if owned {
+		return nativeDone, f
 	}
 	cfg.Set("customModels", append(models, desired))
 	if err := util.WriteFile(f, util.StringifyJSON(cfg)); err != nil {
