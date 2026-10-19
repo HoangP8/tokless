@@ -37,7 +37,7 @@ func identifyProcess(pid int) (processIdentityInfo, error) {
 	if err != nil {
 		return processIdentityInfo{}, err
 	}
-	parts := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+	parts := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
 	if len(parts) < 2 || parts[0] == "" {
 		return processIdentityInfo{}, fmt.Errorf("incomplete process identity")
 	}

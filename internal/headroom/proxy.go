@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -284,10 +285,15 @@ func headroomAllowedBaseURLsChecked() (string, error) {
 	}
 	routes, err := util.ReadBYOKRoutes()
 	if err != nil {
-		util.L.Warn("reading BYOK routes for allowlist: " + err.Error())
-		routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
-		if util.Exists(routesFile) {
-			return "", fmt.Errorf("failed to parse configured BYOK route registry: %w", err)
+		if os.IsNotExist(err) {
+			routes = nil
+		} else {
+			util.L.Warn("reading BYOK routes for allowlist: " + err.Error())
+			routesFile := filepath.Join(util.HeadroomPathsResolved().Root, "byok.routes.json")
+			if util.Exists(routesFile) {
+				return "", fmt.Errorf("failed to parse configured BYOK route registry: %w", err)
+			}
+			routes = nil
 		}
 	}
 	for _, r := range routes {
@@ -436,9 +442,11 @@ func adoptCompatibleProxy(port int) bool {
 		return false
 	}
 	allowed := headroomAllowedBaseURLs()
-	env := proxyProcessEnv(pid)
-	if env == nil || env["HEADROOM_ALLOWED_BASE_URLS"] != allowed {
-		return false
+	if runtime.GOOS == "linux" {
+		env := proxyProcessEnv(pid)
+		if env == nil || env["HEADROOM_ALLOWED_BASE_URLS"] != allowed {
+			return false
+		}
 	}
 	pidFile, _ := proxyFiles()
 	if err := proxyWrite(pidFile, proxyOwnership{
@@ -1144,20 +1152,34 @@ func sameExecutablePath(a, b string) bool {
 	if errA != nil || errB != nil {
 		return false
 	}
-	return na == nb
+	if na == nb {
+		return true
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(stripExtendedPrefix(na), stripExtendedPrefix(nb))
+	}
+	return false
 }
-func normalizedExecutable(path string) (string, error) {
-	path, err := filepath.Abs(path)
+
+// stripExtendedPrefix removes the Windows \\?\ extended-length prefix so the
+// same file compares equal with and without it.
+func stripExtendedPrefix(p string) string {
+	return filepath.Clean(strings.TrimPrefix(p, `\\?\`))
+}
+
+func normalizeIdentityExecutable(p string) (string, error) {
+	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", err
 	}
-	// Resolve parent-directory aliases (symlinks, Windows short names) but keep
-	// the file component literal, so two different executables in one directory
-	// never compare equal.
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
-		return filepath.Clean(filepath.Join(resolved, filepath.Base(path))), nil
+	resolved, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err != nil {
+		return "", err
 	}
-	return filepath.Clean(path), nil
+	return filepath.Clean(filepath.Join(resolved, filepath.Base(abs))), nil
+}
+func normalizedExecutable(path string) (string, error) {
+	return normalizeIdentityExecutable(path)
 }
 func (p processIdentityInfo) equal(other processIdentityInfo) bool {
 	return p.Start == other.Start && p.Executable == other.Executable && equalStrings(p.Args, other.Args)

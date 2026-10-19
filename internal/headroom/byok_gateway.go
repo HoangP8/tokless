@@ -282,7 +282,7 @@ func reclaimStaleBYOKOwner() {
 		return
 	}
 	identity, err := proxyIdentity(record.PID)
-	if err != nil || identity.Executable != record.Executable || !equalStrings(record.Args, identity.Args) || identity.Start != record.Start {
+	if err != nil || !sameExecutablePath(identity.Executable, record.Executable) || !equalStrings(record.Args, identity.Args) || identity.Start != record.Start {
 		return
 	}
 	live := byokGatewayLive()
