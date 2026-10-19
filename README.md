@@ -50,7 +50,7 @@
       <td align="center" width="140"><a href="https://ampcode.com/"><img src="assets/agents/amp.png" width="48" height="48" alt="Amp" /></a><br/><b>Amp</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
       <td align="center" width="140"><a href="https://github.com/MoonshotAI/kimi-code"><img src="assets/agents/kimi.png" width="48" height="48" alt="Kimi Code" /></a><br/><b>Kimi Code</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
       <td align="center" width="140"><a href="https://github.com/zai-org/ZCode"><img src="assets/agents/zcode.png" width="48" height="48" alt="ZCode" /></a><br/><b>ZCode</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI%20%2B%20Desktop-2ea44f" alt="✓ CLI + Desktop" /></td>
-      <td align="center" width="140"><a href="https://github.com/deepseek-ai/deepseek-harness"><img src="assets/agents/dsh.png" width="48" height="48" alt="DeepSeek Harness" /></a><br/><b>DeepSeek Harness</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
+      <td align="center" width="140"><a href="https://github.com/deepseek-ai/deepseek-harness"><img src="assets/agents/dsh.png" width="48" height="48" alt="DeepSeek" /></a><br/><b>DeepSeek</b><br/><img src="https://img.shields.io/badge/-%E2%9C%93%20CLI-2ea44f" alt="✓ CLI" /></td>
     </tr>
   </table>
 </div>
@@ -228,7 +228,7 @@ Without tokless, the harness re-reads the raw tree every session, Bash output la
     <tr><td nowrap><b>Amp</b></td><td align="center">Instruction</td><td align="center">Plugin</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">—</td><td align="center">MCP</td></tr>
     <tr><td nowrap><b>Kimi Code</b></td><td align="center">Instruction</td><td align="center">—</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP</td></tr>
     <tr><td nowrap><b>ZCode</b></td><td align="center">Instruction</td><td align="center">Hook</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP</td></tr>
-    <tr><td nowrap><b>DeepSeek Harness</b></td><td align="center">Instruction</td><td align="center">Patch</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP</td></tr>
+    <tr><td nowrap><b>DeepSeek</b></td><td align="center">Instruction</td><td align="center">Patch</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP</td></tr>
   </tbody>
 </table>
 
@@ -256,7 +256,7 @@ Where each tool lands. `mcp.json`-style shapes hold MCP server entries; instruct
 | Amp | `~/.config/amp/settings.json` (`amp.mcpServers.*`) | `~/.config/amp/AGENTS.md` |
 | Kimi Code | `~/.kimi-code/mcp.json` (+ `~/.kimi-code/config.toml`) | `~/.kimi-code/AGENTS.md` |
 | ZCode | `~/.zcode/cli/config.json` (`mcp.servers.*`, plugin `tokless-mcp`) | `~/.zcode/AGENTS.md` |
-| DeepSeek Harness | `~/.dsh/cordis.patch.yml` (`mcp_servers.*` insert rows) | `~/.dsh/AGENTS.md` |
+| DeepSeek | `~/.dsh/cordis.patch.yml` (`mcp_servers.*` insert rows) | `~/.dsh/AGENTS.md` |
 
 Foreign (non-tokless) entries are never overwritten; tokless verifies its own entries after every write and reports the result in `tokless doctor`.
 
