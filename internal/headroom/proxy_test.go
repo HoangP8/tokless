@@ -823,6 +823,9 @@ func TestStartProxyAdoptsCompatibleOrphanedProxy(t *testing.T) {
 }
 
 func TestStartProxyRefusesAdoptionWhenAllowlistDiffers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip()
+	}
 	isolateProxyOps(t)
 	bin := proxyTestBin(t)
 	pidFile, _ := proxyFiles()

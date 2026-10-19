@@ -99,14 +99,7 @@ func TestDarwinProcArgsEmptyExecPathFailsSafe(t *testing.T) {
 	if gotExec != "" {
 		t.Fatalf("exec_path = %q, want empty", gotExec)
 	}
-	if !equalArgv(got, argv) {
-		t.Fatalf("argv = %#v, want %#v", got, argv)
-	}
-	exeSrc := gotExec
-	if exeSrc == "" && len(got) > 0 {
-		exeSrc = got[0]
-	}
-	if exeSrc != "" {
-		t.Fatalf("exeSrc = %q, want empty (fail-safe)", exeSrc)
+	if got != nil {
+		t.Fatalf("argv = %#v, want nil", got)
 	}
 }
