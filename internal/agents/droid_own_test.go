@@ -193,6 +193,10 @@ func TestDroidProxyRemoveRestoresStashBothFormats(t *testing.T) {
 			if changed, _ := ConfigureDroidProxy(); !changed || !DroidProxyWired() {
 				t.Fatalf("configure: changed=%v wired=%v", changed, DroidProxyWired())
 			}
+			configuredRaw, _ := util.ReadFileSafe(droidSettingsFile())
+			if strings.Contains(configuredRaw, `"Headroom Proxy"`) {
+				t.Fatalf("configure must not append bare headroom entry when native model exists:\n%s", configuredRaw)
+			}
 			if !RemoveDroidProxy() {
 				t.Fatal("remove must drop the owned entry and restore the stash")
 			}

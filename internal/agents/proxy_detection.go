@@ -274,6 +274,9 @@ func detectProviderProxy(cap ProxyCapability, path, containerKey, reserved strin
 }
 
 func detectDroidProxy(cap ProxyCapability) ProxyDetection {
+	if DroidProxyWired() {
+		return proxyDetection(cap.ID, "native BYOK custom models routed through headroom", ProxyStateManaged)
+	}
 	path := droidSettingsFile()
 	raw, err := readProxyConfig(path)
 	if err != nil {
