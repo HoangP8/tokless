@@ -11,7 +11,9 @@
 
   <br />
 
-  <img src="assets/tokless.png" width="100%" alt="tokless" />
+  <a href="https://github.com/HoangP8/tokless/raw/main/assets/tokless-promo.mp4"><img src="assets/tokless-promo.gif" width="100%" alt="tokless promo video" /></a>
+
+  <sub>▶ Click the preview to watch the full 30-second promo with sound.</sub>
 
 </div>
 
