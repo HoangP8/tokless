@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -497,9 +498,21 @@ func AntigravityOAuthWired() bool {
 
 func removeFileIfExists(path string) bool {
 	if util.Exists(path) {
-		if err := os.Remove(path); err != nil {
+		if err := removeFileRetry(path); err != nil {
 			return false
 		}
 	}
 	return true
+}
+
+var osRemove = os.Remove
+
+// removeFileRetry removes path, retrying briefly while a Windows scanner still holds a handle.
+func removeFileRetry(path string) error {
+	err := osRemove(path)
+	for i := 0; err != nil && !os.IsNotExist(err) && i < 5; i++ {
+		time.Sleep(50 * time.Millisecond)
+		err = osRemove(path)
+	}
+	return err
 }

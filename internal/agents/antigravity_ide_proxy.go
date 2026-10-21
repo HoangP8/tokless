@@ -139,7 +139,7 @@ func removeAntigravityIDE() bool {
 	}
 	raw, exists := util.ReadFileSafe(state.Path)
 	if !exists {
-		return os.Remove(antigravityIDEStateFile()) == nil
+		return removeFileRetry(antigravityIDEStateFile()) == nil
 	}
 	if util.HasJSONCComments(raw) {
 		return false
@@ -155,13 +155,13 @@ func removeAntigravityIDE() bool {
 		cfg.Delete(antigravityIDEEndpointKey)
 	}
 	if cfg.Len() == 0 {
-		if err := os.Remove(state.Path); err != nil && !os.IsNotExist(err) {
+		if err := removeFileRetry(state.Path); err != nil && !os.IsNotExist(err) {
 			return false
 		}
 	} else if err := util.WriteFile(state.Path, util.StringifyJSON(cfg)); err != nil {
 		return false
 	}
-	return os.Remove(antigravityIDEStateFile()) == nil
+	return removeFileRetry(antigravityIDEStateFile()) == nil
 }
 
 func AntigravityIDEProxyWired() bool {

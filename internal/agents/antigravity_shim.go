@@ -296,7 +296,7 @@ func removeAntigravityShim() bool {
 		if !exists || !looksLikeAntigravityShim(raw) || !util.Exists(real) {
 			return false
 		}
-		if util.Exists(vendor) || os.Remove(bin) != nil || removeAntigravityShimRename(real, vendor) != nil {
+		if util.Exists(vendor) || removeFileRetry(bin) != nil || removeAntigravityShimRename(real, vendor) != nil {
 			return false
 		}
 	} else {
@@ -308,7 +308,7 @@ func removeAntigravityShim() bool {
 			return false
 		}
 	}
-	return os.Remove(antigravityShimStateFile()) == nil
+	return removeFileRetry(antigravityShimStateFile()) == nil
 }
 
 func AntigravityShimWired() bool {
