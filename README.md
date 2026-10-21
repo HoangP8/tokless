@@ -11,7 +11,7 @@
 
   <br />
 
-  <img src="assets/tokless.png" width="100%" alt="tokless" />
+  <a href="assets/tokless-promo.mp4"><img src="assets/tokless-promo.gif" width="100%" alt="tokless promo video" /></a>
 
 </div>
 
