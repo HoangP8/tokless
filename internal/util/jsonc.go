@@ -3,7 +3,6 @@ package util
 import (
 	"bytes"
 	"encoding/json"
-	"regexp"
 	"strings"
 )
 
@@ -132,18 +131,16 @@ func (m *OrderedMap) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-var reTrailingComma = regexp.MustCompile(`,(\s*[}\]])`)
-
 // stripComments removes // and /* */ comments and trailing commas.
 func stripComments(s string) string {
-	var out strings.Builder
+	out := make([]byte, 0, len(s))
 	i, n := 0, len(s)
 	inStr, esc := false, false
 	var strCh byte
 	for i < n {
 		ch := s[i]
 		if inStr {
-			out.WriteByte(ch)
+			out = append(out, ch)
 			if esc {
 				esc = false
 			} else if ch == '\\' {
@@ -157,7 +154,7 @@ func stripComments(s string) string {
 		if ch == '"' || ch == '\'' {
 			inStr = true
 			strCh = ch
-			out.WriteByte(ch)
+			out = append(out, ch)
 			i++
 			continue
 		}
@@ -175,10 +172,16 @@ func stripComments(s string) string {
 			i += 2
 			continue
 		}
-		out.WriteByte(ch)
+		if ch == '}' || ch == ']' {
+			last := len(bytes.TrimRight(out, " \t\r\n")) - 1
+			if last >= 0 && out[last] == ',' {
+				out[last] = ' '
+			}
+		}
+		out = append(out, ch)
 		i++
 	}
-	return reTrailingComma.ReplaceAllString(out.String(), "$1")
+	return string(out)
 }
 
 // ParseJsonc parses JSON-with-comments into an ordered map.

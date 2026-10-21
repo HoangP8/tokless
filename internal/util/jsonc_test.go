@@ -1,9 +1,115 @@
 package util
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
+
+func TestParseJsoncPreservesStrings(t *testing.T) {
+	for _, value := range []string{
+		",]",
+		",}",
+		"a, ]",
+		"a,\t}",
+		`escaped quote: ",]`,
+		`escaped backslash: \,}`,
+		`ends with backslash: \`,
+		`https://example.test/a,] /* text,} */`,
+	} {
+		t.Run(value, func(t *testing.T) {
+			input, err := json.Marshal(map[string]string{value: value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := ParseJsonc(string(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, ok := cfg.Get(value)
+			if !ok || got != value {
+				t.Fatalf("Get(%q) = %#v, %v; want %q, true", value, got, ok, value)
+			}
+		})
+	}
+}
+
+func TestParseJsoncPreservesMCPArgsWithTrailingCommas(t *testing.T) {
+	input := `{
+		"mcpServers": {
+			"custom": {
+				"command": "printf",
+				"args": ["%s", ",]", ",}", // keep these arguments intact
+				],
+			}, /* object trailing comma */
+		},
+	}`
+	cfg, err := ParseJsonc(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(StringifyJSON(cfg)), &got); err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]any
+	if err := json.Unmarshal([]byte(`{"mcpServers":{"custom":{"command":"printf","args":["%s",",]",",}"]}}}`), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsed config = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseJsoncTrailingCommaSeparators(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		separator string
+	}{
+		{"none", ""},
+		{"space", " "},
+		{"tab", "\t"},
+		{"carriage return", "\r"},
+		{"newline", "\n"},
+		{"mixed whitespace", " \t\r\n"},
+		{"block comment", "/* comment */"},
+		{"line comment", "// comment\n"},
+		{"line comment CRLF", "// comment\r\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `{"values":[1,` + tt.separator + `],` + tt.separator + `}`
+			cfg, err := ParseJsonc(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != `{"values":[1]}` {
+				t.Fatalf("parsed config = %s; want {\"values\":[1]}", got)
+			}
+		})
+	}
+}
+
+func TestParseJsoncRejectsInvalidCommas(t *testing.T) {
+	for _, input := range []string{
+		`{"values":[1,,]}`,
+		`{"values":[1,,2]}`,
+		`{"value":1,,}`,
+		`{"value":1,,"other":2}`,
+		`{"values":[1,/* comment */,]}`,
+		`{"value":1,/* comment */,}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := ParseJsonc(input); err == nil {
+				t.Fatal("expected invalid commas to produce a parse error")
+			}
+		})
+	}
+}
 
 func TestParseJsoncStripsComments(t *testing.T) {
 	input := `{
