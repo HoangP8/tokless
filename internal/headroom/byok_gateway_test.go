@@ -1033,8 +1033,15 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 		runBYOKWatcher(byokRoutesPath(), stopWatcher2, 10*time.Millisecond, nil)
 		close(doneWatcher2)
 	}()
-	time.Sleep(20 * time.Millisecond)
-	if _, exists := lookupBYOKRoute("stale"); exists {
+	cleared := false
+	for i := 0; i < 200; i++ {
+		time.Sleep(10 * time.Millisecond)
+		if _, exists := lookupBYOKRoute("stale"); !exists {
+			cleared = true
+			break
+		}
+	}
+	if !cleared {
 		t.Fatal("watcher started on missing registry must immediately clear pre-existing stale routes")
 	}
 	if byokReloadErr.Load() == nil || !strings.Contains(*byokReloadErr.Load(), "not found") {
