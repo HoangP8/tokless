@@ -275,3 +275,45 @@ func TestAntigravityWindowsShimLifecycle(t *testing.T) {
 		t.Fatal("Windows vendor binary not restored")
 	}
 }
+
+func TestRemoveFileRetryRetriesTransientLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agy.cmd")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := osRemove
+	t.Cleanup(func() { osRemove = orig })
+	calls := 0
+	osRemove = func(target string) error {
+		calls++
+		if calls < 3 {
+			return os.ErrPermission
+		}
+		return orig(target)
+	}
+	if err := removeFileRetry(path); err != nil {
+		t.Fatalf("removeFileRetry: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("remove calls = %d, want 3", calls)
+	}
+	if util.Exists(path) {
+		t.Fatal("file must be gone after the retry succeeded")
+	}
+}
+
+func TestRemoveFileRetryGivesUpOnPersistentLock(t *testing.T) {
+	orig := osRemove
+	t.Cleanup(func() { osRemove = orig })
+	calls := 0
+	osRemove = func(string) error {
+		calls++
+		return os.ErrPermission
+	}
+	if err := removeFileRetry(filepath.Join(t.TempDir(), "locked")); err == nil {
+		t.Fatal("expected an error when the file stays locked")
+	}
+	if calls != 6 {
+		t.Fatalf("remove calls = %d, want 6", calls)
+	}
+}

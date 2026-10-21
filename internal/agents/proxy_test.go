@@ -1759,6 +1759,9 @@ func TestAntigravityProxyLifecycle(t *testing.T) {
 	if !RemoveAntigravityProxy() {
 		t.Fatal("expected removal")
 	}
+	if util.Exists(antigravityShimStateFile()) {
+		t.Fatal("shim state must be gone after removal")
+	}
 	if AntigravityProxyWired() {
 		t.Fatal("expected unwired after remove")
 	}
