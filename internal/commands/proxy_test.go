@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,6 @@ import (
 )
 
 // proxyCmdTestHome isolates agent config writes from the real $HOME so proxy
-// command tests never touch live agent wiring.
 func proxyCmdTestHome(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
@@ -22,6 +22,11 @@ func proxyCmdTestHome(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", home+"/.config")
 	t.Setenv("TOKLESS_TEST", "1")
+	port, err := freeTestPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKLESS_HEADROOM_PROXY_PORT", fmt.Sprintf("%d", port))
 	util.EnsureDir(core.GetAgent("codex").ConfigDir())
 	util.EnsureDir(core.GetAgent("claude").ConfigDir())
 	sandboxToklessPath(t)
@@ -37,6 +42,16 @@ func proxyCmdTestHome(t *testing.T) {
 	t.Cleanup(func() { util.SetHomeOverride(""); grokProxyRunning = oldGrokRunning })
 }
 
+// freeTestPort returns a port nothing listens on.
+func freeTestPort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
+}
+
 // sandboxToklessPath keeps unwire paths off the real ~/.local/bin shim.
 func sandboxToklessPath(t *testing.T) {
 	t.Helper()
@@ -48,7 +63,6 @@ func sandboxToklessPath(t *testing.T) {
 }
 
 // TestProxyInstructionsEndpointShapes pins the manual/env guidance to the same
-// /v1-vs-bare split, matching each upstream CLI's expected base-URL shape.
 func TestProxyInstructionsEndpointShapes(t *testing.T) {
 	openai := headroompkg.ProxyOpenAIURL()
 	bare := headroompkg.ProxyURL()
@@ -179,7 +193,6 @@ func TestRunProxyDownStopsAfterFullUnwire(t *testing.T) {
 }
 
 // TestRunProxyDownPreferenceMatrix pins when a full teardown owns the global
-// routing preference.
 func TestRunProxyDownPreferenceMatrix(t *testing.T) {
 	state := func() string {
 		if !util.ProxyRoutingPreferenceSet() {

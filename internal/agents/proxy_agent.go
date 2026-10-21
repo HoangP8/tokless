@@ -7,8 +7,7 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-// ProxyAgentSpec is static metadata plus wire-side function references for one
-// agent's headroom proxy integration.
+// ProxyAgentSpec is static metadata plus wire-side function references for one agent's headroom proxy integration.
 type ProxyAgentSpec struct {
 	ID          string
 	Protocol    ProxyProtocol
@@ -20,18 +19,19 @@ type ProxyAgentSpec struct {
 }
 
 var proxyAgentSpecs = map[string]ProxyAgentSpec{
-	"claude":   {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired, func() []string { return []string{util.ClaudeCodePaths().Settings} }},
-	"omp":      {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired, func() []string { return []string{ompModelsFile()} }},
-	"codex":    {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired, func() []string { return []string{util.CodexPathsResolved().Config} }},
-	"opencode": {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired, openCodeConfigFiles},
-	"kilo":     {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired, kiloConfigFiles},
-	"pi":       {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired, func() []string { return []string{piModelsFile()} }},
-	"droid":    {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired, func() []string { return []string{droidSettingsFile()} }},
-	"copilot":  {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired, func() []string { return []string{copilotConfigPath()} }},
-	"cline":    {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired, func() []string { return []string{clineProvidersFile()} }},
-	"kimi":     {"kimi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKimiProxy, RemoveKimiProxy, KimiProxyWired, func() []string { return []string{util.KimiPathsResolved().Config} }},
-	"zcode":    {"zcode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureZcodeProxy, RemoveZcodeProxy, ZcodeProxyWired, func() []string { return []string{zcodeProviderConfigPath()} }},
-	"dsh":      {"dsh", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDshProxy, RemoveDshProxy, DshProxyWired, func() []string { return []string{dshPatchFile()} }},
+	"claude":      {"claude", ProxyProtocolAnthropicNative, ProxyWireManagedRoute, ConfigureClaudeProxy, RemoveClaudeProxy, ClaudeProxyWired, func() []string { return []string{util.ClaudeCodePaths().Settings} }},
+	"omp":         {"omp", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOmpProxy, RemoveOmpProxy, OmpProxyWired, func() []string { return []string{ompModelsFile()} }},
+	"codex":       {"codex", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureCodexProxy, RemoveCodexProxy, CodexProxyWired, func() []string { return []string{util.CodexPathsResolved().Config} }},
+	"opencode":    {"opencode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxy, RemoveOpenCodeProxy, OpenCodeProxyWired, openCodeConfigFiles},
+	"opencode2":   {"opencode2", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureOpenCodeProxyV2, RemoveOpenCodeProxyV2, OpenCodeProxyV2Wired, openCodeV2ConfigFiles},
+	"kilo":        {"kilo", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKiloProxy, RemoveKiloProxy, KiloProxyWired, kiloConfigFiles},
+	"pi":          {"pi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigurePiProxy, RemovePiProxy, PiProxyWired, func() []string { return []string{piModelsFile()} }},
+	"droid":       {"droid", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDroidProxy, RemoveDroidProxy, DroidProxyWired, func() []string { return []string{droidSettingsFile()} }},
+	"copilot":     {"copilot", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, func() (bool, string) { return ConfigureCopilotAllProxy(), "" }, RemoveCopilotProxy, CopilotProxyWired, func() []string { return []string{copilotConfigPath()} }},
+	"cline":       {"cline", ProxyProtocolOpenAICompatible, ProxyWireManagedRoute, ConfigureClineProxy, RemoveClineProxy, ClineProxyWired, func() []string { return []string{clineProvidersFile()} }},
+	"kimi":        {"kimi", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureKimiProxy, RemoveKimiProxy, KimiProxyWired, func() []string { return []string{util.KimiPathsResolved().Config} }},
+	"zcode":       {"zcode", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureZcodeProxy, RemoveZcodeProxy, ZcodeProxyWired, func() []string { return []string{zcodeProviderConfigPath()} }},
+	"dsh":         {"dsh", ProxyProtocolOpenAICompatible, ProxyWireAdditiveProvider, ConfigureDshProxy, RemoveDshProxy, DshProxyWired, func() []string { return []string{dshPatchFile()} }},
 	"amp":         {"amp", ProxyProtocolOpenAICompatible, ProxyWireManual, nil, nil, nil, nil},
 	"cursor":      {"cursor", ProxyProtocolNone, ProxyWireManual, nil, nil, nil, nil},
 	"antigravity": {"antigravity", ProxyProtocolGeminiNative, ProxyWireManagedRoute, ConfigureAntigravityProxy, RemoveAntigravityProxy, AntigravityProxyWired, func() []string { return []string{antigravityGlobalSettingsFile()} }},
@@ -42,8 +42,7 @@ func proxySpecFor(id string) (ProxyAgentSpec, bool) {
 	return spec, ok
 }
 
-// ProxyAgentApplicable reports whether the agent's config file exists for
-// tokless to extend; false means wire attempts are skipped, never forced.
+// ProxyAgentApplicable reports whether the agent's config file exists for tokless to extend.
 func ProxyAgentApplicable(id string) bool {
 	if id == "grok" {
 		if _, err := os.Stat(grokConfigFile()); err == nil {
@@ -64,9 +63,7 @@ func ProxyAgentApplicable(id string) bool {
 	return agent != nil && agent.Detect != nil && agent.Detect().Installed
 }
 
-// ProxyAgentUsesHeadroom reports whether tokless should actively route the
-// agent through the shared Headroom daemon. Grok owns its OAuth context in its
-// native CLI and must not share the generic OpenAI-compatible auth path.
+// ProxyAgentUsesHeadroom reports whether tokless should route the agent through the shared Headroom daemon.
 func ProxyAgentUsesHeadroom(id string) bool {
 	switch id {
 	case "grok", "cursor", "amp":
@@ -75,8 +72,7 @@ func ProxyAgentUsesHeadroom(id string) bool {
 	return true
 }
 
-// ConfigureProxyAgent wires id to the headroom proxy. Returns true when the
-// resulting config matches exactly what tokless would inject.
+// ConfigureProxyAgent wires id to the headroom proxy and reports whether the result matches tokless's own.
 func ConfigureProxyAgent(id string) bool {
 	if id == "grok" {
 		return false
@@ -95,8 +91,7 @@ func ConfigureProxyAgent(id string) bool {
 	return spec.Wired != nil && spec.Wired()
 }
 
-// RemoveProxyAgent unwires id only when its proxy config still matches what
-// tokless set.
+// RemoveProxyAgent unwires id only when its proxy config still matches what tokless set.
 func RemoveProxyAgent(id string) bool {
 	removed, _ := RemoveProxyAgentChecked(id)
 	return removed

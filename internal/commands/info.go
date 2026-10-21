@@ -15,12 +15,11 @@ import (
 )
 
 // proxyLaneRow renders a per-agent proxy lane row; unwired lanes stay
-// visible so every harness's private ports are discoverable.
 func proxyLaneRow(label string, wired bool, addr string) string {
 	if wired {
 		return label + " " + util.C.Gray(":") + paintPath(addr)
 	}
-	return label + util.C.Dim(" (unwired " + addr + ")")
+	return label + util.C.Dim(" (unwired "+addr+")")
 }
 
 // RunInfo prints install provenance and paths.
@@ -155,6 +154,8 @@ func agentConfigFile(id string) string {
 		return util.ClaudeCodePaths().Settings
 	case "opencode":
 		return util.OpenCodePathsResolved().Config
+	case "opencode2":
+		return util.OpenCodePathsV2().Config
 	case "codex":
 		return util.CodexPathsResolved().Config
 	case "antigravity":

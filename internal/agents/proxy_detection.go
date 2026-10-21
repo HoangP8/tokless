@@ -53,8 +53,7 @@ type ProxyDetection struct {
 	Detail     string
 }
 
-// Default Headroom cache mode preserves provider-prefix caching. Tokless does
-// not enable semantic response caching for arbitrary BYOK endpoints.
+// Default Headroom cache mode preserves provider-prefix caching.
 const ProxyCachePolicy = "cache mode preserves provider-prefix cache; semantic response cache disabled"
 
 var proxyCapabilities = func() map[string]ProxyCapability {
@@ -84,8 +83,7 @@ func readProxyConfig(path string) (string, error) {
 	return string(raw), err
 }
 
-// DetectProxy reads only documented proxy slots. It never writes, probes, or
-// returns configuration values beyond fixed status text.
+// DetectProxy reads only documented proxy slots and never writes or probes.
 func DetectProxy(id string) ProxyDetection {
 	capability, ok := proxyCapabilities[id]
 	if !ok {
@@ -120,6 +118,11 @@ func DetectProxy(id string) ProxyDetection {
 		}
 		spec := ProviderSpecActive()
 		return detectProviderProxy(capability, util.OpenCodePathsResolved().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(id), spec))
+	case "opencode2":
+		if OpenCodeProxyV2Wired() {
+			return proxyDetection(id, "managed provider mirror points at the proxy endpoint", ProxyStateManaged)
+		}
+		return detectOpenCodeV2NativeProxy(capability)
 	case "kilo":
 		if kiloTransportPluginWired() {
 			return proxyDetection(id, "managed transport plugin preserves provider endpoint and credentials", ProxyStateManaged)
@@ -273,6 +276,48 @@ func detectProviderProxy(cap ProxyCapability, path, containerKey, reserved strin
 	return proxyDetection(cap.ID, "reserved provider slot not configured", ProxyStateUnconfigured)
 }
 
+// detectOpenCodeV2NativeProxy reads the native OpenCode v2 "providers" map.
+func detectOpenCodeV2NativeProxy(cap ProxyCapability) ProxyDetection {
+	raw, err := readProxyConfig(util.OpenCodePathsV2().Config)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return proxyDetection(cap.ID, "config file absent", ProxyStateAbsent)
+		}
+		return proxyDetection(cap.ID, "config file unreadable", ProxyStateUnreadable)
+	}
+	if util.HasJSONCComments(raw) {
+		return proxyDetection(cap.ID, "comment-bearing config not safely inspectable", ProxyStateUnreadable)
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return proxyDetection(cap.ID, "config file unreadable", ProxyStateUnreadable)
+	}
+	providers, ok := mapChild(cfg, "providers")
+	if !ok {
+		if _, present := cfg.Get("providers"); present {
+			return proxyDetection(cap.ID, "documented provider slot unreadable", ProxyStateUnreadable)
+		}
+		spec := ProviderSpecActive()
+		return detectProviderProxy(cap, util.OpenCodePathsV2().Config, "provider", spec.Key, openCodeProxyProviderBlockFor(ProxyEndpointFor(cap.ID), spec))
+	}
+	if providers.Len() == 0 {
+		return proxyDetection(cap.ID, "native provider map is empty", ProxyStateUnconfigured)
+	}
+	endpoint := openCodeProxyEndpointFor(cap.ID)
+	for _, id := range providers.Keys() {
+		value, _ := providers.Get(id)
+		entry, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		base, _ := openCodeV2ProviderBaseAndKey(entry)
+		if openCodeV2ProxyEndpoint(base, endpoint) {
+			return proxyDetection(cap.ID, "native provider points at a proxy endpoint", ProxyStateConflict)
+		}
+	}
+	return proxyDetection(cap.ID, "foreign native provider present; managed mirror absent", ProxyStateUnconfigured)
+}
+
 func detectDroidProxy(cap ProxyCapability) ProxyDetection {
 	if DroidProxyWired() {
 		return proxyDetection(cap.ID, "native BYOK custom models routed through headroom", ProxyStateManaged)
@@ -328,7 +373,6 @@ func detectManualEnv(cap ProxyCapability, key, endpoint string) ProxyDetection {
 	return proxyDetection(cap.ID, "documented environment endpoint differs", ProxyStateForeignBYOK)
 }
 
-// detectAntigravityProxy validates the managed CLI launcher and IDE endpoint.
 // detectKimiProxy reports Kimi gateway state; unstashed gateway providers are conflicts.
 func detectKimiProxy(cap ProxyCapability) ProxyDetection {
 	if KimiProxyWired() {

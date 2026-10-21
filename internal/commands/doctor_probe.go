@@ -21,12 +21,7 @@ type runtimeIssue struct {
 	detail string
 }
 
-func opencodeMajorVersionForDoctor() int {
-	return agents.OpenCodeInstalledMajor()
-}
-
 // probeAgentRuntime checks that wired hook/MCP commands can actually resolve
-// (and, where cheap, run). Catches Windows slash bugs that static VerifyFor miss.
 func probeAgentRuntime(agentID string) []runtimeIssue {
 	var out []runtimeIssue
 	for _, cmd := range managedHookCommands(agentID) {
@@ -295,7 +290,6 @@ func lookExe(exe string) (string, string) {
 	if exe == "" {
 		return "", "empty"
 	}
-	// Absolute / path-like: try as-is and OS-native separators.
 	if strings.ContainsAny(exe, `/\`) || filepath.IsAbs(exe) || (len(exe) >= 2 && exe[1] == ':') {
 		for _, cand := range pathCandidates(exe) {
 			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
@@ -418,31 +412,16 @@ func managedHookCommands(agentID string) []string {
 	return cmds
 }
 
+// managedRuntimeFiles returns the runtime files the agent lane owns; the v1 lane never probes the v2 lane plugin.
 func managedRuntimeFiles(agentID string) []runtimeFile {
-	if agentID != "opencode" {
-		return managedRuntimeFilesForMajor(agentID, opencodeMajorVersionForDoctor())
-	}
-	majors := agents.OpenCodeInstalledMajors()
-	if len(majors) == 0 {
-		majors = []int{1}
-	}
-	var files []runtimeFile
-	for _, major := range majors {
-		files = append(files, managedRuntimeFilesForMajor(agentID, major)...)
-	}
-	return files
-}
-
-func managedRuntimeFilesForMajor(agentID string, opencodeMajor int) []runtimeFile {
 	pathFor := func(path string, markers ...string) runtimeFile {
 		return runtimeFile{path: path, markers: markers}
 	}
 	switch agentID {
 	case "opencode":
-		if opencodeMajor == 2 {
-			return []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk-v2.ts"), "TOKLESS_BIN", "rtk-rewrite", "export default", "async setup", `ctx.tool.hook("execute.before"`)}
-		}
 		return []runtimeFile{pathFor(filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts"), "TOKLESS_BIN", "rtk-rewrite", "tool.execute.before")}
+	case "opencode2":
+		return []runtimeFile{openCodeV2RuntimeFile()}
 	case "pi":
 		return []runtimeFile{pathFor(filepath.Join(agents.PiAgentDirResolved(), "extensions", "rtk.ts"), "TOKLESS_BIN", "rtk-rewrite")}
 	case "omp":
@@ -458,6 +437,51 @@ func managedRuntimeFilesForMajor(agentID string, opencodeMajor int) []runtimeFil
 	default:
 		return nil
 	}
+}
+
+// openCodeV2RuntimeFile returns the managed runtime file of the OpenCode v2 plugin dir.
+func openCodeV2RuntimeFile() runtimeFile {
+	return runtimeFile{
+		path:    filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts"),
+		markers: []string{"TOKLESS_BIN", "rtk-rewrite", "export default", "async setup", `ctx.tool.hook("execute.before"`},
+	}
+}
+
+// doctorSkippedProvidersRow renders the opencode2 providers the lane refused to mirror.
+func doctorSkippedProvidersRow(agentID string) string {
+	if agentID != "opencode2" {
+		return ""
+	}
+	skipped := agents.OpenCodeV2SkippedProviders()
+	if len(skipped) == 0 {
+		return ""
+	}
+	label := itoa(len(skipped)) + " providers skipped"
+	if len(skipped) == 1 {
+		label = "1 provider skipped"
+	}
+	return util.C.Yellow(util.Sym.Warn) + " " + util.C.Yellow(label+" ("+joinComma(skippedProviderReasons(skipped))+")")
+}
+
+// skippedProviderReasons returns the unique reasons of the skipped provider messages.
+func skippedProviderReasons(messages []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, message := range messages {
+		reason := message
+		if i := strings.LastIndex(message, ": "); i >= 0 {
+			reason = message[i+2:]
+		}
+		if fields := strings.Fields(reason); len(fields) > 1 && strings.ContainsAny(fields[len(fields)-1], `/\`) {
+			reason = strings.Join(fields[:len(fields)-1], " ")
+		}
+		if reason == "" || seen[reason] {
+			continue
+		}
+		seen[reason] = true
+		out = append(out, reason)
+	}
+	return out
 }
 
 func extractClineHookCommand(raw string) string {
@@ -531,7 +555,7 @@ func managedMcpSpawns(agentID string) []util.McpSpawn {
 	return out
 }
 
-// Only probe the exact Tokless routing we own; foreign Cline servers must not run.
+// isManagedClineMcpSpawn reports whether the spawn is the tokless-owned Cline server.
 func isManagedClineMcpSpawn(toolID string, spawn util.McpSpawn) bool {
 	base := strings.ToLower(filepath.Base(strings.ReplaceAll(spawn.Command, "\\", "/")))
 	if base != "tokless" && base != "tokless.exe" || len(spawn.Args) < 3 || spawn.Args[0] != "run-mcp" {
@@ -605,7 +629,7 @@ func mcpFromCommandArgsFile(path, serversKey, toolID string) []util.McpSpawn {
 	return []util.McpSpawn{{Command: cs, Args: args}}
 }
 
-// OpenCode stores command as a single argv array.
+// mcpFromCommandArrayFile reads an OpenCode MCP file whose command is one argv array.
 func mcpFromCommandArrayFile(path, mcpKey, toolID string) []util.McpSpawn {
 	raw, ok := util.ReadFileSafe(path)
 	if !ok {
@@ -709,7 +733,6 @@ func extractJSONCommands(raw string) []string {
 	if raw == "" {
 		return nil
 	}
-	// Cheap scan: "command": "..."
 	re := regexp.MustCompile(`"command"\s*:\s*"((?:\\.|[^"\\])*)"`)
 	var out []string
 	for _, m := range re.FindAllStringSubmatch(raw, -1) {

@@ -127,8 +127,7 @@ func ToklessAbs() string {
 	return exe
 }
 
-// ToklessPersistedAbs resolves the stable installed executable used in
-// commands written to agent config. Marker first; then known install paths.
+// ToklessPersistedAbs resolves the stable installed executable written into agent config.
 func ToklessPersistedAbs() string {
 	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
 		var marker InstallRecord
@@ -153,8 +152,6 @@ func ToklessPersistedAbs() string {
 	if path := Which("tokless"); filepath.IsAbs(path) && stableExecutable(path) {
 		return path
 	}
-	// Unit tests use a bare command when no installed binary exists. Never use
-	// this path for production persistence: real installs resolve above.
 	if os.Getenv("TOKLESS_TEST") == "1" {
 		return "tokless"
 	}
@@ -193,8 +190,7 @@ func IsGoTestExecutable(exe string) bool {
 	return strings.HasSuffix(base, ".test") || strings.HasSuffix(base, ".test.exe") || strings.Contains(exe, string(filepath.Separator)+"go-build")
 }
 
-// ToklessAbsStrict returns the absolute tokless path, or "" when only a
-// PATH/bare-name fallback is available.
+// ToklessAbsStrict returns the absolute tokless path, or "" when only a bare-name fallback exists.
 func ToklessAbsStrict() string {
 	exe, err := os.Executable()
 	if err == nil {
@@ -229,31 +225,29 @@ func opencodeConfigDir() string {
 	return filepath.Join(Home(), ".config", "opencode")
 }
 
+// opencodeConfigDirV2 resolves the OpenCode v2 config dir.
 func opencodeConfigDirV2() string {
-	v1Dir := opencodeConfigDir()
-	v2Dir := filepath.Join(filepath.Dir(v1Dir), filepath.Base(v1Dir)+"2")
+	if d := os.Getenv("OPENCODE_CONFIG_DIR_V2"); d != "" {
+		return d
+	}
+	v2Dir := filepath.Join(Home(), ".config", "opencode2")
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		v2Dir = filepath.Join(x, "opencode2")
 	}
 	legacyDir := filepath.Join(Home(), ".opencode2")
-	for _, dir := range []string{v1Dir, v2Dir, legacyDir} {
-		for _, name := range []string{"opencode2.jsonc", "opencode2.json", "opencode2.config.json"} {
+	for _, dir := range []string{v2Dir, legacyDir} {
+		for _, name := range []string{"opencode2.jsonc", "opencode2.json", "opencode2.config.json", "opencode.jsonc", "opencode.json", "config.json"} {
 			if Exists(filepath.Join(dir, name)) {
 				return dir
 			}
 		}
 	}
-	for _, dir := range []string{v1Dir, v2Dir, legacyDir} {
-		for _, name := range []string{"opencode.jsonc", "opencode.json", "config.json"} {
-			if Exists(filepath.Join(dir, name)) {
-				return dir
-			}
-		}
-		if dir == v2Dir && Exists(dir) {
+	for _, dir := range []string{v2Dir, legacyDir} {
+		if Exists(dir) {
 			return dir
 		}
 	}
-	return v1Dir
+	return opencodeConfigDir()
 }
 
 func EnsureDir(p string) error { return os.MkdirAll(p, 0o755) }
@@ -499,7 +493,7 @@ func CodexPathsResolved() CodexPaths {
 	}
 }
 
-// AntigravityPaths
+// AntigravityPaths holds Antigravity config locations.
 type AntigravityPaths struct {
 	Dir, McpConfig, McpConfigCLI, Settings, Instructions string
 }
@@ -556,7 +550,6 @@ func CursorPathsResolved() CursorPaths {
 
 func CursorGlobalMcpPath() string { return CursorPathsResolved().McpConfig }
 
-// ZcodePaths holds ZCode CLI paths.
 type ZcodePaths struct {
 	Dir, Config, Instructions, McpConfig string
 }

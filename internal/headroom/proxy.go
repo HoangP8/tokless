@@ -183,6 +183,43 @@ func proxyDaemonEnv() []string {
 	if allowed := headroomAllowedBaseURLs(); allowed != "" {
 		out = append(out, "HEADROOM_ALLOWED_BASE_URLS="+allowed)
 	}
+	out = append(out, headroomDarwinMallocEnv()...)
+	return out
+}
+
+func headroomDarwinMallocEnv() []string {
+	return headroomMallocEnvFor(runtime.GOOS)
+}
+
+func headroomChildEnv() []string {
+	return headroomChildEnvFor(runtime.GOOS)
+}
+
+func headroomChildEnvFor(goos string) []string {
+	return append(os.Environ(), headroomMallocEnvFor(goos)...)
+}
+
+func headroomMallocEnvFor(goos string) []string {
+	if goos != "darwin" {
+		return nil
+	}
+	if val, ok := os.LookupEnv("HEADROOM_MALLOC_TUNING"); ok {
+		switch strings.ToLower(val) {
+		case "true", "1", "yes", "on":
+		default:
+			return nil
+		}
+	}
+	out := make([]string, 0, 2)
+	for _, entry := range [][2]string{
+		{"MallocAggressiveMadvise", "1"},
+		{"MallocLargeCache", "0"},
+	} {
+		if _, ok := os.LookupEnv(entry[0]); ok {
+			continue
+		}
+		out = append(out, entry[0]+"="+entry[1])
+	}
 	return out
 }
 
@@ -447,6 +484,8 @@ func adoptCompatibleProxy(port int) bool {
 		if env == nil || env["HEADROOM_ALLOWED_BASE_URLS"] != allowed {
 			return false
 		}
+	} else {
+		allowed = recordedProxyAllowedBaseURLs(pid)
 	}
 	pidFile, _ := proxyFiles()
 	if err := proxyWrite(pidFile, proxyOwnership{
@@ -465,6 +504,23 @@ func adoptCompatibleProxy(port int) bool {
 func proxyFiles() (pidFile, logFile string) {
 	root := util.HeadroomPathsResolved().Root
 	return filepath.Join(root, "proxy.pid"), filepath.Join(root, "proxy.log")
+}
+
+func recordedProxyAllowedBaseURLs(pid int) string {
+	pidFile, _ := proxyFiles()
+	if raw, ok := util.ReadFileSafe(pidFile); ok {
+		var record proxyOwnership
+		if json.Unmarshal([]byte(raw), &record) == nil && record.AllowedBaseURLs != "" && record.PID == pid {
+			return record.AllowedBaseURLs
+		}
+	}
+	if raw, ok := util.ReadFileSafe(proxySupervisedFile()); ok {
+		var state proxySupervisedState
+		if json.Unmarshal([]byte(raw), &state) == nil && state.AllowedBaseURLs != "" {
+			return state.AllowedBaseURLs
+		}
+	}
+	return ""
 }
 
 func proxySupervisedFile() string {
@@ -835,7 +891,18 @@ func StartProxy() error {
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
 		current, identityErr := proxyIdentity(pid)
-		if proxyLiveZProbe(proxyProbeTimeout) && identityErr == nil && current.equal(identity) && current.matches(bin, args) {
+		if proxyLiveZProbe(proxyProbeTimeout) && identityErr == nil && current.Start == identity.Start && current.matches(bin, args) {
+			if !current.equal(identity) {
+				if err := proxyWrite(pidFile, proxyOwnership{
+					PID:             pid,
+					Executable:      current.Executable,
+					Args:            current.Args,
+					Start:           current.Start,
+					AllowedBaseURLs: headroomAllowedBaseURLs(),
+				}); err != nil {
+					return rollbackProxyWithIdentity(cmd.Process, pidFile, &current, fmt.Errorf("headroom proxy ownership record: %w", err))
+				}
+			}
 			if err := persistProxyRuntime(port); err != nil {
 				return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy runtime record: %w", err))
 			}
@@ -939,7 +1006,13 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 	supervisedRaw, supervisedExists := util.ReadFileSafe(proxySupervisedFile())
 	raw, ok := util.ReadFileSafe(pidFile)
 	if !ok {
-		return stopSupervisedDaemonWithRuntime(clearRuntime)
+		if err := stopSupervisedDaemonWithRuntime(clearRuntime); err != nil {
+			return err
+		}
+		if proxyLiveZProbe(proxyProbeTimeout) {
+			return fmt.Errorf("headroom proxy is running without tokless ownership — refusing to stop")
+		}
+		return nil
 	}
 	var record proxyOwnership
 	if err := json.Unmarshal([]byte(raw), &record); err != nil || record.PID <= 0 || record.Executable == "" || len(record.Args) == 0 || record.Start == "" {
@@ -967,6 +1040,9 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 			return nil
 		}
 		if proxyGone(&os.Process{Pid: record.PID}) {
+			if proxyLiveZProbe(proxyProbeTimeout) {
+				return fmt.Errorf("headroom proxy pid %d is gone but a healthy listener remains — refusing to remove ownership record", record.PID)
+			}
 			util.L.Sub("headroom proxy already stopped — removing stale ownership record")
 			if err := clearProxyStateWithRuntimeIfUnchanged(pidFile, raw, true, supervisedRaw, supervisedExists, clearRuntime); err != nil {
 				return fmt.Errorf("headroom proxy already stopped but state could not be cleared: %w", err)
@@ -975,7 +1051,7 @@ func stopHeadroomDaemonWithRuntime(clearRuntime bool) error {
 		}
 		return fmt.Errorf("proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
-	if !identity.matchesRecord(record) {
+	if !identity.matchesRecordShape(record) {
 		if proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			if !proxyFileMatches(pidFile, raw, true) || !proxyFileMatches(proxySupervisedFile(), supervisedRaw, supervisedExists) {
 				return fmt.Errorf("proxy ownership record changed during stale cleanup — refusing to remove replacement record")
@@ -1129,14 +1205,54 @@ func (p processIdentityInfo) matches(executable string, args []string) bool {
 	if sameExecutablePath(p.Executable, want) && equalStrings(p.Args, args) {
 		return true
 	}
+	if len(p.Args) >= 2 && p.Args[0] == "-m" && p.Args[1] == "headroom.cli" &&
+		equalStrings(p.Args[2:], args) &&
+		launcherInterpreterIs(want, p.Executable) {
+		return true
+	}
 	if len(p.Args) == 0 || !equalStrings(p.Args[1:], args) {
 		return false
 	}
 	launcher, err := normalizedExecutable(p.Args[0])
 	return err == nil && launcher == want
 }
+
+func launcherInterpreterIs(launcher, interpreter string) bool {
+	raw, err := os.ReadFile(launcher)
+	if err != nil {
+		return false
+	}
+	line := strings.SplitN(string(raw), "\n", 2)[0]
+	if !strings.HasPrefix(line, "#!") {
+		return false
+	}
+	fields := strings.Fields(strings.TrimPrefix(line, "#!"))
+	if len(fields) == 0 {
+		return false
+	}
+	declared, err := os.Stat(fields[0])
+	if err != nil {
+		return false
+	}
+	actual, err := os.Stat(interpreter)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(declared, actual)
+}
+
 func (p processIdentityInfo) matchesRecord(r proxyOwnership) bool {
 	return p.Start == r.Start && sameExecutablePath(p.Executable, r.Executable) && equalStrings(p.Args, r.Args)
+}
+
+func (p processIdentityInfo) matchesRecordShape(r proxyOwnership) bool {
+	if p.matchesRecord(r) {
+		return true
+	}
+	return p.Start == r.Start &&
+		len(p.Args) >= 2 && p.Args[0] == "-m" && p.Args[1] == "headroom.cli" &&
+		equalStrings(p.Args[2:], r.Args) &&
+		(sameExecutablePath(p.Executable, r.Executable) || launcherInterpreterIs(r.Executable, p.Executable))
 }
 
 // sameExecutablePath reports whether two executable paths denote the same file.
@@ -1213,7 +1329,7 @@ func rollbackProxyWithIdentity(proc *os.Process, pidFile string, expected *proce
 	supervisedRaw, supervisedExists := util.ReadFileSafe(supervisedPath)
 	if expected != nil && expected.Executable != "" {
 		current, err := proxyIdentity(proc.Pid)
-		if err != nil || !current.equal(*expected) {
+		if err != nil || current.Start != expected.Start {
 			return cause
 		}
 	}

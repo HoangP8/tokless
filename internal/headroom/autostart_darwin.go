@@ -209,14 +209,15 @@ func domain() string {
 }
 
 func bootoutProxyAgent() error {
-	output, err := runLaunchctl("bootout", domain(), proxyAutostartLabel)
+	output, err := runLaunchctl("bootout", domain()+"/"+proxyAutostartLabel)
 	if err == nil {
 		return nil
 	}
-	if _, printErr := runLaunchctl("print", domain()+"/"+proxyAutostartLabel); printErr == nil {
+	printOutput, printErr := runLaunchctl("print", domain()+"/"+proxyAutostartLabel)
+	if printErr == nil {
 		return fmt.Errorf("bootout %s: %w", proxyAutostartLabel, err)
 	}
-	if launchctlServiceNotFound(output) {
+	if launchctlServiceNotFound(output) || launchctlServiceNotFound(printOutput) {
 		return nil
 	}
 	return fmt.Errorf("bootout %s: %w", proxyAutostartLabel, err)
@@ -265,7 +266,7 @@ func ProxyAutostartEnabled() bool {
 		return false
 	}
 	s := string(out)
-	return strings.Contains(s, "state = \"running\"")
+	return strings.Contains(s, "state = running") || strings.Contains(s, "state = \"running\"")
 }
 
 // ProxyAutostartConfigured reports whether Tokless owns a persistent launch

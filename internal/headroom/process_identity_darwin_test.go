@@ -4,6 +4,9 @@ package headroom
 
 import (
 	"encoding/binary"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -101,5 +104,62 @@ func TestDarwinProcArgsEmptyExecPathFailsSafe(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("argv = %#v, want nil", got)
+	}
+}
+
+func TestDarwinProcArgs2ReadsOwnProcess(t *testing.T) {
+	data, err := darwinProcArgs2(os.Getpid())
+	if err != nil {
+		t.Fatalf("darwinProcArgs2() error = %v", err)
+	}
+	if len(data) < 4 {
+		t.Fatalf("darwinProcArgs2() returned %d bytes, want at least 4", len(data))
+	}
+	execPath, argv := darwinProcArgs(data)
+	if execPath == "" {
+		t.Fatal("darwinProcArgs() exec_path empty")
+	}
+	if len(argv) == 0 {
+		t.Fatal("darwinProcArgs() argv empty")
+	}
+	if !strings.HasSuffix(argv[0], ".test") {
+		t.Fatalf("argv[0] = %q, want the test binary path", argv[0])
+	}
+}
+
+func TestDarwinProcessGoneDetectsReapedProcess(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if !processGone(cmd.Process) {
+		t.Fatal("processGone() = false, want true for a reaped process")
+	}
+}
+
+func TestDarwinIdentifyProcessReadsOwnProcess(t *testing.T) {
+	identity, err := identifyProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("identifyProcess() error = %v", err)
+	}
+	want, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err = normalizeIdentityExecutable(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Executable != want {
+		t.Fatalf("Executable = %q, want %q", identity.Executable, want)
+	}
+	if !equalArgv(identity.Args, os.Args[1:]) {
+		t.Fatalf("Args = %#v, want %#v", identity.Args, os.Args[1:])
+	}
+	if identity.Start == "" {
+		t.Fatal("Start empty")
 	}
 }

@@ -601,23 +601,31 @@ func TestProjectmemSessionPushWiring(t *testing.T) {
 	}
 }
 
-func TestProjectmemOpenCodeWritesV1AndV2Plugins(t *testing.T) {
+func TestProjectmemOpenCodeWritesOnlyV1Plugin(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
 	t.Setenv("TOKLESS_TEST", "1")
 	t.Cleanup(func() { util.SetHomeOverride("") })
-	if !writeProjectmemExtension("opencode") { t.Fatal("write projectmem extension") }
-	for path, markers := range map[string][]string{projectmemExtensionPath("opencode"): {projectmemExtensionMarker}, filepath.Join(util.OpenCodePathsResolved().PluginsDir, "projectmem-context-v2.ts"): {"export default", "async setup", `ctx.session.hook("context"`, "event.system.push"}} {
-		raw, ok := util.ReadFileSafe(path); if !ok { t.Fatalf("missing plugin %s", path) }
-		for _, marker := range markers { if !strings.Contains(raw, marker) { t.Errorf("%s missing %q", path, marker) } }
+	if !writeProjectmemExtension("opencode") {
+		t.Fatal("write projectmem extension")
+	}
+	v1Path := projectmemExtensionPath("opencode")
+	raw, ok := util.ReadFileSafe(v1Path)
+	if !ok {
+		t.Fatalf("missing plugin %s", v1Path)
+	}
+	if !strings.Contains(raw, projectmemExtensionMarker) {
+		t.Errorf("%s missing %q", v1Path, projectmemExtensionMarker)
+	}
+	v2Path := filepath.Join(util.OpenCodePathsV2().PluginsDir, openCodeProjectmemV2File)
+	if util.Exists(v2Path) {
+		t.Fatalf("v1 lane created the v2 plugin: %s", v2Path)
 	}
 	projectmemRemoveSessionPush("opencode")
-	for _, path := range []string{projectmemExtensionPath("opencode"), filepath.Join(util.OpenCodePathsResolved().PluginsDir, "projectmem-context-v2.ts")} {
-		if util.Exists(path) {
-			t.Fatalf("plugin survived session-push removal: %s", path)
-		}
+	if util.Exists(v1Path) {
+		t.Fatalf("plugin survived session-push removal: %s", v1Path)
 	}
 }
 
@@ -684,8 +692,6 @@ func TestProjectmemForeignMcpEntryFailsVerify(t *testing.T) {
 }
 
 // TestProjectmemCodexVerifyShape proves codex verify is shape-exact: a foreign
-// [mcp_servers.projectmem] block (or a missing one) must not pass, and the
-// bounded tokless run-mcp spawn must.
 func TestProjectmemCodexVerifyShape(t *testing.T) {
 	tmp := t.TempDir()
 	chdirTemp(t)
@@ -700,12 +706,10 @@ func TestProjectmemCodexVerifyShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// (c) missing block.
 	if projectmemVerify("codex") {
 		t.Fatal("missing projectmem block must not verify")
 	}
 
-	// (a) foreign block: direct pjm-mcp, not through the tokless proxy.
 	if err := util.WriteFile(cfgPath, "[mcp_servers.projectmem]\ncommand = \"pjm-mcp\"\nargs = []\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -713,7 +717,6 @@ func TestProjectmemCodexVerifyShape(t *testing.T) {
 		t.Fatal("foreign pjm-mcp block must not verify")
 	}
 
-	// (b) bounded spawn block.
 	spawn := util.McpSpawnFor("projectmem")
 	block := util.NewTomlBlock("mcp_servers.projectmem")
 	block.Set("command", spawn.Command)
@@ -866,7 +869,6 @@ func TestProjectmemTruncateHelpersExactCap(t *testing.T) {
 			t.Fatalf("truncateWords limit %d: len %d", lim, len(got))
 		}
 	}
-	// No word boundary and no rune boundary must both stay within the cap.
 	if got := projectmemTruncateWords(strings.Repeat("x", 500), 200); len(got) > 200 {
 		t.Fatalf("space-free input exceeds cap: %d", len(got))
 	}
@@ -905,7 +907,6 @@ func TestProjectmemNotesBodyDropsDigestDuplicates(t *testing.T) {
 	if got := projectmemNotesBody("- None logged yet.", digest, projectmemNotesBudget); got != "" {
 		t.Fatalf("placeholder notes must stay empty: %q", got)
 	}
-	// Upstream may cut a note at a sentence or word boundary, so only a short anchor matches.
 	long := "gotcha: pi1.0 extensions install to ~/.pi/agent/npm only when npm is on PATH otherwise silent failure"
 	rendered := projectmemSmartTruncate(long, 60)
 	if got := projectmemNotesBody("- "+long, "### File Gotchas\n- `a.go`: NOTE: "+rendered+"\n", projectmemNotesBudget); strings.Contains(got, "extensions install") {
@@ -914,7 +915,6 @@ func TestProjectmemNotesBodyDropsDigestDuplicates(t *testing.T) {
 	if got := projectmemNotesBody("- "+long, "", projectmemNotesBudget); !strings.Contains(got, "extensions install") {
 		t.Fatalf("digest-less render dropped a real note:\n%s", got)
 	}
-	// Notes sharing a conventional prefix must survive when the digest carries only one.
 	a := "feat(agents): route native agents through Headroom transport for all channels"
 	b := "feat(agents): route kilo via headroom transport plugin with pinned version"
 	digestA := "### File Gotchas\n- `internal/agents/claude.go`: NOTE: " + projectmemSmartTruncate(a, 60) + "\n"
@@ -1061,7 +1061,6 @@ func TestProjectmemSessionTextReservesIntentBudget(t *testing.T) {
 	}
 
 	bin := t.TempDir()
-	// Digest alone is larger than the whole session budget: intent must still survive.
 	script := "#!/bin/sh\nprintf '## projectmem context (budget: 2000 tokens)\\n'\n" +
 		"printf '%s\\n' '- [DONE] #1 CORE_SENTINEL did a thing'\n" +
 		"i=0\n" +
@@ -1103,7 +1102,6 @@ func TestProjectmemJunkIssueFiltersHarnessArtifacts(t *testing.T) {
 			t.Fatalf("harness artifact not filtered: %q", line)
 		}
 	}
-	// A real issue survives, even when its title contains a junk word.
 	real := []string{
 		"- [OPEN] #0017 G3 injection includes stale Shipped plan entries [internal/tools/projectmem.go] (open)",
 		"- [OPEN] test harness races on concurrent wire",
@@ -1128,7 +1126,6 @@ func TestProjectmemNotesRankKeepsValuableAfterTailCut(t *testing.T) {
 			projectmemNoteRank(high), projectmemNoteRank(mid), projectmemNoteRank(low))
 	}
 
-	// Value decides admission; survivors keep their original store order.
 	tight := len(high) + len(mid) + len(low) + 3
 	got := projectmemNotesBody(low+"\n"+high+"\n"+mid, "", tight)
 	iLow, iHigh := strings.Index(got, "lesson:"), strings.Index(got, "tokless update")
@@ -1139,12 +1136,9 @@ func TestProjectmemNotesRankKeepsValuableAfterTailCut(t *testing.T) {
 	if iMid < 0 {
 		t.Fatalf("second-ranked note must still fit:\n%s", got)
 	}
-	// Store order was low,high,mid; low lost, so survivors must read high,mid.
 	if iHigh > iMid {
 		t.Fatalf("survivors must keep store order, not rank order:\n%s", got)
 	}
-	// Over budget, the loss is stated rather than silently half-printed, and the
-	// section still respects the cap it was given.
 	tightCap := len(high) + 10
 	full := projectmemNotesBody(high+"\n"+mid+"\n"+low, "", tightCap)
 	if !strings.Contains(full, "more in summary.md") {
@@ -1153,7 +1147,6 @@ func TestProjectmemNotesRankKeepsValuableAfterTailCut(t *testing.T) {
 	if len(full) > tightCap {
 		t.Fatalf("notes body %d exceeds cap %d:\n%s", len(full), tightCap, full)
 	}
-	// The notice must count only what was really dropped.
 	if !strings.Contains(full, "2 more") {
 		t.Fatalf("overflow notice must count both dropped notes:\n%s", full)
 	}
@@ -1169,7 +1162,6 @@ func TestProjectmemNotesNeverExceedAnyBudget(t *testing.T) {
 		if len(got) > budget {
 			t.Fatalf("budget %d: body %d bytes exceeds it:\n%s", budget, len(got), got)
 		}
-		// No line may be cut in half, and no count may be invented or inverted.
 		for _, line := range strings.Split(got, "\n") {
 			if line == "" {
 				continue

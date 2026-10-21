@@ -184,6 +184,8 @@ func RTKLocationFor(agentID string) (path, label string) {
 		return util.ClaudeCodePaths().Settings, "PreToolUse hook"
 	case "opencode":
 		return openCodeRtkPluginPath(), "plugin tokless-rtk.ts"
+	case "opencode2":
+		return openCodeRtkV2PluginPath(), "plugin tokless-rtk-v2.ts"
 	case "codex":
 		return agents.CodexRtkHooksFile(), "PreToolUse hook"
 	case "cursor":
@@ -527,12 +529,32 @@ export const ToklessRtkPlugin = async () => ({
 export default ToklessRtkPlugin
 `
 
+// openCodeRtkV1File and openCodeRtkV2File name the per-lane OpenCode rtk plugin files.
+const (
+	openCodeRtkV1File = "tokless-rtk.ts"
+	openCodeRtkV2File = "tokless-rtk-v2.ts"
+)
+
+// openCodeRtkPluginPath returns the rtk plugin file in the OpenCode v1 plugins dir.
 func openCodeRtkPluginPath() string {
-	return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts")
+	return filepath.Join(util.OpenCodePathsResolved().PluginsDir, openCodeRtkV1File)
 }
 
+// openCodeRtkV2PluginPath returns the rtk plugin file in the OpenCode v2 plugins dir.
 func openCodeRtkV2PluginPath() string {
-	return filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
+	return filepath.Join(util.OpenCodePathsV2().PluginsDir, openCodeRtkV2File)
+}
+
+// removeStaleOpenCodeV2RtkPlugin drops the v2-shaped rtk plugin an older tokless left in the v1 dir.
+func removeStaleOpenCodeV2RtkPlugin() {
+	if !openCodeV2PluginsDirIsSeparate() {
+		return
+	}
+	path := filepath.Join(util.OpenCodePathsResolved().PluginsDir, openCodeRtkV2File)
+	if !toklessOwnedPluginFile(path, "TOKLESS_BIN") {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 func opencodeBinaryPresent() bool {
@@ -698,34 +720,18 @@ func rtkWireOpenCode() core.AgentFn {
 		if exe == "" {
 			return false, nil
 		}
-		if opencodeV2ProbeFailed() {
+		if !openCodeRuntimeKnown() {
 			return false, nil
 		}
-		majors := agents.OpenCodeInstalledMajors()
-		if len(majors) == 0 {
-			if opencodeBinaryPresent() {
-				return false, nil
-			}
-			majors = []int{1}
+		pluginPath := openCodeRtkPluginPath()
+		if err := util.EnsureDir(filepath.Dir(pluginPath)); err != nil {
+			return false, err
 		}
-		for _, major := range majors {
-			pluginPath := openCodeRtkPluginPath()
-			plugin := openCodeRtkPlugin
-			if major == 2 {
-				pluginPath = openCodeRtkV2PluginPath()
-				plugin = openCodeRtkV2Plugin
-			}
-			if err := util.EnsureDir(filepath.Dir(pluginPath)); err != nil {
-				return false, err
-			}
-			if err := util.WriteFile(pluginPath, fmt.Sprintf(plugin, strconv.Quote(exe))); err != nil {
-				return false, err
-			}
+		if err := util.WriteFile(pluginPath, fmt.Sprintf(openCodeRtkPlugin, strconv.Quote(exe))); err != nil {
+			return false, err
 		}
-		if !rtkOpenCodePluginValid() {
-			return false, nil
-		}
-		return true, nil
+		removeStaleOpenCodeV2RtkPlugin()
+		return rtkOpenCodeV1PluginValid(), nil
 	}
 }
 
@@ -739,30 +745,20 @@ func rtkOpenCodeV2PluginValid() bool {
 	return ok && strings.Contains(raw, `ctx.tool.hook("execute.before"`) && strings.Contains(raw, "rtk-rewrite") && strings.Contains(raw, "TOKLESS_BIN")
 }
 
+// rtkOpenCodePluginValid reports whether the v1 lane's rtk plugin is in place.
 func rtkOpenCodePluginValid() bool {
+	if !openCodeRuntimeKnown() {
+		return false
+	}
+	return rtkOpenCodeV1PluginValid()
+}
+
+// openCodeRuntimeKnown reports whether the OpenCode runtime is known.
+func openCodeRuntimeKnown() bool {
 	if opencodeV2ProbeFailed() {
 		return false
 	}
-	majors := agents.OpenCodeInstalledMajors()
-	if len(majors) == 0 {
-		if opencodeBinaryPresent() {
-			return false
-		}
-		majors = []int{1}
-	}
-	for _, major := range majors {
-		if !rtkOpenCodePluginValidForMajor(major) {
-			return false
-		}
-	}
-	return true
-}
-
-func rtkOpenCodePluginValidForMajor(major int) bool {
-	if major == 2 {
-		return rtkOpenCodeV2PluginValid()
-	}
-	return rtkOpenCodeV1PluginValid()
+	return len(agents.OpenCodeInstalledMajors()) > 0 || !opencodeBinaryPresent()
 }
 
 const piRtkExtension = `const TOKLESS_BIN = %s
@@ -849,7 +845,6 @@ func claudeSettingsHasRtkHook(settingsPath string) bool {
 }
 
 // removeClaudeRtkHookGroup surgically strips the tokless-managed PreToolUse
-// group from ~/.claude/settings.json.
 func removeClaudeRtkHookGroup() {
 	cp := util.ClaudeCodePaths()
 	raw, ok := util.ReadFileSafe(cp.Settings)
@@ -1194,7 +1189,6 @@ func ampRtkVerify() bool {
 }
 
 // overrideClaudeRtkHook replaces rtk's own "rtk hook claude" PreToolUse hook command
-// with the tokless wrapper so the output includes explicit permissionDecision: "allow".
 func overrideClaudeRtkHook() {
 	cp := util.ClaudeCodePaths()
 	newCmd := claudeRtkHookCommand(util.ToklessPersistedAbs())
@@ -1478,6 +1472,7 @@ var rtk = &core.ToolManifest{
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				return false, err
 			}
+			removeStaleOpenCodeV2RtkPlugin()
 			RemoveOwner("opencode", "rtk")
 			return !rtkOpenCodeV1PluginValid(), nil
 		},

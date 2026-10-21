@@ -62,7 +62,6 @@ func TestProbeHookCommandForwardSlashOK(t *testing.T) {
 	defer func() { util.IsWin = orig }()
 	util.IsWin = true
 
-	// Write a fake tokless that exits 0 on any args.
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "tokless")
 	if runtime.GOOS == "windows" {
@@ -70,7 +69,6 @@ func TestProbeHookCommandForwardSlashOK(t *testing.T) {
 	}
 	writeExit0(t, fake)
 
-	// Use forward-slash form (issue #21 fix).
 	slashy := filepath.ToSlash(fake)
 	cmd := slashy + " rtk-hook claude"
 	if detail := probeHookCommand(cmd); detail != "" {
@@ -403,7 +401,7 @@ func TestManagedRuntimeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := managedRuntimeFiles("opencode")
-	if len(files) < 1 || files[0].path != path {
+	if len(files) != 1 || files[0].path != path {
 		t.Fatalf("files = %+v", files)
 	}
 	if detail := probeRuntimeFile(files[0]); detail != "" {
@@ -414,6 +412,7 @@ func TestManagedRuntimeFiles(t *testing.T) {
 	}
 }
 
+// TestManagedRuntimeFilesOpenCodeMixedInstall proves the v1 row probes only the v1 plugin, even when a v2 major is installed.
 func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
@@ -434,11 +433,12 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir)
 	files := managedRuntimeFiles("opencode")
-	if len(files) != 2 {
-		t.Fatalf("mixed install runtime files = %+v, want v1 and v2 plugins", files)
+	if len(files) != 1 {
+		t.Fatalf("mixed install runtime files = %+v, want only the v1 plugin", files)
 	}
-	if files[0].path == files[1].path {
-		t.Fatalf("runtime plugins must be distinct: %+v", files)
+	want := filepath.Join(util.OpenCodePathsResolved().PluginsDir, "tokless-rtk.ts")
+	if files[0].path != want {
+		t.Fatalf("opencode runtime file = %q, want %q", files[0].path, want)
 	}
 	for _, file := range files {
 		if detail := probeRuntimeFile(file); detail != "" {
@@ -447,29 +447,116 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 	}
 }
 
+// TestManagedRuntimeFilesOpenCodeVersion proves the v1 row probes the v1 plugin and the v2 row the v2 plugin.
 func TestManagedRuntimeFilesOpenCodeVersion(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	plugins := util.OpenCodePathsResolved().PluginsDir
-	v2Path := filepath.Join(plugins, "tokless-rtk-v2.ts")
-	if err := os.MkdirAll(plugins, 0o755); err != nil {
+	v2Path := filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
+	if err := os.MkdirAll(util.OpenCodePathsV2().PluginsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(v2Path, []byte("TOKLESS_BIN rtk-rewrite export default async setup ctx.tool.hook(\"execute.before\""), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	v2Files := managedRuntimeFilesForMajor("opencode", 2)
+	v2Files := managedRuntimeFiles("opencode2")
 	if len(v2Files) != 1 || v2Files[0].path != v2Path {
 		t.Fatalf("v2 files = %+v, want only v2 plugin", v2Files)
 	}
 	if detail := probeRuntimeFile(v2Files[0]); detail != "" {
 		t.Fatalf("v2 probe: %q", detail)
 	}
-	v1Files := managedRuntimeFilesForMajor("opencode", 1)
-	if len(v1Files) != 1 || v1Files[0].path == v2Path {
+	v1Files := managedRuntimeFiles("opencode")
+	if len(v1Files) != 1 {
 		t.Fatalf("v1 files = %+v, want only v1 plugin", v1Files)
 	}
+	if want := filepath.Join(plugins, "tokless-rtk.ts"); v1Files[0].path != want {
+		t.Fatalf("v1 plugin path = %q, want %q", v1Files[0].path, want)
+	}
+}
+
+// TestManagedRuntimeFilesOpenCode2 proves the v2 harness row probes the v2 runtime plugin, independent of the detected OpenCode major version.
+func TestManagedRuntimeFilesOpenCode2(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	want := filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
+	files := managedRuntimeFiles("opencode2")
+	if len(files) != 1 {
+		t.Fatalf("opencode2 runtime files = %+v, want exactly the v2 plugin", files)
+	}
+	if files[0].path != want {
+		t.Fatalf("opencode2 runtime file = %q, want %q", files[0].path, want)
+	}
+	for _, marker := range []string{"TOKLESS_BIN", "rtk-rewrite", "export default", "async setup", `ctx.tool.hook("execute.before"`} {
+		if !strings.Contains(strings.Join(files[0].markers, "\n"), marker) {
+			t.Errorf("opencode2 runtime file missing marker %q: %+v", marker, files[0].markers)
+		}
+	}
+	if err := os.MkdirAll(util.OpenCodePathsV2().PluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("TOKLESS_BIN rtk-rewrite export default async setup ctx.tool.hook(\"execute.before\""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if detail := probeRuntimeFile(files[0]); detail != "" {
+		t.Fatalf("opencode2 probe: %q", detail)
+	}
+}
+
+// TestDoctorSkippedProvidersRow proves the opencode2 row names the providers the lane refused to mirror.
+func TestDoctorSkippedProvidersRow(t *testing.T) {
+	v2Dir := doctorV2TestDir(t)
+	config := `{"providers":{"acme":{"name":"acme","package":"@acme/ai/providers/custom",` +
+		`"settings":{"baseURL":"https://api.acme.test/v1","apiKey":"acme-key"}},` +
+		`"noKey":{"name":"no key","package":"@opencode/ai/providers/openai-compatible",` +
+		`"settings":{"baseURL":"https://api.acme.test/v1"}}}}`
+	if err := os.WriteFile(filepath.Join(v2Dir, "opencode.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	row := stripDoctorANSI(doctorSkippedProvidersRow("opencode2"))
+	if !strings.Contains(row, "2 providers skipped (unknown package, no api key)") {
+		t.Fatalf("row = %q", row)
+	}
+	rows := stripDoctorANSI(strings.Join(doctorAgentRows(agentReport{id: "opencode2", label: "OpenCode v2", installed: true}), "\n"))
+	if !strings.Contains(rows, "2 providers skipped (unknown package, no api key)") {
+		t.Fatalf("opencode2 rows = %q", rows)
+	}
+	if got := doctorSkippedProvidersRow("opencode"); got != "" {
+		t.Fatalf("the v1 lane reported skipped providers: %q", got)
+	}
+}
+
+// TestDoctorSkippedProvidersRowEmpty proves the opencode2 row stays silent when nothing was skipped.
+func TestDoctorSkippedProvidersRowEmpty(t *testing.T) {
+	doctorV2TestDir(t)
+
+	if row := doctorSkippedProvidersRow("opencode2"); row != "" {
+		t.Fatalf("row = %q, want no row", row)
+	}
+	rows := stripDoctorANSI(strings.Join(doctorAgentRows(agentReport{id: "opencode2", label: "OpenCode v2", installed: true}), "\n"))
+	if strings.Contains(rows, "providers skipped") {
+		t.Fatalf("opencode2 rows = %q", rows)
+	}
+}
+
+// doctorV2TestDir isolates the opencode2 config dir in a temp home.
+func doctorV2TestDir(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	v2Dir := filepath.Join(t.TempDir(), "opencode2")
+	t.Setenv("OPENCODE_CONFIG_DIR_V2", v2Dir)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := os.MkdirAll(v2Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return v2Dir
 }
 
 func TestManagedRuntimeFilesInstructionAgents(t *testing.T) {
@@ -587,7 +674,7 @@ func TestDoctorSummaryRuntime(t *testing.T) {
 	s := formatRuntimeIssues([]runtimeIssue{
 		{kind: "hook", detail: "backslash path"},
 		{kind: "mcp", detail: "batch not found"},
-		{kind: "hook", detail: "backslash path"}, // dedupe
+		{kind: "hook", detail: "backslash path"},
 	})
 	if !strings.Contains(s, "backslash path") || !strings.Contains(s, "batch not found") {
 		t.Fatalf("format = %q", s)

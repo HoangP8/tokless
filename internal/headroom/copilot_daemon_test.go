@@ -441,3 +441,49 @@ func TestStopCopilotProxyStopsMatchingOwner(t *testing.T) {
 		t.Fatal("Copilot ownership record survived stop")
 	}
 }
+
+func TestCopilotRollbackKillsReexecShapedProcess(t *testing.T) {
+	isolateCopilotProxyOps(t)
+	dir := filepath.Join(util.HeadroomPathsResolved().Bin)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(dir, "headroom-launcher")
+	interpreter := filepath.Join(dir, "python3")
+	if err := os.WriteFile(interpreter, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("#!"+interpreter+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidFile, _ := copilotProxyFiles()
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := proxyOwnership{PID: 4133, Executable: launcher, Args: copilotProxyArgs(), Start: "start"}
+	if err := writeProxyOwnership(pidFile, record); err != nil {
+		t.Fatal(err)
+	}
+	live := processIdentityInfo{
+		Executable: interpreter,
+		Args:       append([]string{"-m", "headroom.cli"}, copilotProxyArgs()...),
+		Start:      "start",
+	}
+	proxyIdentity = func(int) (processIdentityInfo, error) { return live, nil }
+	killed := false
+	proxyKill = func(*os.Process) error { killed = true; return nil }
+	proxyWait = func(*os.Process) error { return errors.New("not a child") }
+	proxyGone = func(*os.Process) bool { return true }
+	copilotProxyLiveProbe = func(time.Duration) bool { return false }
+	now := time.Unix(100, 0)
+	proxyNow = func() time.Time { return now }
+	proxySleep = func(time.Duration) { now = now.Add(proxyStopTimeout) }
+
+	expected := processIdentityInfo{Executable: launcher, Args: copilotProxyArgs(), Start: "start"}
+	if err := rollbackCopilotProxy(&os.Process{Pid: 4133}, pidFile, &expected, errors.New("boom")); err == nil {
+		t.Fatal("rollbackCopilotProxy returned nil")
+	}
+	if !killed {
+		t.Fatal("rollback did not kill the re-exec shaped copilot proxy")
+	}
+}

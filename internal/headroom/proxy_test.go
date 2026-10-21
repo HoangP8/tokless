@@ -34,10 +34,7 @@ func isolateProxyOps(t *testing.T) {
 	oldGrokProbe := grokProxyLiveZProbe
 	oldServingPID, oldProcessEnv := proxyServingPIDProbe, proxyProcessEnv
 	oldFind := proxyFindProcess
-	// Fake pids must not depend on os.FindProcess (errors on Windows for stale pids).
 	proxyFindProcess = func(pid int) (*os.Process, error) { return &os.Process{Pid: pid}, nil }
-	// Fake pids were never spawned as children; Go 1.23+ panics on Wait for a
-	// zero-value Process, so short-circuit like an already-reaped child.
 	proxyWait = func(*os.Process) error { return os.ErrProcessDone }
 	t.Cleanup(func() {
 		proxyLiveZProbe, proxySpawn = oldProbe, oldSpawn
@@ -209,6 +206,59 @@ func TestProcessIdentityMatchesPythonConsoleScript(t *testing.T) {
 	}
 }
 
+func TestProcessIdentityMatchesHeadroomReexec(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	toolDir := filepath.Join(root, "tools", "headroom-ai", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(toolDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	interpreter := filepath.Join(toolDir, "python3")
+	if err := os.WriteFile(interpreter, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	console := filepath.Join(toolDir, "headroom")
+	if err := os.WriteFile(console, []byte("#!"+interpreter+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(binDir, "headroom")
+	if err := os.Symlink(console, launcher); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"proxy", "--port", "8787", "--verbose"}
+	identity := processIdentityInfo{
+		Executable: interpreter,
+		Args:       append([]string{"-m", "headroom.cli"}, args...),
+		Start:      "start",
+	}
+	if !identity.matches(launcher, args) {
+		t.Fatal("headroom re-exec invocation did not match")
+	}
+	otherInterpreter := filepath.Join(t.TempDir(), "python3")
+	if err := os.WriteFile(otherInterpreter, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := processIdentityInfo{
+		Executable: otherInterpreter,
+		Args:       append([]string{"-m", "headroom.cli"}, args...),
+		Start:      "start",
+	}
+	if foreign.matches(launcher, args) {
+		t.Fatal("re-exec with an unrelated interpreter was accepted")
+	}
+	short := processIdentityInfo{
+		Executable: interpreter,
+		Args:       append([]string{"-m", "headroom.cli"}, args[1:]...),
+		Start:      "start",
+	}
+	if short.matches(launcher, args) {
+		t.Fatal("re-exec with different proxy args was accepted")
+	}
+}
+
 func TestProcessIdentityRejectsWrongConsoleScript(t *testing.T) {
 	launcher := filepath.Join(t.TempDir(), "headroom")
 	wrong := filepath.Join(t.TempDir(), "other")
@@ -347,7 +397,7 @@ func TestStopProxyRefusesUnavailableIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, errors.New("unavailable") }
-	proxyGone = func(*os.Process) bool { return false } // process present, identity unverifiable
+	proxyGone = func(*os.Process) bool { return false }
 	killed := false
 	proxyKill = func(*os.Process) error { killed = true; return nil }
 	if err := StopProxy(); err == nil {
@@ -370,7 +420,8 @@ func TestStopProxySelfHealsStaleRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	proxyIdentity = func(int) (processIdentityInfo, error) { return processIdentityInfo{}, errors.New("unavailable") }
-	proxyGone = func(*os.Process) bool { return true } // pid dead — stale record
+	proxyGone = func(*os.Process) bool { return true }
+	proxyLiveZProbe = func(time.Duration) bool { return false }
 	killed := false
 	proxyKill = func(*os.Process) error { killed = true; return nil }
 	if err := StopProxy(); err != nil {
@@ -1364,7 +1415,6 @@ func TestStartProxyRestartsWhenAllowedBaseURLsChange(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Add a new route so headroomAllowedBaseURLs() differs from oldAllowed
 	if err := util.SaveBYOKRoutes([]util.BYOKRoute{
 		{ID: "opencode:new", Token: "newtoken", Protocol: "openai-chat", Upstream: "https://new.provider.com/v1"},
 	}); err != nil {
@@ -1475,7 +1525,6 @@ func TestStartProxyFailsClosedOnCorruptRouteRegistry(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(routesFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Write invalid corrupted JSON
 	if err := os.WriteFile(routesFile, []byte("{corrupt-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1504,11 +1553,9 @@ func TestStartProxyRestartsSupervisedDaemonWhenAllowlistChanges(t *testing.T) {
 	args := proxyArgs(8787)
 	oldAllowed := "http://127.0.0.1:18787,http://localhost:18787,https://old.provider.com"
 
-	// Supervised state with old allowlist
 	if err := writeProxySupervisedState(5380, bin, args, nil, "start"); err != nil {
 		t.Fatal(err)
 	}
-	// Overwrite supervised state file with oldAllowed explicitly
 	supFile := proxySupervisedFile()
 	raw, _ := os.ReadFile(supFile)
 	var st proxySupervisedState
@@ -1517,7 +1564,6 @@ func TestStartProxyRestartsSupervisedDaemonWhenAllowlistChanges(t *testing.T) {
 	b, _ := json.Marshal(st)
 	_ = os.WriteFile(supFile, b, 0o600)
 
-	// Add new route
 	if err := util.SaveBYOKRoutes([]util.BYOKRoute{
 		{ID: "opencode:supervised-test", Token: "tok", Protocol: "openai-chat", Upstream: "https://supervised.provider.com/v1"},
 	}); err != nil {
@@ -1567,5 +1613,316 @@ func TestStartProxyRestartsSupervisedDaemonWhenAllowlistChanges(t *testing.T) {
 	}
 	if !wrote {
 		t.Fatalf("expected new ownership record to be written with updated allowlist")
+	}
+}
+
+func unsetEnvForTest(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		old, had := os.LookupEnv(key)
+		t.Cleanup(func() {
+			if had {
+				_ = os.Setenv(key, old)
+				return
+			}
+			_ = os.Unsetenv(key)
+		})
+		_ = os.Unsetenv(key)
+	}
+}
+
+func TestHeadroomMallocEnvForDarwin(t *testing.T) {
+	unsetEnvForTest(t, "MallocAggressiveMadvise", "MallocLargeCache", "HEADROOM_MALLOC_TUNING")
+	got := headroomMallocEnvFor("darwin")
+	want := map[string]string{"MallocAggressiveMadvise": "1", "MallocLargeCache": "0"}
+	for _, entry := range got {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			t.Fatalf("entry %q has no separator", entry)
+		}
+		if want[key] != value {
+			t.Fatalf("entry %q = %q, want %q", key, value, want[key])
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing entries: %#v", want)
+	}
+	if off := headroomMallocEnvFor("linux"); len(off) != 0 {
+		t.Fatalf("headroomMallocEnvFor(linux) = %#v, want empty", off)
+	}
+	if runtime.GOOS != "darwin" {
+		if got := headroomDarwinMallocEnv(); len(got) != 0 {
+			t.Fatalf("headroomDarwinMallocEnv() = %#v, want empty off darwin", got)
+		}
+	}
+}
+
+func TestHeadroomMallocEnvForDarwinRespectsOptOut(t *testing.T) {
+	unsetEnvForTest(t, "MallocAggressiveMadvise", "MallocLargeCache", "HEADROOM_MALLOC_TUNING")
+	for _, value := range []string{"0", "false", "no", "off", "", " 1"} {
+		t.Setenv("HEADROOM_MALLOC_TUNING", value)
+		if got := headroomMallocEnvFor("darwin"); len(got) != 0 {
+			t.Fatalf("headroomMallocEnvFor(darwin) = %#v, want empty for opt-out %q", got, value)
+		}
+	}
+	for _, value := range []string{"1", "true", "yes", "on", "TRUE"} {
+		t.Setenv("HEADROOM_MALLOC_TUNING", value)
+		if got := headroomMallocEnvFor("darwin"); len(got) != 2 {
+			t.Fatalf("headroomMallocEnvFor(darwin) = %#v, want 2 entries for opt-in %q", got, value)
+		}
+	}
+}
+
+func TestHeadroomMallocEnvForDarwinKeepsOperatorValues(t *testing.T) {
+	unsetEnvForTest(t, "MallocAggressiveMadvise", "MallocLargeCache", "HEADROOM_MALLOC_TUNING")
+	t.Setenv("MallocLargeCache", "1")
+	got := headroomMallocEnvFor("darwin")
+	found := false
+	for _, entry := range got {
+		if entry == "MallocLargeCache=0" {
+			t.Fatalf("headroomMallocEnvFor(darwin) = %#v, want operator MallocLargeCache kept", got)
+		}
+		if entry == "MallocAggressiveMadvise=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("headroomMallocEnvFor(darwin) = %#v, want MallocAggressiveMadvise injected", got)
+	}
+}
+
+func envHasEntry(env []string, want string) bool {
+	for _, entry := range env {
+		if entry == want {
+			return true
+		}
+	}
+	return false
+}
+
+// envHasPathValue compares an env block key case-insensitively, as Windows spells it "Path".
+func envHasPathValue(env []string, want string) bool {
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(key, "PATH") && value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestHeadroomChildEnvForDarwinAddsMallocTuning(t *testing.T) {
+	unsetEnvForTest(t, "MallocAggressiveMadvise", "MallocLargeCache", "HEADROOM_MALLOC_TUNING")
+	env := headroomChildEnvFor("darwin")
+	if !envHasEntry(env, "MallocAggressiveMadvise=1") {
+		t.Fatalf("headroomChildEnvFor(darwin) = %#v, want MallocAggressiveMadvise=1", env)
+	}
+	if !envHasEntry(env, "MallocLargeCache=0") {
+		t.Fatalf("headroomChildEnvFor(darwin) = %#v, want MallocLargeCache=0", env)
+	}
+	if !envHasPathValue(env, os.Getenv("PATH")) {
+		t.Fatalf("headroomChildEnvFor(darwin) = %#v, want the inherited environment preserved", env)
+	}
+	off := headroomChildEnvFor("linux")
+	if envHasEntry(off, "MallocAggressiveMadvise=1") || envHasEntry(off, "MallocLargeCache=0") {
+		t.Fatalf("headroomChildEnvFor(linux) = %#v, want no malloc tuning", off)
+	}
+}
+
+func TestRollbackProxyWithIdentityToleratesExecShapeChange(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	oldIdentity, oldKill, oldWait := proxyIdentity, proxyKill, proxyWait
+	t.Cleanup(func() { proxyIdentity, proxyKill, proxyWait = oldIdentity, oldKill, oldWait })
+	killed := false
+	proxyKill = func(proc *os.Process) error { killed = true; return nil }
+	proxyWait = func(proc *os.Process) error { return nil }
+	proc := &os.Process{Pid: 4242}
+	pidFile := filepath.Join(t.TempDir(), "proxy.pid")
+	expected := processIdentityInfo{
+		Executable: "/opt/headroom/bin/headroom",
+		Args:       []string{"proxy", "--port", "8787"},
+		Start:      "Mon Jan  1 00:00:00 2026",
+	}
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		return processIdentityInfo{
+			Executable: "/opt/headroom/bin/python3",
+			Args:       []string{"-m", "headroom.cli", "proxy", "--port", "8787"},
+			Start:      expected.Start,
+		}, nil
+	}
+	rollbackProxyWithIdentity(proc, pidFile, &expected, errors.New("boom"))
+	if !killed {
+		t.Fatal("rollback did not kill the child after the exec shape change")
+	}
+	killed = false
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: expected.Executable, Args: expected.Args, Start: "Tue Jan  2 00:00:00 2026"}, nil
+	}
+	rollbackProxyWithIdentity(proc, pidFile, &expected, errors.New("boom"))
+	if killed {
+		t.Fatal("rollback killed a process with a different start fingerprint")
+	}
+}
+
+func TestRecordedProxyAllowedBaseURLs(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if got := recordedProxyAllowedBaseURLs(1); got != "" {
+		t.Fatalf("recordedProxyAllowedBaseURLs() = %q, want empty without a record", got)
+	}
+	pidFile, _ := proxyFiles()
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxyWrite(pidFile, proxyOwnership{
+		PID:             1,
+		Executable:      "/opt/headroom/bin/headroom",
+		Args:            []string{"proxy"},
+		Start:           "Mon Jan  1 00:00:00 2026",
+		AllowedBaseURLs: "http://127.0.0.1:18787",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := recordedProxyAllowedBaseURLs(1); got != "http://127.0.0.1:18787" {
+		t.Fatalf("recordedProxyAllowedBaseURLs() = %q, want the recorded allowlist", got)
+	}
+	if got := recordedProxyAllowedBaseURLs(2); got != "" {
+		t.Fatalf("recordedProxyAllowedBaseURLs() = %q, want empty for a foreign pid", got)
+	}
+}
+
+func TestMatchesRecordShapeAcceptsReexecRecord(t *testing.T) {
+	dir := t.TempDir()
+	launcher := filepath.Join(dir, "bin", "headroom")
+	interpreter := filepath.Join(dir, "tools", "headroom-ai", "bin", "python3")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(interpreter), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(interpreter, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("#!"+interpreter+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := proxyOwnership{
+		PID:        42,
+		Executable: launcher,
+		Args:       []string{"proxy", "--port", "8787"},
+		Start:      "Mon Jan  1 00:00:00 2026",
+	}
+	live := processIdentityInfo{
+		Executable: interpreter,
+		Args:       []string{"-m", "headroom.cli", "proxy", "--port", "8787"},
+		Start:      record.Start,
+	}
+	if live.matchesRecord(record) {
+		t.Fatal("re-exec identity matched the strict record")
+	}
+	if !live.matchesRecordShape(record) {
+		t.Fatal("re-exec identity did not match the console-script record shape")
+	}
+	other := live
+	other.Start = "Tue Jan  2 00:00:00 2026"
+	if other.matchesRecordShape(record) {
+		t.Fatal("re-exec identity with a different start fingerprint matched")
+	}
+}
+
+func TestAdoptCompatibleProxyRecordsObservedAllowlist(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := util.HeadroomBin()
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldServing, oldIdentity, oldEnv := proxyServingPIDProbe, proxyIdentity, proxyProcessEnv
+	t.Cleanup(func() {
+		proxyServingPIDProbe, proxyIdentity, proxyProcessEnv = oldServing, oldIdentity, oldEnv
+	})
+	proxyServingPIDProbe = func(timeout time.Duration) (int, bool) { return 4242, true }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		return processIdentityInfo{
+			Executable: bin,
+			Args:       proxyArgs(ProxyPort()),
+			Start:      "Mon Jan  1 00:00:00 2026",
+		}, nil
+	}
+	allowed := headroomAllowedBaseURLs()
+	if runtime.GOOS == "linux" {
+		proxyProcessEnv = func(pid int) map[string]string {
+			return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": allowed}
+		}
+	}
+	if !adoptCompatibleProxy(ProxyPort()) {
+		t.Fatal("adoptCompatibleProxy() = false, want true")
+	}
+	pidFile, _ := proxyFiles()
+	raw, ok := util.ReadFileSafe(pidFile)
+	if !ok {
+		t.Fatal("ownership record missing after adoption")
+	}
+	var record proxyOwnership
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		t.Fatal(err)
+	}
+	want := allowed
+	if runtime.GOOS != "linux" {
+		want = ""
+	}
+	if record.AllowedBaseURLs != want {
+		t.Fatalf("record.AllowedBaseURLs = %q, want %q", record.AllowedBaseURLs, want)
+	}
+}
+
+func TestStopHeadroomDaemonRefusesUnownedLiveProxy(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	oldProbe := proxyLiveZProbe
+	t.Cleanup(func() { proxyLiveZProbe = oldProbe })
+	proxyLiveZProbe = func(timeout time.Duration) bool { return true }
+	if err := stopHeadroomDaemon(); err == nil {
+		t.Fatal("stopHeadroomDaemon() = nil, want an error while an unowned proxy is live")
+	}
+	proxyLiveZProbe = func(timeout time.Duration) bool { return false }
+	if err := stopHeadroomDaemon(); err != nil {
+		t.Fatalf("stopHeadroomDaemon() = %v, want nil when no proxy is live", err)
+	}
+}
+
+func TestStopHeadroomDaemonRefusesStaleRecordWithLiveListener(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	pidFile, _ := proxyFiles()
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxyWrite(pidFile, proxyOwnership{
+		PID:        987654,
+		Executable: "/opt/headroom/bin/headroom",
+		Args:       []string{"proxy"},
+		Start:      "Mon Jan  1 00:00:00 2026",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldIdentity, oldGone, oldProbe := proxyIdentity, proxyGone, proxyLiveZProbe
+	t.Cleanup(func() { proxyIdentity, proxyGone, proxyLiveZProbe = oldIdentity, oldGone, oldProbe })
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		return processIdentityInfo{}, errors.New("no such process")
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	if err := stopHeadroomDaemon(); err == nil {
+		t.Fatal("stopHeadroomDaemon() = nil, want an error while an unowned listener is live")
+	}
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("ownership record removed while a listener is live: %v", err)
 	}
 }

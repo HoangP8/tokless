@@ -172,37 +172,9 @@ func TestOpenCodeV2KeepsV1TransportPluginEntry(t *testing.T) {
 func TestOpenCodeV2BYOKWriteAndOwnership(t *testing.T) {
 	opencodeProxyTestHome(t)
 	t.Setenv("HOME", util.Home())
-	binDir := t.TempDir()
-	bin := filepath.Join(binDir, "opencode2")
-	if util.IsWin {
-		bin += ".bat"
-		t.Setenv("USERPROFILE", util.Home())
-	}
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'opencode v2.0.6\\n'\n"), 0o755); err != nil { t.Fatal(err) }
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	dir := util.OpenCodePathsResolved().Dir
-	if err := util.EnsureDir(dir); err != nil { t.Fatal(err) }
-	path := filepath.Join(dir, "opencode.json")
-	if err := util.WriteFile(path, `{"provider":{"acme":{"npm":"@ai-sdk/openai","options":{"baseURL":"https://api.example.test/api/v1","apiKey":"secret"},"models":{"sel":{"modelID":"real-id","name":"Model","limit":{"context":10}}}}}}`); err != nil { t.Fatal(err) }
-	b := openCodeBYOK{ID:"acme", File:path, BaseURL:"https://api.example.test/api/v1", APIKey:"secret", Npm:"@ai-sdk/openai", RouteHeader:"opencode:acme.token"}
-	changed, ok := syncOpenCodeV2BYOK([]openCodeBYOK{b}); if !ok || !changed { t.Fatalf("first write changed=%v ok=%v", changed, ok) }
- raw, _ := util.ReadFileSafe(path); if !openCodeV2ProviderRouteMatches(raw, b.ID, ProxyEndpointFor("opencode"), b.RouteHeader, "https://api.example.test") { t.Fatal("written provider did not verify") }
-	cfg := util.TryParseJsonc(raw); ps, _ := mapChild(cfg,"providers"); pval,_ := ps.Get("acme"); p:=pval.(*util.OrderedMap); settings,_:=mapChild(p,"settings"); if v,_:=settings.Get("apiKey"); v!="secret" { t.Fatalf("apiKey location/value: %v",v) }; if v,_:=settings.Get("baseURL"); v!=ProxyEndpointFor("opencode") { t.Fatalf("baseURL=%v",v) }
-	h,_:=mapChild(p,"headers"); for k,w:=range map[string]string{"X-Tokless-Route":b.RouteHeader,headroomBaseURLHeader:"https://api.example.test","x-headroom-original-path":"/api/v1/chat/completions"} { if v,_:=h.Get(k); v!=w { t.Errorf("%s=%v want %s",k,v,w) } }
-	if v,_:=p.Get("package"); v!="@opencode/ai/providers/openai" { t.Fatalf("package=%v",v) }
-	before:=raw; changed,ok=syncOpenCodeV2BYOK([]openCodeBYOK{b}); raw,_=util.ReadFileSafe(path); if !ok||changed||raw!=before { t.Fatalf("not idempotent changed=%v",changed) }
-	user:=util.NewOrderedMap(); user.Set("name","User"); ps.Set("manual",user); _=util.WriteFile(path,util.StringifyJSON(cfg))
-	changed,ok=syncOpenCodeV2BYOK(nil); raw,_=util.ReadFileSafe(path); cfg=util.TryParseJsonc(raw); ps,_=mapChild(cfg,"providers"); if !ok||!changed { t.Fatalf("unwire changed=%v ok=%v",changed,ok) }; if _,exists:=ps.Get("acme"); exists { t.Fatal("tokless provider remains") }; if _,exists:=ps.Get("manual"); !exists { t.Fatal("user provider removed") }
-	if openCodeV2ProviderRouteMatches(raw,"manual",ProxyEndpointFor("opencode"),b.RouteHeader,"https://api.example.test") { t.Fatal("user provider verified as owned") }
-}
-
-func TestOpenCodeV2PackageFallback(t *testing.T) {
-	for input,want:=range map[string]string{"@ai-sdk/anthropic":"@opencode/ai/providers/anthropic","@ai-sdk/openai-compatible":"@opencode/ai/providers/openai-compatible","unknown":"@opencode/ai/providers/openai-compatible"} { if got:=openCodeV2Package(input); got!=want { t.Errorf("%s: %s",input,got) } }
-}
-
-func TestRemoveOpenCodeProxyClearsV2MirrorsWithoutStash(t *testing.T) {
-	opencodeProxyTestHome(t)
-	t.Setenv("HOME", util.Home())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	v2Dir := filepath.Join(t.TempDir(), "opencode2")
+	t.Setenv("OPENCODE_CONFIG_DIR_V2", v2Dir)
 	binDir := t.TempDir()
 	bin := filepath.Join(binDir, "opencode2")
 	if util.IsWin {
@@ -213,32 +185,134 @@ func TestRemoveOpenCodeProxyClearsV2MirrorsWithoutStash(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	dir := util.OpenCodePathsResolved().Dir
-	if err := util.EnsureDir(dir); err != nil {
+	if err := util.EnsureDir(v2Dir); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "opencode.json")
+	path := filepath.Join(v2Dir, "opencode.json")
+	if err := util.WriteFile(path, `{"provider":{"acme":{"npm":"@ai-sdk/openai","options":{"baseURL":"https://api.example.test/api/v1","apiKey":"secret"},"models":{"sel":{"modelID":"real-id","name":"Model","limit":{"context":10}}}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	b := openCodeBYOK{ID: "acme", File: path, BaseURL: "https://api.example.test/api/v1", APIKey: "secret", Npm: "@ai-sdk/openai", RouteHeader: "opencode2:acme.token"}
+	changed, ok := syncOpenCodeV2BYOKFor([]openCodeBYOK{b}, path, "opencode2:", false)
+	if !ok || !changed {
+		t.Fatalf("first write changed=%v ok=%v", changed, ok)
+	}
+	raw, _ := util.ReadFileSafe(path)
+	cfg := util.TryParseJsonc(raw)
+	ps, _ := mapChild(cfg, "providers")
+	if !openCodeV2ProviderEntryMatches(ps, b.ID, ProxyEndpointFor("opencode2"), b.RouteHeader, b.BaseURL) {
+		t.Fatal("written provider did not verify")
+	}
+	pval, _ := ps.Get("acme")
+	p := pval.(*util.OrderedMap)
+	settings, _ := mapChild(p, "settings")
+	if v, _ := settings.Get("apiKey"); v != "secret" {
+		t.Fatalf("apiKey location/value: %v", v)
+	}
+	if v, _ := settings.Get("baseURL"); v != ProxyEndpointFor("opencode2") {
+		t.Fatalf("baseURL=%v", v)
+	}
+	h, _ := mapChild(p, "headers")
+	for k, w := range map[string]string{"X-Tokless-Route": b.RouteHeader, headroomBaseURLHeader: "https://api.example.test", "x-headroom-original-path": "/api/v1/chat/completions"} {
+		if v, _ := h.Get(k); v != w {
+			t.Errorf("%s=%v want %s", k, v, w)
+		}
+	}
+	if v, _ := p.Get("package"); v != "@opencode/ai/providers/openai" {
+		t.Fatalf("package=%v", v)
+	}
+	before := raw
+	changed, ok = syncOpenCodeV2BYOKFor([]openCodeBYOK{b}, path, "opencode2:", false)
+	raw, _ = util.ReadFileSafe(path)
+	if !ok || changed || raw != before {
+		t.Fatalf("not idempotent changed=%v", changed)
+	}
+	user := util.NewOrderedMap()
+	user.Set("name", "User")
+	ps.Set("manual", user)
+	_ = util.WriteFile(path, util.StringifyJSON(cfg))
+	changed, ok = syncOpenCodeV2BYOKFor(nil, path, "opencode2:", true)
+	raw, _ = util.ReadFileSafe(path)
+	cfg = util.TryParseJsonc(raw)
+	ps, _ = mapChild(cfg, "providers")
+	if !ok || !changed {
+		t.Fatalf("unwire changed=%v ok=%v", changed, ok)
+	}
+	if _, exists := ps.Get("acme"); exists {
+		t.Fatal("tokless provider remains")
+	}
+	if _, exists := ps.Get("manual"); !exists {
+		t.Fatal("user provider removed")
+	}
+	if openCodeV2ProviderEntryMatches(ps, "manual", ProxyEndpointFor("opencode2"), b.RouteHeader, b.BaseURL) {
+		t.Fatal("user provider verified as owned")
+	}
+}
+
+func TestOpenCodeV2PackageFallback(t *testing.T) {
+	for input, want := range map[string]string{"@ai-sdk/anthropic": "@opencode/ai/providers/anthropic", "@ai-sdk/openai-compatible": "@opencode/ai/providers/openai-compatible", "unknown": "@opencode/ai/providers/openai-compatible"} {
+		if got := openCodeV2Package(input); got != want {
+			t.Errorf("%s: %s", input, got)
+		}
+	}
+}
+
+func TestRemoveOpenCodeProxyLeavesV2ProvidersAlone(t *testing.T) {
+	opencodeProxyTestHome(t)
+	t.Setenv("HOME", util.Home())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	v2Dir := filepath.Join(t.TempDir(), "opencode2")
+	t.Setenv("OPENCODE_CONFIG_DIR_V2", v2Dir)
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "opencode2")
+	if util.IsWin {
+		bin += ".bat"
+		t.Setenv("USERPROFILE", util.Home())
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf 'opencode v2.0.6\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := util.EnsureDir(v2Dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(v2Dir, "opencode.json")
 	if err := util.WriteFile(path, `{"provider":{"acme":{"npm":"@ai-sdk/openai","options":{"baseURL":"https://api.example.test/api/v1","apiKey":"secret"},"models":{"sel":{"modelID":"real-id","name":"Model","limit":{"context":10}}}}}}`); err != nil {
 		t.Fatal(err)
 	}
 	byoks := []openCodeBYOK{
-		{ID: "acme", File: path, BaseURL: "https://api.example.test/api/v1", APIKey: "secret", Npm: "@ai-sdk/openai", RouteHeader: "opencode:acme.token"},
-		{ID: "beta", File: path, BaseURL: "https://api.beta.test/v1", APIKey: "beta-key", Npm: "@ai-sdk/openai", RouteHeader: "opencode:beta.token"},
-		{ID: "gamma", File: path, BaseURL: "https://api.gamma.test/v1", APIKey: "gamma-key", Npm: "@ai-sdk/openai", RouteHeader: "opencode:gamma.token"},
+		{ID: "acme", File: path, BaseURL: "https://api.example.test/api/v1", APIKey: "secret", Npm: "@ai-sdk/openai", RouteHeader: "opencode2:acme.token"},
+		{ID: "beta", File: path, BaseURL: "https://api.beta.test/v1", APIKey: "beta-key", Npm: "@ai-sdk/openai", RouteHeader: "opencode2:beta.token"},
+		{ID: "gamma", File: path, BaseURL: "https://api.gamma.test/v1", APIKey: "gamma-key", Npm: "@ai-sdk/openai", RouteHeader: "opencode2:gamma.token"},
 	}
-	if changed, ok := syncOpenCodeV2BYOK(byoks); !ok || !changed {
+	if changed, ok := syncOpenCodeV2BYOKFor(byoks, path, "opencode2:", false); !ok || !changed {
 		t.Fatalf("mirror write changed=%v ok=%v", changed, ok)
 	}
 	if util.Exists(byokStashPath()) {
 		t.Fatal("modern wire must not write a BYOK stash")
 	}
+	mirrorBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("v1 configure reported no change")
+	}
 	if !RemoveOpenCodeProxy() {
 		t.Fatal("remove failed")
 	}
+	mirrorAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mirrorBefore) != string(mirrorAfter) {
+		t.Fatalf("v1 flow rewrote the v2 provider mirror:\n%s", mirrorAfter)
+	}
 	raw, _ := util.ReadFileSafe(path)
 	cfg := util.TryParseJsonc(raw)
-	if providers, has := mapChild(cfg, "providers"); has && providers.Len() > 0 {
-		t.Fatalf("v2 provider mirrors survived remove without stash: %s", raw)
+	providers, has := mapChild(cfg, "providers")
+	if !has || providers.Len() == 0 {
+		t.Fatalf("v1 remove touched v2 provider mirrors: %s", raw)
 	}
 }
 
@@ -364,7 +438,6 @@ func TestRewriteProviderBaseURLScopedNoCrossWire(t *testing.T) {
 	if !strings.Contains(raw, `"baseURL": "https://api.provider-b.test/v1"`) {
 		t.Fatalf("prov-b not restored: %s", raw)
 	}
-	// prov-a must still be proxy (first match would have corrupted it)
 	if strings.Count(raw, `"baseURL": "`+proxy+`"`) != 1 {
 		t.Fatalf("cross-wire: proxy base count wrong:\n%s", raw)
 	}
@@ -393,7 +466,6 @@ func TestRewriteProviderBaseURLNoCrashOnBadConfig(t *testing.T) {
 		}
 		raw, _ := util.ReadFileSafe(path)
 		if raw != c && c != "" {
-			// empty may not write; others must stay byte-identical
 			if c != "" && raw != c {
 				t.Fatalf("config mutated: got %q want %q", raw, c)
 			}
@@ -456,7 +528,6 @@ func TestWireUnwireRoundTripNoCrossWire(t *testing.T) {
 	if strings.Contains(raw, "127.0.0.1:8787") {
 		t.Fatalf("proxy left after unwire:\n%s", raw)
 	}
-	// repeated configure must stay stable
 	if changed, routes = wireOpenCodeBYOK(); changed || len(routes) != 3 {
 		t.Fatalf("rewire routes=%d", len(routes))
 	}
@@ -776,5 +847,65 @@ run().catch(err => {
 	}
 	if !strings.Contains(string(out), "PASS: Isolation verified") {
 		t.Fatalf("unexpected test output: %s", string(out))
+	}
+}
+
+// TestConfigureOpenCodeProxyKeepsRoutedEntryWithStaleProxyURL pins that a managed entry with a stale proxyUrl but live routes is not replaced by an empty-routes entry.
+func TestConfigureOpenCodeProxyKeepsRoutedEntryWithStaleProxyURL(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "opencode.json")
+	entry := `{"plugin":[["` + openCodeTransportPluginURL() + `",{"proxyUrl":"http://127.0.0.1:9999","routes":{"acme":"opencode:acme.token"},"upstreams":{"acme":"https://api.acme.test/v1"}}]],"tools":{"headroom_retrieve":false}}`
+	if err := util.WriteFile(path, entry); err != nil {
+		t.Fatal(err)
+	}
+	if util.OpenCodePathsResolved().Config != path {
+		t.Fatalf("v1 config=%s want %s", util.OpenCodePathsResolved().Config, path)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("configure reported no change")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, `"opencode:acme.token"`) {
+		t.Fatalf("routed entry was replaced by an empty one: %s", raw)
+	}
+	if !strings.Contains(raw, `"https://api.acme.test/v1"`) {
+		t.Fatalf("upstreams were dropped: %s", raw)
+	}
+}
+
+// TestConfigureOpenCodeProxyRefreshesStaleRoutedEntry pins that a managed entry with a stale proxyUrl keeps its routes but gets the current endpoint.
+func TestConfigureOpenCodeProxyRefreshesStaleRoutedEntry(t *testing.T) {
+	opencodeProxyTestHome(t)
+	dir := util.OpenCodePathsResolved().Dir
+	if err := util.EnsureDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "opencode.json")
+	entry := `{"plugin":[["` + openCodeTransportPluginURL() + `",{"proxyUrl":"http://127.0.0.1:9999","routes":{"acme":"opencode:acme.token"},"upstreams":{"acme":"https://api.acme.test/v1"}}]],"tools":{"headroom_retrieve":false}}`
+	if err := util.WriteFile(path, entry); err != nil {
+		t.Fatal(err)
+	}
+	if util.OpenCodePathsResolved().Config != path {
+		t.Fatalf("v1 config=%s want %s", util.OpenCodePathsResolved().Config, path)
+	}
+	if changed, _ := ConfigureOpenCodeProxy(); !changed {
+		t.Fatal("configure reported no change")
+	}
+	raw, _ := util.ReadFileSafe(path)
+	if !strings.Contains(raw, strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")) {
+		t.Fatalf("stale proxyUrl was not refreshed: %s", raw)
+	}
+	if strings.Contains(raw, "127.0.0.1:9999") {
+		t.Fatalf("stale proxyUrl survived: %s", raw)
+	}
+	if !strings.Contains(raw, `"opencode:acme.token"`) {
+		t.Fatalf("existing routes were dropped: %s", raw)
+	}
+	if !strings.Contains(raw, `"https://api.acme.test/v1"`) {
+		t.Fatalf("existing upstreams were dropped: %s", raw)
 	}
 }

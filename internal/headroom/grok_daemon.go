@@ -63,7 +63,7 @@ func grokOwnershipValid() bool {
 		return false
 	}
 	identity, err := proxyIdentity(record.PID)
-	return err == nil && identity.matchesRecord(record)
+	return err == nil && identity.matchesRecordShape(record)
 }
 
 func grokRollback(proc *os.Process, pidFile string, cause error) error {
@@ -74,7 +74,7 @@ func grokRollbackWithIdentity(proc *os.Process, pidFile string, expected *proces
 	recordRaw, recordExists := util.ReadFileSafe(pidFile)
 	if expected != nil && expected.Executable != "" {
 		current, err := proxyIdentity(proc.Pid)
-		if err != nil || !current.equal(*expected) {
+		if err != nil || current.Start != expected.Start {
 			return cause
 		}
 	}
@@ -132,6 +132,7 @@ func StartGrokOAuthProxy() error {
 	defer log.Close()
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout, cmd.Stderr = log, log
+	cmd.Env = headroomChildEnv()
 	if err := proxySpawn(cmd); err != nil {
 		return fmt.Errorf("grok proxy failed to start: %w", err)
 	}
@@ -148,7 +149,7 @@ func StartGrokOAuthProxy() error {
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
 		current, identityErr := proxyIdentity(cmd.Process.Pid)
-		if identityErr != nil || !current.equal(identity) {
+		if identityErr != nil || current.Start != identity.Start || !current.matches(bin, args) {
 			return grokRollbackWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("grok proxy identity changed during startup"))
 		}
 		if grokProxyLiveZProbe(proxyProbeTimeout) {
@@ -227,7 +228,7 @@ func StopGrokOAuthProxy() error {
 		}
 		return fmt.Errorf("grok proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
-	if !identity.matchesRecord(record) {
+	if !identity.matchesRecordShape(record) {
 		return fmt.Errorf("grok proxy pid %d identity could not be verified — refusing to stop", record.PID)
 	}
 	proc, err := proxyFindProcess(record.PID)

@@ -13,6 +13,19 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
+// chdirTemp moves the test into a temp dir so a run never writes into the package dir.
+func chdirTemp(t *testing.T) {
+	t.Helper()
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWd) })
+}
+
 // seedAgentInstalled makes an agent detectable in the test home.
 func seedAgentInstalled(t *testing.T, agentID string) {
 	t.Helper()
@@ -62,6 +75,7 @@ func TestInitSelectedInstructionOnlyToolUpdatesAgentInstructions(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	util.SetHomeOverride(home)
 	t.Cleanup(func() { util.SetHomeOverride("") })
+	chdirTemp(t)
 	seedAgentInstalled(t, "claude")
 
 	if code := commands.RunInit(commands.InitOptions{Agents: []string{"claude"}, Tools: []string{"principles"}}); code != 0 {
@@ -127,6 +141,7 @@ func TestInitSelectedToolsAcrossRegisteredAgents(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 			util.SetHomeOverride(home)
 			agents.SetIdeProjectRoot(home)
+			chdirTemp(t)
 			t.Cleanup(func() { util.SetHomeOverride(""); agents.SetIdeProjectRoot("") })
 			seedAgentInstalled(t, agent.ID)
 

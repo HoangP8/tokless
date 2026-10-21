@@ -77,7 +77,7 @@ func TestRtkOpenCodeWritesOnlyDetectedPlugin(t *testing.T) {
 	}
 }
 
-func TestRtkOpenCodeWritesDetectedVersions(t *testing.T) {
+func TestRtkOpenCodeWritesOnlyV1Plugin(t *testing.T) {
 	tmp := t.TempDir()
 	util.SetHomeOverride(tmp)
 	t.Setenv("HOME", tmp)
@@ -101,11 +101,14 @@ func TestRtkOpenCodeWritesDetectedVersions(t *testing.T) {
 	if _, err := rtkWireOpenCode()(core.RunOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if !util.Exists(openCodeRtkPluginPath()) || !util.Exists(openCodeRtkV2PluginPath()) {
-		t.Fatal("mixed install must write both plugins")
+	if !util.Exists(openCodeRtkPluginPath()) {
+		t.Fatal("mixed install must write the v1 plugin")
+	}
+	if util.Exists(openCodeRtkV2PluginPath()) {
+		t.Fatal("the v1 lane must not write the v2 plugin")
 	}
 	if !rtkOpenCodePluginValid() {
-		t.Fatal("both detected plugins should validate")
+		t.Fatal("v1 plugin should validate")
 	}
 }
 

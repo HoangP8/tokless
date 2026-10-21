@@ -139,7 +139,6 @@ func projectmemPurposePlaceholder(body string) bool {
 }
 
 // projectmemSetMapPurpose replaces a placeholder purpose body, or inserts
-// the section before the first existing ## heading when it is missing.
 func projectmemSetMapPurpose(text, desc string) (string, bool) {
 	if _, bodyStart, ok := projectmemPurposeHeading(text); ok {
 		end := len(text)
@@ -238,7 +237,6 @@ func projectmemTruncateWords(s string, max int) string {
 }
 
 // projectmemTruncateTail keeps the TAIL (newest) blocks of text so the returned
-// result (including the leading marker) is <= limit bytes.
 func projectmemTruncateTail(text string, limit int) string {
 	const marker = "…\n"
 	if len(text) <= limit {
@@ -268,7 +266,6 @@ func projectmemTruncateTail(text string, limit int) string {
 }
 
 // projectmemSectionBody returns the trimmed body of a top-level "## heading"
-// section, stopping at the next "## " heading. "" when the heading is absent.
 func projectmemSectionBody(text, heading string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	start := -1
@@ -288,7 +285,6 @@ func projectmemSectionBody(text, heading string) string {
 }
 
 // projectmemPlaceholderBody reports whether body is empty or only italic
-// template lines ("_..._"), which is how upstream ships unwritten sections.
 func projectmemPlaceholderBody(body string) bool {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
@@ -303,7 +299,6 @@ func projectmemPlaceholderBody(body string) bool {
 }
 
 // projectmemNoneOnly reports whether every non-empty line is one of upstream's
-// seeded placeholder bullets ("- None..." or "- No ... logged yet.").
 func projectmemNoneOnly(body string) bool {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
@@ -341,8 +336,7 @@ func projectmemOpenIssues(summary string) string {
 	return strings.Join(open, "\n")
 }
 
-// projectmemStackBody returns PROJECT_MAP's "## Stack" body minus the
-// "- Detected from" line (the digest already carries it) and any placeholder.
+// projectmemStackBody returns PROJECT_MAP's "## Stack" body without the generated line.
 func projectmemStackBody(projectMap string) string {
 	body := projectmemSectionBody(projectMap, "## Stack")
 	if body == "" {
@@ -363,7 +357,6 @@ func projectmemStackBody(projectMap string) string {
 }
 
 // projectmemJunkIssue reports whether an open-issue line is a harness artifact
-// rather than a real defect.
 func projectmemJunkIssue(line string) bool {
 	title := strings.TrimSpace(strings.TrimPrefix(line, "- [OPEN]"))
 	if i := strings.Index(title, " ["); i >= 0 {
@@ -386,7 +379,6 @@ func projectmemJunkIssue(line string) bool {
 }
 
 // projectmemNotesBody drops summary notes the digest already carries, then keeps
-// the highest-ranked notes that still fit in budget.
 func projectmemNotesBody(notes, digest string, budget int) string {
 	if notes == "" || projectmemNoneOnly(notes) {
 		return ""
@@ -458,8 +450,7 @@ func projectmemNoteRank(line string) int {
 	return rank
 }
 
-// projectmemDigestCarries reports whether digest contains summary at least down to
-// upstream's 60-character File Gotchas rendering.
+// projectmemDigestCarries reports whether digest carries summary down to the File Gotchas rendering.
 func projectmemDigestCarries(digest, summary string) bool {
 	summary = strings.TrimSpace(summary)
 	if digest == "" || summary == "" {
@@ -478,7 +469,6 @@ func projectmemDigestCarries(digest, summary string) bool {
 }
 
 // projectmemSmartTruncate mirrors upstream commands/context.py _smart_truncate:
-// sentence boundary, then word boundary, then hard cut.
 func projectmemSmartTruncate(text string, limit int) string {
 	r := []rune(text)
 	if len(r) <= limit {
@@ -497,7 +487,6 @@ func projectmemSmartTruncate(text string, limit int) string {
 }
 
 // projectmemIntentSections renders the intent upstream's `pjm context` never
-// surfaces: full purpose, plan, open issues/notes/questions, and the stack.
 func projectmemIntentSections(root, digest string) string {
 	dir := filepath.Join(root, ".projectmem")
 	summary, _ := util.ReadFileSafe(filepath.Join(dir, "summary.md"))
@@ -534,15 +523,12 @@ func projectmemIntentSections(root, digest string) string {
 	}
 	out := "### Intent & Notes\n\n" + strings.Join(sections, "\n\n")
 	if len(out) > projectmemIntentBudget {
-		// Unreachable while the per-section caps plus headings fit the budget;
-		// kept as a backstop so a future section cannot silently overflow.
 		out = projectmemTruncateTail(out, projectmemIntentBudget)
 	}
 	return out
 }
 
 // Session-text budgets in bytes. The digest gets its own budget so a large
-// `pjm context` cannot evict the project-specific sections only tokless injects.
 const (
 	projectmemGotchasBudget  = 600
 	projectmemIntentBudget   = 6500
@@ -602,8 +588,6 @@ func ProjectmemSessionText(root string) string {
 }
 
 // projectmemTruncateHead keeps the HEAD (leading) text so the result
-// (including the trailing marker) is <= limit bytes, marking dropped
-// trailing content with a trailing " …".
 func projectmemTruncateHead(text string, limit int) string {
 	const marker = " …"
 	if len(text) <= limit {
@@ -631,7 +615,7 @@ func runeSafeCut(text string, max int) int {
 	return max
 }
 
-// ProjectmemMcpInstructions replaces upstream's initialize instructions; state reaches agents via session-start instead.
+// ProjectmemMcpInstructions replaces upstream's initialize instructions.
 var ProjectmemMcpInstructions = "projectmem writer tools: " + strings.Join(agents.ProjectmemMcpToolNames, ", ") + "."
 
 // projectmemGlobalGotchasScript prints cross-project gotchas matching root's stack.
@@ -645,7 +629,7 @@ if gotchas:
         print(f"- {g.get('library', '')}: {g.get('gotcha', '')}")
 `
 
-// projectmemGlobalGotchas replaces the hidden get_global_gotchas tool; "" when none match or the interpreter is unavailable.
+// projectmemGlobalGotchas replaces the hidden get_global_gotchas tool.
 func projectmemGlobalGotchas(ctx context.Context, root string) string {
 	uv := util.Which("uv")
 	if uv == "" {
@@ -801,7 +785,6 @@ export default function (pi: any) {
 `
 
 // kiloProjectmemPlugin (Kilo and OpenCode) appends project memory to the system
-// prompt, computed once per session.
 const kiloProjectmemPlugin = `import { execFileSync } from "node:child_process"
 
 // projectmem-context-v1
@@ -849,6 +832,12 @@ export default { id: "projectmem-context", async setup(ctx: any) {
 
 const projectmemExtensionMarker = "projectmem-context-v1"
 
+// openCodeProjectmemV1File and openCodeProjectmemV2File name the per-lane OpenCode projectmem plugin files.
+const (
+	openCodeProjectmemV1File = "projectmem-context.ts"
+	openCodeProjectmemV2File = "projectmem-context-v2.ts"
+)
+
 func projectmemExtensionPath(agent string) string {
 	switch agent {
 	case "pi":
@@ -858,9 +847,9 @@ func projectmemExtensionPath(agent string) string {
 	case "kilo":
 		return filepath.Join(util.KiloPathsResolved().PluginsDir, "projectmem-context.ts")
 	case "opencode":
-		return filepath.Join(util.OpenCodePathsResolved().PluginsDir, "projectmem-context.ts")
+		return filepath.Join(util.OpenCodePathsResolved().PluginsDir, openCodeProjectmemV1File)
 	case "opencode2":
-		return filepath.Join(util.OpenCodePathsV2().PluginsDir, "projectmem-context.ts")
+		return filepath.Join(util.OpenCodePathsV2().PluginsDir, openCodeProjectmemV2File)
 	}
 	return ""
 }
@@ -873,16 +862,45 @@ func writeProjectmemExtension(agent string) bool {
 	}
 	_ = os.Remove(filepath.Join(filepath.Dir(path), "tokless-projectmem.ts"))
 	tmpl := piProjectmemExtension
-	if agent == "kilo" || agent == "opencode" || agent == "opencode2" {
+	switch agent {
+	case "kilo", "opencode":
 		tmpl = kiloProjectmemPlugin
+	case "opencode2":
+		tmpl = openCodeProjectmemV2Plugin
 	}
 	if util.WriteFile(path, fmt.Sprintf(tmpl, strconv.Quote(exe))) != nil {
 		return false
 	}
 	if agent == "opencode" {
-		return util.WriteFile(filepath.Join(filepath.Dir(path), "projectmem-context-v2.ts"), fmt.Sprintf(openCodeProjectmemV2Plugin, strconv.Quote(exe))) == nil
+		removeStaleOpenCodeV2ProjectmemPlugin()
+	}
+	if agent == "opencode2" && openCodeV2PluginsDirIsSeparate() {
+		_ = os.Remove(filepath.Join(filepath.Dir(path), openCodeProjectmemV1File))
 	}
 	return true
+}
+
+// openCodeV2PluginsDirIsSeparate reports whether v2 has its own plugins dir; a shared dir's files belong to v1.
+func openCodeV2PluginsDirIsSeparate() bool {
+	return util.OpenCodePathsV2().PluginsDir != util.OpenCodePathsResolved().PluginsDir
+}
+
+// toklessOwnedPluginFile reports whether path carries the tokless marker, not just the file name.
+func toklessOwnedPluginFile(path, marker string) bool {
+	raw, ok := util.ReadFileSafe(path)
+	return ok && strings.Contains(raw, marker)
+}
+
+// removeStaleOpenCodeV2ProjectmemPlugin drops the v2-shaped projectmem plugin an older tokless left in the v1 dir.
+func removeStaleOpenCodeV2ProjectmemPlugin() {
+	if !openCodeV2PluginsDirIsSeparate() {
+		return
+	}
+	path := filepath.Join(util.OpenCodePathsResolved().PluginsDir, openCodeProjectmemV2File)
+	if !toklessOwnedPluginFile(path, "projectmem-hook") {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 func hasProjectmemExtension(agent string) bool {
@@ -896,8 +914,11 @@ func removeProjectmemExtension(agent string) {
 	}
 	if path := projectmemExtensionPath(agent); path != "" {
 		_ = os.Remove(filepath.Join(filepath.Dir(path), "tokless-projectmem.ts"))
-		if agent == "opencode" || agent == "opencode2" {
-			_ = os.Remove(filepath.Join(filepath.Dir(path), "projectmem-context-v2.ts"))
+		if agent == "opencode" {
+			removeStaleOpenCodeV2ProjectmemPlugin()
+		}
+		if agent == "opencode2" && openCodeV2PluginsDirIsSeparate() {
+			_ = os.Remove(filepath.Join(filepath.Dir(path), openCodeProjectmemV1File))
 		}
 	}
 }
@@ -915,7 +936,7 @@ func projectmemRuleFiles() []projectmemRuleFile {
 	}
 }
 
-// RefreshProjectmemRuleFiles rewrites wired agents' rule files with current state and excludes them from git; runs on MCP server start and exit.
+// RefreshProjectmemRuleFiles rewrites wired agents' rule files with current state and excludes them from git.
 var projectmemRefreshMu sync.Mutex
 
 func RefreshProjectmemRuleFiles(root string) {
@@ -952,7 +973,7 @@ func RefreshProjectmemRuleFiles(root string) {
 	}
 }
 
-// sweepProjectmemTemps removes .tokless-write-* files from dead processes; files under a minute old may be active writes.
+// sweepProjectmemTemps removes .tokless-write-* files from dead processes.
 func sweepProjectmemTemps(dir string) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
@@ -1297,7 +1318,6 @@ func init() {
 		}
 		agentID := a
 		projectmem.VerifyFor[agentID] = func() *bool {
-			// Copilot's IDE side is project-scoped; outside a project only user-level config is checked.
 			if agentID == "copilot" && !agents.IdeInProject() {
 				return core.BoolPtr(agents.CopilotProjectmemMcpBounded(false) && agents.HasCopilotProjectmemHook())
 			}

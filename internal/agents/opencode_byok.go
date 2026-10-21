@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/util"
@@ -20,10 +21,12 @@ type openCodeBYOK struct {
 	Npm         string
 	Protocol    string
 	RouteHeader string
+	Native      bool
+	Name        string
+	RawAPIKey   string
 }
 
-// openCodeConfigFiles returns every global OpenCode config that may hold providers,
-// in OpenCode load order (config.json first → opencode.json → opencode.jsonc).
+// openCodeConfigFiles returns every global OpenCode config that may hold providers.
 func openCodeConfigFiles() []string {
 	dir := util.OpenCodePathsResolved().Dir
 	paths := []string{
@@ -42,15 +45,20 @@ func openCodeConfigFiles() []string {
 
 // DiscoverOpenCodeBYOK finds user providers with a real upstream + credential.
 func DiscoverOpenCodeBYOK() []openCodeBYOK {
-	proxyBase := strings.TrimRight(ProxyEndpointFor("opencode"), "/")
+	return discoverOpenCodeBYOKIn(openCodeConfigFiles(), "opencode:", byokStashPath())
+}
+
+// discoverOpenCodeBYOKIn discovers providers in one OpenCode version.
+func discoverOpenCodeBYOKIn(files []string, prefix string, stashPath string) []openCodeBYOK {
+	proxyBase := strings.TrimRight(ProxyEndpointFor(strings.TrimSuffix(prefix, ":")), "/")
 	type acc struct {
-		base, key, file, npm string
+		base, key, raw, file, npm string
 	}
 	got := map[string]*acc{}
 	duplicates := map[string]bool{}
 	order := []string{}
 
-	for _, path := range openCodeConfigFiles() {
+	for _, path := range files {
 		raw, ok := util.ReadFileSafe(path)
 		if !ok || util.HasJSONCComments(raw) {
 			continue
@@ -72,7 +80,8 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 			if !ok {
 				continue
 			}
-			base, key := providerBaseAndKey(m)
+			base, rawKey := providerBaseAndRawKey(m)
+			key := resolveAPIKey(rawKey)
 			if base == "" && key == "" {
 				continue
 			}
@@ -86,6 +95,7 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 			}
 			if key != "" {
 				a.key = key
+				a.raw = rawKey
 			}
 			if npm, ok := m.Get("npm"); ok {
 				if s, ok := npm.(string); ok && s != "" {
@@ -99,8 +109,7 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 		}
 	}
 
-	// Fill missing originals from stash (provider already rewritten to proxy).
-	stashed := loadBYOKStash()
+	stashed := loadBYOKStashAt(stashPath)
 	var out []openCodeBYOK
 	for _, id := range order {
 		if duplicates[id] {
@@ -119,7 +128,7 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 			continue
 		}
 		routeHeader := ""
-		if route, ok := util.ReadBYOKRoute("opencode:" + id); ok {
+		if route, ok := util.ReadBYOKRoute(prefix + id); ok {
 			routeHeader = util.BYOKRouteHeader(route)
 		}
 		out = append(out, openCodeBYOK{
@@ -127,12 +136,230 @@ func DiscoverOpenCodeBYOK() []openCodeBYOK {
 			File:        a.file,
 			BaseURL:     a.base,
 			APIKey:      a.key,
+			RawAPIKey:   a.raw,
 			Npm:         a.npm,
 			Protocol:    openCodeProtocol(a.npm),
 			RouteHeader: routeHeader,
 		})
 	}
 	return out
+}
+
+// openCodeSkip is a provider that was not wired, with the reason why.
+type openCodeSkip struct {
+	ID string
+
+	Reason string
+}
+
+// openCodeSkipMessages renders the skipped providers for a log line.
+func openCodeSkipMessages(skipped []openCodeSkip) []string {
+	out := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		if s.ID == "" {
+			out = append(out, s.Reason)
+			continue
+		}
+		out = append(out, s.ID+": "+s.Reason)
+	}
+	return out
+}
+
+// discoverOpenCodeV2BYOKIn discovers providers in the native OpenCode v2 shape, so a v2-only config can ride the proxy.
+func discoverOpenCodeV2BYOKIn(files []string, prefix string, stashPath string) ([]openCodeBYOK, []openCodeSkip) {
+	proxyBase := openCodeProxyEndpointFor(prefix)
+	stashed := loadBYOKStashAt(stashPath)
+	var out []openCodeBYOK
+	var skipped []openCodeSkip
+	for _, path := range files {
+		raw, ok := util.ReadFileSafe(path)
+		if !ok {
+			continue
+		}
+		if util.HasJSONCComments(raw) {
+			skipped = append(skipped, openCodeSkip{Reason: "comment-bearing config " + path})
+			continue
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			continue
+		}
+		providers, ok := mapChild(cfg, "providers")
+		if !ok {
+			continue
+		}
+		for _, id := range providers.Keys() {
+			block, ok := providers.Get(id)
+			if !ok {
+				continue
+			}
+			m, ok := block.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			npm := openCodeV2ProviderNpm(m)
+			if npm == "" {
+				skipped = append(skipped, openCodeSkip{ID: id, Reason: "unknown package"})
+				continue
+			}
+			base, key := openCodeV2ProviderBaseAndKey(m)
+			stashedBase := ""
+			if s, ok := stashed[id]; ok {
+				stashedBase = s.BaseURL
+			}
+			upstream := openCodeV2ProviderUpstream(m, base, proxyBase, stashedBase)
+			if !isValidBYOKUpstream(upstream) {
+				upstream = ""
+			}
+			if upstream == "" {
+				skipped = append(skipped, openCodeSkip{ID: id, Reason: "no upstream"})
+				continue
+			}
+			if key == "" {
+				skipped = append(skipped, openCodeSkip{ID: id, Reason: "no api key"})
+				continue
+			}
+			routeHeader := ""
+			if route, ok := util.ReadBYOKRoute(prefix + id); ok {
+				routeHeader = util.BYOKRouteHeader(route)
+			}
+			out = append(out, openCodeBYOK{
+				ID:          id,
+				File:        path,
+				BaseURL:     upstream,
+				APIKey:      key,
+				RawAPIKey:   key,
+				Npm:         npm,
+				Protocol:    openCodeProtocol(npm),
+				RouteHeader: routeHeader,
+				Native:      true,
+				Name:        openCodeV2ProviderName(m),
+			})
+		}
+	}
+	return out, skipped
+}
+
+// openCodeV2ProviderBaseAndKey returns the provider base URL and the api key exactly as written.
+func openCodeV2ProviderBaseAndKey(m *util.OrderedMap) (base, key string) {
+	settings, _ := mapChild(m, "settings")
+	if settings != nil {
+		if v, ok := settings.Get("baseURL"); ok {
+			base, _ = v.(string)
+		}
+		if base == "" {
+			if v, ok := settings.Get("baseUrl"); ok {
+				base, _ = v.(string)
+			}
+		}
+		if v, ok := settings.Get("apiKey"); ok {
+			key, _ = v.(string)
+		}
+	}
+	base = strings.TrimSpace(base)
+	key = strings.TrimSpace(key)
+	return base, key
+}
+
+// openCodeV2ProviderName returns the provider display name as written by the user.
+func openCodeV2ProviderName(m *util.OrderedMap) string {
+	v, ok := m.Get("name")
+	if !ok {
+		return ""
+	}
+	name, _ := v.(string)
+	return strings.TrimSpace(name)
+}
+
+// openCodeV2ProviderUpstream resolves the upstream of a v2 provider entry.
+func openCodeV2ProviderUpstream(m *util.OrderedMap, base string, proxyBase string, stashed string) string {
+	if base != "" && isAbsoluteHTTP(base) && !openCodeV2ProxyEndpoint(base, proxyBase) && !openCodeV2EndpointSlot(m, base) {
+		return base
+	}
+	headers, ok := mapChild(m, "headers")
+	if ok {
+		if origin, has := headers.Get(headroomBaseURLHeader); has {
+			if raw, isString := origin.(string); isString && strings.TrimSpace(raw) != "" {
+				return openCodeV2UpstreamWithPath(raw, headers)
+			}
+		}
+	}
+	return strings.TrimSpace(stashed)
+}
+
+// openCodeV2EndpointSlot reports whether the baseURL of a mirrored entry is the endpoint slot and not an upstream.
+func openCodeV2EndpointSlot(m *util.OrderedMap, base string) bool {
+	headers, ok := mapChild(m, "headers")
+	if !ok {
+		return false
+	}
+	if _, owned := headers.Get("X-Tokless-Route"); !owned {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return false
+	}
+	return util.IsLoopbackHost(u.Hostname())
+}
+
+// openCodeV2ProxyEndpoint reports whether a base URL points at a proxy.
+func openCodeV2ProxyEndpoint(raw string, proxyBase string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	if sameProxyBase(raw, proxyBase) {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || !util.IsLoopbackHost(u.Hostname()) {
+		return false
+	}
+	port := u.Port()
+	if port == "" {
+		return false
+	}
+	for _, p := range []int{util.HeadroomProxyPort(), util.BYOKGatewayPort(), util.GrokOAuthProxyPort()} {
+		if port == strconv.Itoa(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// openCodeV2UpstreamWithPath rebuilds the upstream base URL from the headroom origin plus the original path.
+func openCodeV2UpstreamWithPath(origin string, headers *util.OrderedMap) string {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	path := ""
+	if v, ok := headers.Get(openCodeV2OriginalPathHeader); ok {
+		if raw, ok := v.(string); ok {
+			path = strings.TrimSuffix(strings.TrimSpace(raw), "/chat/completions")
+			path = strings.TrimRight(path, "/")
+		}
+	}
+	if path == "" {
+		return origin
+	}
+	return origin + path
+}
+
+// openCodeV2ProviderNpm maps a v2 provider package to its ai-sdk npm name.
+func openCodeV2ProviderNpm(m *util.OrderedMap) string {
+	pkg := ""
+	if v, ok := m.Get("package"); ok {
+		pkg, _ = v.(string)
+	}
+	switch strings.TrimSpace(pkg) {
+	case "@opencode/ai/providers/openai-compatible":
+		return "@ai-sdk/openai-compatible"
+	case "@opencode/ai/providers/openai":
+		return "@ai-sdk/openai"
+	case "@opencode/ai/providers/anthropic":
+		return "@ai-sdk/anthropic"
+	default:
+		return ""
+	}
 }
 
 func openCodeProtocol(npm string) string {
@@ -146,7 +373,14 @@ func openCodeProtocol(npm string) string {
 	}
 }
 
+// providerBaseAndKey returns the provider base URL and the resolved api key.
 func providerBaseAndKey(m *util.OrderedMap) (base, key string) {
+	base, raw := providerBaseAndRawKey(m)
+	return base, resolveAPIKey(raw)
+}
+
+// providerBaseAndRawKey returns the provider base URL and the api key exactly as written.
+func providerBaseAndRawKey(m *util.OrderedMap) (base, key string) {
 	opts, _ := m.Get("options")
 	om, _ := opts.(*util.OrderedMap)
 	if om != nil {
@@ -173,7 +407,7 @@ func providerBaseAndKey(m *util.OrderedMap) (base, key string) {
 		}
 	}
 	base = strings.TrimSpace(base)
-	key = resolveAPIKey(strings.TrimSpace(key))
+	key = strings.TrimSpace(key)
 	return base, key
 }
 
@@ -246,14 +480,12 @@ func wireOpenCodeBYOKLocked() (changed bool, byoks []openCodeBYOK, ok bool) {
 		if openCodeHasOrphanedProxyRoute() {
 			return false, nil, false
 		}
-		v2Changed, v2OK := syncOpenCodeV2BYOK(nil)
-		return legacyChanged || v2Changed, nil, v2OK
+		return legacyChanged, nil, true
 	}
 	if openCodeHasOrphanedProxyRoute() {
 		return false, nil, false
 	}
-	v2Changed, v2OK := syncOpenCodeV2BYOK(byoks)
-	return legacyChanged || v2Changed, byoks, v2OK
+	return legacyChanged, byoks, true
 }
 
 // unwireOpenCodeBYOK restores original baseURLs from stash.
@@ -277,13 +509,15 @@ func unwireOpenCodeBYOKLocked() (removed bool, ok bool) {
 	if !byokStashValid() {
 		return false, false
 	}
-	if len(stashed) == 0 {
-		v2Removed, v2OK := syncOpenCodeV2BYOK(nil)
-		return v2Removed, v2OK
-	}
 	removed = false
-	remaining := map[string]byokStashEntry{}
 	originals := map[string]string{}
+	if pruneOpenCodeV2MirrorsInV1Config(stashed, originals) {
+		removed = true
+	}
+	if len(stashed) == 0 {
+		return removed, true
+	}
+	remaining := map[string]byokStashEntry{}
 	for id, s := range stashed {
 		if s.BaseURL == "" || s.File == "" {
 			remaining[id] = s
@@ -309,8 +543,79 @@ func unwireOpenCodeBYOKLocked() (removed bool, ok bool) {
 			return false, restoreOpenCodeProviderFiles(originals)
 		}
 	}
-	v2Removed, v2OK := syncOpenCodeV2BYOK(nil)
-	return removed || v2Removed, v2OK
+	return removed, true
+}
+
+// pruneOpenCodeV2MirrorsInV1Config removes the v2-shaped provider entries an older tokless left in the v1 config.
+func pruneOpenCodeV2MirrorsInV1Config(stashed map[string]byokStashEntry, originals map[string]string) bool {
+	changed := false
+	v2Stashed := loadBYOKStashAt(byokStashPathFor("opencode2"))
+	for _, path := range openCodeConfigFiles() {
+		raw, ok := util.ReadFileSafe(path)
+		if !ok || util.HasJSONCComments(raw) {
+			continue
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			continue
+		}
+		providers, has := mapChild(cfg, "providers")
+		if !has {
+			continue
+		}
+		fileChanged := false
+		for _, id := range append([]string(nil), providers.Keys()...) {
+			value, _ := providers.Get(id)
+			entry, ok := value.(*util.OrderedMap)
+			if !ok {
+				continue
+			}
+			headers, ok := mapChild(entry, "headers")
+			if !ok {
+				continue
+			}
+			route, _ := headers.Get("X-Tokless-Route")
+			s, ok := route.(string)
+			if !ok || !openCodeRouteNamespaceOwned(s) {
+				continue
+			}
+			if stash, ok := stashed[id]; ok && stash.File == path {
+				restoreOpenCodeV2ProviderEntry(entry, openCodeBYOK{ID: id, BaseURL: stash.BaseURL, APIKey: stash.APIKey})
+				fileChanged = true
+				continue
+			}
+			if stash, ok := v2Stashed[id]; ok && stash.Native && stash.File == path {
+				restoreOpenCodeV2ProviderEntry(entry, openCodeBYOK{ID: id, BaseURL: stash.BaseURL, APIKey: stash.APIKey})
+				fileChanged = true
+				continue
+			}
+			providers.Delete(id)
+			fileChanged = true
+		}
+		if !fileChanged {
+			continue
+		}
+		if providers.Len() == 0 {
+			cfg.Delete("providers")
+		}
+		newRaw := util.StringifyJSON(cfg)
+		if newRaw == raw {
+			continue
+		}
+		if _, exists := originals[path]; !exists {
+			originals[path] = raw
+		}
+		if util.WriteFile(path, newRaw) != nil {
+			return changed
+		}
+		changed = true
+	}
+	return changed
+}
+
+// openCodeRouteNamespaceOwned reports whether a route header belongs to a tokless OpenCode route namespace.
+func openCodeRouteNamespaceOwned(route string) bool {
+	return strings.HasPrefix(route, "opencode:") || strings.HasPrefix(route, "opencode2:")
 }
 
 func openCodeV2Package(npm string) string {
@@ -326,22 +631,17 @@ func openCodeV2Package(npm string) string {
 	}
 }
 
-func openCodeV2Binary() string {
-	for _, bin := range openCodeBinaryPaths() {
-		if OpenCodeMajorVersion(bin) == 2 {
-			return bin
-		}
-	}
-	return ""
+// openCodeV2LegacyRoutePrefix is the namespace older tokless versions wrote into the v2 mirror.
+const openCodeV2LegacyRoutePrefix = "opencode:"
+
+// openCodeV2RoutePrefixOwned reports whether a route header is in the current or legacy namespace.
+func openCodeV2RoutePrefixOwned(route string, prefix string) bool {
+	return strings.HasPrefix(route, prefix) || strings.HasPrefix(route, openCodeV2LegacyRoutePrefix)
 }
 
-func openCodeV2ProviderRouteMatches(raw, id, endpoint, routeHeader, upstream string) bool {
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	providers, ok := mapChild(cfg, "providers")
-	if !ok {
+// openCodeV2ProviderEntryMatches reports whether the mirror entry already carries the wanted route and upstream.
+func openCodeV2ProviderEntryMatches(providers *util.OrderedMap, id, endpoint, routeHeader, upstream string) bool {
+	if providers == nil {
 		return false
 	}
 	value, ok := providers.Get(id)
@@ -365,17 +665,127 @@ func openCodeV2ProviderRouteMatches(raw, id, endpoint, routeHeader, upstream str
 		return false
 	}
 	route, _ := headers.Get("X-Tokless-Route")
+	origin, path := openCodeV2UpstreamHeaders(upstream)
 	headroom, _ := headers.Get(headroomBaseURLHeader)
-	return route == routeHeader && headroom == upstream
+	if route != routeHeader || headroom != origin {
+		return false
+	}
+	current, _ := headers.Get(openCodeV2OriginalPathHeader)
+	if path == "" {
+		return current == nil
+	}
+	return current == path
 }
 
-func syncOpenCodeV2BYOK(byoks []openCodeBYOK) (changed, ok bool) {
+// openCodeV2UpstreamHeaders returns the origin and the original path a mirrored entry carries for an upstream.
+func openCodeV2UpstreamHeaders(upstream string) (origin string, path string) {
+	origin = openCodeV2Upstream(upstream)
+	u, _ := url.Parse(upstream)
+	if u != nil && strings.Trim(u.EscapedPath(), "/") != "" {
+		path = strings.TrimRight(u.EscapedPath(), "/") + "/chat/completions"
+	}
+	return origin, path
+}
+
+// openCodeV2NativeEntries returns the native v2 providers of one file.
+func openCodeV2NativeEntries(file string, prefix string) map[string]openCodeBYOK {
+	out := map[string]openCodeBYOK{}
+	stashPath := byokStashPathFor(strings.TrimSuffix(prefix, ":"))
+	byoks, _ := discoverOpenCodeV2BYOKIn([]string{file}, prefix, stashPath)
+	for _, b := range byoks {
+		out[b.ID] = b
+	}
+	return out
+}
+
+// openCodeV2ProvidersOf returns the providers map of one config file.
+func openCodeV2ProvidersOf(file string) *util.OrderedMap {
+	raw, ok := util.ReadFileSafe(file)
+	if !ok || util.HasJSONCComments(raw) {
+		return nil
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return nil
+	}
+	providers, _ := mapChild(cfg, "providers")
+	return providers
+}
+
+// openCodeV2StashFor records the providers the v2 mirror takes over.
+func openCodeV2StashFor(byoks []openCodeBYOK, mirrorFile string, prefix string) map[string]byokStashEntry {
+	out := map[string]byokStashEntry{}
+	providers := openCodeV2ProvidersOf(mirrorFile)
+	proxyBase := openCodeProxyEndpointFor(prefix)
+	previous := loadBYOKStashAt(byokStashPathFor(strings.TrimSuffix(prefix, ":")))
+	for _, b := range byoks {
+		if b.RouteHeader == "" {
+			continue
+		}
+		var m *util.OrderedMap
+		if providers != nil {
+			if value, ok := providers.Get(b.ID); ok {
+				m, _ = value.(*util.OrderedMap)
+			}
+		}
+		native := m != nil && !openCodeV2OwnedRoute(providers, b.ID, prefix)
+		base := b.BaseURL
+		key := ""
+		if native {
+			entryBase, entryKey := openCodeV2ProviderBaseAndKey(m)
+			prev := previous[b.ID]
+			if up := openCodeV2ProviderUpstream(m, entryBase, proxyBase, prev.BaseURL); up != "" {
+				base = up
+			}
+			key = entryKey
+		}
+		out[b.ID] = byokStashEntry{
+			File:    mirrorFile,
+			BaseURL: base,
+			Native:  native,
+			APIKey:  key,
+		}
+	}
+	for id, prev := range previous {
+		cur, ok := out[id]
+		if !ok {
+			out[id] = prev
+			continue
+		}
+		if !prev.Native {
+			continue
+		}
+		cur.Native = true
+		if prev.File != "" {
+			cur.File = prev.File
+		}
+		if prev.BaseURL != "" && !openCodeV2ProxyEndpoint(prev.BaseURL, proxyBase) {
+			cur.BaseURL = prev.BaseURL
+		}
+		if prev.APIKey != "" {
+			cur.APIKey = prev.APIKey
+		}
+		out[id] = cur
+	}
+	return out
+}
+
+// openCodeProxyEndpointFor returns the proxy endpoint a lane points at.
+func openCodeProxyEndpointFor(prefix string) string {
+	endpoint := util.BYOKGatewayEndpoint()
+	if e := strings.TrimSpace(ProxyEndpointFor(strings.TrimSuffix(prefix, ":"))); e != "" {
+		endpoint = e
+	}
+	return endpoint
+}
+
+// syncOpenCodeV2BYOKFor mirrors providers into the v2 provider shape, touching only tokless-owned or native entries.
+func syncOpenCodeV2BYOKFor(byoks []openCodeBYOK, file string, prefix string, prune bool) (changed, ok bool) {
 	actualHome, _ := os.UserHomeDir()
-	if openCodeV2Binary() == "" || util.Home() != actualHome {
+	if util.Home() != actualHome {
 		return false, true
 	}
-	path := filepath.Join(util.OpenCodePathsResolved().Dir, "opencode.json")
-	raw, exists := util.ReadFileSafe(path)
+	raw, exists := util.ReadFileSafe(file)
 	if !exists {
 		raw = "{}"
 	}
@@ -390,58 +800,78 @@ func syncOpenCodeV2BYOK(byoks []openCodeBYOK) (changed, ok bool) {
 	if !has && len(byoks) == 0 {
 		return false, true
 	}
+	endpoint := openCodeProxyEndpointFor(prefix)
+	wanted := map[string]bool{}
+	if !prune {
+		for _, b := range byoks {
+			if b.RouteHeader == "" {
+				continue
+			}
+			wanted[b.ID] = true
+		}
+		if len(wanted) == 0 {
+			return false, true
+		}
+	}
 	if !has {
+		if prune {
+			return false, true
+		}
 		providers = util.NewOrderedMap()
 		cfg.Set("providers", providers)
 	}
-	if len(byoks) == 0 && !has {
-		return false, true
-	}
-	endpoint := util.BYOKGatewayEndpoint()
-	if strings.TrimSpace(ProxyEndpointFor("opencode")) != "" {
-		endpoint = ProxyEndpointFor("opencode")
-	}
-	wanted := map[string]bool{}
-	for _, b := range byoks {
-		if b.RouteHeader == "" {
-			continue
-		}
-		wanted[b.ID] = true
-		if _, present := providers.Get(b.ID); present {
-			if openCodeV2ProviderRouteMatches(raw, b.ID, endpoint, b.RouteHeader, openCodeV2Upstream(b.BaseURL)) {
+	nativeEntries := openCodeV2NativeEntries(file, prefix)
+	if !prune {
+		for _, b := range byoks {
+			if b.RouteHeader == "" {
 				continue
 			}
-			if !openCodeV2OwnedRoute(providers, b.ID) {
+			_, isNative := nativeEntries[b.ID]
+			value, present := providers.Get(b.ID)
+			entry, isEntry := value.(*util.OrderedMap)
+			if present && isEntry {
+				if openCodeV2ProviderEntryMatches(providers, b.ID, endpoint, b.RouteHeader, b.BaseURL) {
+					continue
+				}
+				if !openCodeV2OwnedRoute(providers, b.ID, prefix) && !isNative {
+					continue
+				}
+				openCodeV2RewriteProviderEntry(entry, b, endpoint)
+				changed = true
+				continue
+			}
+			if present {
 				continue
 			}
 			providers.Set(b.ID, openCodeV2ProviderEntry(b, endpoint))
 			changed = true
-			continue
 		}
-		providers.Set(b.ID, openCodeV2ProviderEntry(b, endpoint))
-		changed = true
 	}
-	if !has && len(wanted) == 0 {
-		return false, true
-	}
-	for _, id := range append([]string(nil), providers.Keys()...) {
-		if wanted[id] {
-			continue
-		}
-		if v, _ := providers.Get(id); v != nil {
-			if m, ok := v.(*util.OrderedMap); ok {
-				h, hasHeaders := mapChild(m, "headers")
-				if !hasHeaders {
-					continue
-				}
-				route, _ := h.Get("X-Tokless-Route")
-				settings, _ := mapChild(m, "settings")
-				base, _ := settings.Get("baseURL")
-				if s, ok := route.(string); ok && strings.HasPrefix(s, "opencode:") && base == endpoint {
-					providers.Delete(id)
-					changed = true
+	if prune {
+		stashed := loadBYOKStashAt(byokStashPathFor(strings.TrimSuffix(prefix, ":")))
+		for _, id := range append([]string(nil), providers.Keys()...) {
+			if v, _ := providers.Get(id); v != nil {
+				if m, ok := v.(*util.OrderedMap); ok {
+					h, hasHeaders := mapChild(m, "headers")
+					if !hasHeaders {
+						continue
+					}
+					route, _ := h.Get("X-Tokless-Route")
+					if s, ok := route.(string); ok && openCodeV2RoutePrefixOwned(s, prefix) {
+						if entry, isNative := stashed[id]; isNative && entry.Native && entry.File == file {
+							if restoreOpenCodeV2ProviderEntry(m, openCodeBYOK{ID: id, BaseURL: entry.BaseURL, APIKey: entry.APIKey}) {
+								changed = true
+							}
+							continue
+						}
+						providers.Delete(id)
+						changed = true
+					}
 				}
 			}
+		}
+		if !changed {
+			return false, true
 		}
 	}
 	if providers.Len() == 0 && changed {
@@ -451,13 +881,17 @@ func syncOpenCodeV2BYOK(byoks []openCodeBYOK) (changed, ok bool) {
 	if newRaw == raw {
 		return changed, true
 	}
-	if err := util.WriteFile(path, newRaw); err != nil {
+	if err := util.WriteFile(file, newRaw); err != nil {
 		return false, false
 	}
 	return true, true
 }
 
-func openCodeV2OwnedRoute(providers *util.OrderedMap, id string) bool {
+// openCodeV2OwnedRoute reports whether the mirror entry is tokless-owned.
+func openCodeV2OwnedRoute(providers *util.OrderedMap, id string, prefix string) bool {
+	if providers == nil {
+		return false
+	}
 	value, ok := providers.Get(id)
 	if !ok {
 		return false
@@ -472,7 +906,7 @@ func openCodeV2OwnedRoute(providers *util.OrderedMap, id string) bool {
 	}
 	route, _ := headers.Get("X-Tokless-Route")
 	s, ok := route.(string)
-	return ok && strings.HasPrefix(s, "opencode:")
+	return ok && openCodeV2RoutePrefixOwned(s, prefix)
 }
 
 func openCodeV2Upstream(raw string) string {
@@ -483,26 +917,106 @@ func openCodeV2Upstream(raw string) string {
 	return raw
 }
 
+// openCodeV2ProviderEntry mirrors a provider into the v2 shape; the key stays raw, so no secret is materialized.
 func openCodeV2ProviderEntry(b openCodeBYOK, endpoint string) *util.OrderedMap {
 	entry := util.NewOrderedMap()
-	entry.Set("name", b.ID)
+	name := b.Name
+	if name == "" {
+		name = b.ID
+	}
+	entry.Set("name", name)
 	entry.Set("package", openCodeV2Package(b.Npm))
 	settings := util.NewOrderedMap()
 	settings.Set("baseURL", endpoint)
-	if b.APIKey != "" {
-		settings.Set("apiKey", b.APIKey)
+	if key := openCodeBYOKRawKey(b); key != "" {
+		settings.Set("apiKey", key)
 	}
 	entry.Set("settings", settings)
-	u, _ := url.Parse(b.BaseURL)
+	origin, path := openCodeV2UpstreamHeaders(b.BaseURL)
 	headers := util.NewOrderedMap()
 	headers.Set("X-Tokless-Route", b.RouteHeader)
-	headers.Set(headroomBaseURLHeader, openCodeV2Upstream(b.BaseURL))
-	if u != nil && strings.Trim(u.EscapedPath(), "/") != "" {
-		headers.Set("x-headroom-original-path", strings.TrimRight(u.EscapedPath(), "/")+"/chat/completions")
+	headers.Set(headroomBaseURLHeader, origin)
+	if path != "" {
+		headers.Set(openCodeV2OriginalPathHeader, path)
 	}
 	entry.Set("headers", headers)
 	entry.Set("models", openCodeV2Models(b.File, b.ID))
 	return entry
+}
+
+// openCodeBYOKRawKey returns the key of a provider exactly as the user wrote it.
+func openCodeBYOKRawKey(b openCodeBYOK) string {
+	if b.RawAPIKey != "" {
+		return b.RawAPIKey
+	}
+	return b.APIKey
+}
+
+// openCodeV2RewriteProviderEntry rewrites a native v2 provider entry in place.
+func openCodeV2RewriteProviderEntry(entry *util.OrderedMap, b openCodeBYOK, endpoint string) {
+	if entry == nil {
+		return
+	}
+	settings := getOrCreateMap(entry, "settings")
+	settings.Set("baseURL", endpoint)
+	settings.Delete("baseUrl")
+	if key := openCodeV2EntryKey(settings, b); key != "" {
+		settings.Set("apiKey", key)
+	}
+	if !b.Native {
+		entry.Set("package", openCodeV2Package(b.Npm))
+	}
+	origin, path := openCodeV2UpstreamHeaders(b.BaseURL)
+	headers := getOrCreateMap(entry, "headers")
+	headers.Set("X-Tokless-Route", b.RouteHeader)
+	headers.Set(headroomBaseURLHeader, origin)
+	if path != "" {
+		headers.Set(openCodeV2OriginalPathHeader, path)
+	} else {
+		headers.Delete(openCodeV2OriginalPathHeader)
+	}
+}
+
+// openCodeV2EntryKey returns the key a mirrored entry keeps.
+func openCodeV2EntryKey(settings *util.OrderedMap, b openCodeBYOK) string {
+	if !b.Native {
+		return openCodeBYOKRawKey(b)
+	}
+	if v, ok := settings.Get("apiKey"); ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return openCodeBYOKRawKey(b)
+}
+
+// openCodeV2OriginalPathHeader carries the upstream path a mirrored entry replaced with the proxy endpoint.
+const openCodeV2OriginalPathHeader = "x-headroom-original-path"
+
+// restoreOpenCodeV2ProviderEntry gives a taken-over native provider entry back to the user.
+func restoreOpenCodeV2ProviderEntry(entry *util.OrderedMap, b openCodeBYOK) bool {
+	if entry == nil {
+		return false
+	}
+	settings := getOrCreateMap(entry, "settings")
+	if b.BaseURL != "" {
+		settings.Set("baseURL", b.BaseURL)
+		settings.Delete("baseUrl")
+	}
+	if b.APIKey != "" {
+		settings.Set("apiKey", b.APIKey)
+	}
+	headers, ok := mapChild(entry, "headers")
+	if !ok {
+		return true
+	}
+	headers.Delete("X-Tokless-Route")
+	headers.Delete(headroomBaseURLHeader)
+	headers.Delete(openCodeV2OriginalPathHeader)
+	if headers.Len() == 0 {
+		entry.Delete("headers")
+	}
+	return true
 }
 
 func openCodeV2Models(file, id string) *util.OrderedMap {
@@ -515,15 +1029,7 @@ func openCodeV2Models(file, id string) *util.OrderedMap {
 	if cfg == nil {
 		return out
 	}
-	ps, ok := mapChild(cfg, "provider")
-	if !ok {
-		return out
-	}
-	v, ok := ps.Get(id)
-	if !ok {
-		return out
-	}
-	p, ok := v.(*util.OrderedMap)
+	p, ok := openCodeV2ModelsProvider(cfg, id)
 	if !ok {
 		return out
 	}
@@ -555,6 +1061,26 @@ func openCodeV2Models(file, id string) *util.OrderedMap {
 		out.Set(key, entry)
 	}
 	return out
+}
+
+// openCodeV2ModelsProvider finds the provider entry that owns the models.
+func openCodeV2ModelsProvider(cfg *util.OrderedMap, id string) (*util.OrderedMap, bool) {
+	for _, key := range []string{"provider", "providers"} {
+		ps, ok := mapChild(cfg, key)
+		if !ok {
+			continue
+		}
+		v, ok := ps.Get(id)
+		if !ok {
+			continue
+		}
+		p, ok := v.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		return p, true
+	}
+	return nil, false
 }
 
 func restoreOpenCodeProviderFiles(originals map[string]string) bool {
@@ -692,8 +1218,7 @@ func openCodeBYOKWired() bool {
 	return false
 }
 
-// openCodeHasOrphanedProxyRoute detects a provider left on Headroom without a
-// verified legacy stash.
+// openCodeHasOrphanedProxyRoute detects a provider left on Headroom without a verified legacy stash.
 func openCodeHasOrphanedProxyRoute() bool {
 	proxyBase := ProxyEndpointFor("opencode")
 	for _, path := range openCodeConfigFiles() {
@@ -944,38 +1469,80 @@ func replaceBaseURLInBlock(block, oldURL, newURL string) (string, int) {
 type byokStashEntry struct {
 	File    string `json:"file"`
 	BaseURL string `json:"base_url"`
+
+	Native bool `json:"native,omitempty"`
+
+	APIKey string `json:"api_key,omitempty"`
 }
 
 type byokStashFile struct {
 	Providers map[string]byokStashEntry `json:"providers"`
+
+	Lane *openCodeLaneStash `json:"lane,omitempty"`
+}
+
+// openCodeLaneStash records the resolved lane of a wire.
+type openCodeLaneStash struct {
+	Dir string `json:"dir"`
+
+	Config string `json:"config"`
+
+	Files []string `json:"files,omitempty"`
 }
 
 func byokStashPath() string {
-	return filepath.Join(util.HeadroomPathsResolved().Root, "opencode.byok.stash.json")
+	return byokStashPathFor("opencode")
+}
+
+// byokStashPathFor returns the BYOK stash path of one agent; stashes never cross versions.
+func byokStashPathFor(agent string) string {
+	return filepath.Join(util.HeadroomPathsResolved().Root, agent+".byok.stash.json")
 }
 
 func loadBYOKStash() map[string]byokStashEntry {
-	raw, ok := util.ReadFileSafe(byokStashPath())
+	return loadBYOKStashAt(byokStashPath())
+}
+
+func loadBYOKStashAt(path string) map[string]byokStashEntry {
+	return loadBYOKStashFileAt(path).Providers
+}
+
+// loadBYOKStashFileAt reads a stash with its recorded lane.
+func loadBYOKStashFileAt(path string) byokStashFile {
+	raw, ok := util.ReadFileSafe(path)
 	if !ok {
-		return map[string]byokStashEntry{}
+		return byokStashFile{Providers: map[string]byokStashEntry{}}
 	}
 	var f byokStashFile
 	if err := json.Unmarshal([]byte(raw), &f); err != nil || f.Providers == nil {
-		return map[string]byokStashEntry{}
+		return byokStashFile{Providers: map[string]byokStashEntry{}}
 	}
-	return f.Providers
+	return f
 }
 
 func saveBYOKStash(m map[string]byokStashEntry) error {
-	b, err := json.Marshal(byokStashFile{Providers: m})
+	return saveBYOKStashAt(byokStashPath(), m)
+}
+
+func saveBYOKStashAt(path string, m map[string]byokStashEntry) error {
+	return saveBYOKStashFileAt(path, byokStashFile{Providers: m})
+}
+
+// saveBYOKStashFileAt writes a stash with its recorded lane.
+func saveBYOKStashFileAt(path string, f byokStashFile) error {
+	b, err := json.Marshal(f)
 	if err != nil {
 		return err
 	}
-	return util.WriteFileMode(byokStashPath(), string(b), 0o600)
+	return util.WriteFileMode(path, string(b), 0o600)
 }
 
 func byokStashValid() bool {
-	raw, ok := util.ReadFileSafe(byokStashPath())
+	return byokStashValidAt(byokStashPath())
+}
+
+func byokStashValidAt(path string) bool {
+	raw, ok := util.ReadFileSafe(path)
 	if !ok {
 		return true
 	}
@@ -992,7 +1559,11 @@ func byokStashValid() bool {
 }
 
 func clearBYOKStash() error {
-	if err := os.Remove(byokStashPath()); err != nil && !os.IsNotExist(err) {
+	return clearBYOKStashAt(byokStashPath())
+}
+
+func clearBYOKStashAt(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil

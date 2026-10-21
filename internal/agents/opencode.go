@@ -501,13 +501,45 @@ func openCodeTransportPluginURL() string {
 	return "file://" + filepath.ToSlash(openCodeBYOKPluginPath())
 }
 
-func openCodeTransportPluginEntry() []any {
+// openCodeTransportTarget identifies one OpenCode version's proxy wiring target.
+type openCodeTransportTarget struct {
+	agentID         string
+	file            string
+	prefix          string
+	byoks           []openCodeBYOK
+	retrieveStash   string
+	transportPlugin bool
+}
+
+func openCodeV1TransportTarget() openCodeTransportTarget {
+	return openCodeTransportTarget{
+		agentID:         "opencode",
+		file:            util.OpenCodePathsResolved().Config,
+		prefix:          "opencode:",
+		byoks:           DiscoverOpenCodeBYOK(),
+		retrieveStash:   openCodeRetrieveStatePath(),
+		transportPlugin: true,
+	}
+}
+
+// openCodeV1ConfigTarget returns the v1 target without provider discovery.
+func openCodeV1ConfigTarget() openCodeTransportTarget {
+	return openCodeTransportTarget{
+		agentID:         "opencode",
+		file:            util.OpenCodePathsResolved().Config,
+		prefix:          "opencode:",
+		retrieveStash:   openCodeRetrieveStatePath(),
+		transportPlugin: true,
+	}
+}
+
+func openCodeTransportPluginEntryFor(target openCodeTransportTarget) []any {
 	options := util.NewOrderedMap()
-	proxyURL := strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")
+	proxyURL := strings.TrimSuffix(ProxyEndpointFor(target.agentID), "/v1")
 	routes := util.NewOrderedMap()
 	upstreams := util.NewOrderedMap()
-	for _, provider := range DiscoverOpenCodeBYOK() {
-		if route, ok := util.ReadBYOKRoute("opencode:" + provider.ID); ok {
+	for _, provider := range target.byoks {
+		if route, ok := util.ReadBYOKRoute(target.prefix + provider.ID); ok {
 			routes.Set(provider.ID, util.BYOKRouteHeader(route))
 			if provider.BaseURL != "" {
 				upstreams.Set(provider.ID, provider.BaseURL)
@@ -521,6 +553,40 @@ func openCodeTransportPluginEntry() []any {
 	return []any{openCodeTransportPluginURL(), options}
 }
 
+// openCodeTransportPluginEntryMerged keeps the existing routes and upstreams but refreshes the endpoint.
+func openCodeTransportPluginEntryMerged(entry []any, existing any) ([]any, bool) {
+	fresh, ok := entry[1].(*util.OrderedMap)
+	if !ok {
+		return entry, true
+	}
+	old, ok := existing.([]any)
+	if !ok || len(old) != 2 {
+		return entry, true
+	}
+	oldOptions, ok := old[1].(*util.OrderedMap)
+	if !ok {
+		return entry, true
+	}
+	merged := util.NewOrderedMap()
+	proxyURL, _ := fresh.Get("proxyUrl")
+	merged.Set("proxyUrl", proxyURL)
+	routes, ok := oldOptions.Get("routes")
+	if !ok {
+		routes, _ = fresh.Get("routes")
+	}
+	merged.Set("routes", routes)
+	upstreams, ok := oldOptions.Get("upstreams")
+	if !ok {
+		upstreams, _ = fresh.Get("upstreams")
+	}
+	merged.Set("upstreams", upstreams)
+	gateway, _ := fresh.Get("byokGatewayUrl")
+	merged.Set("byokGatewayUrl", gateway)
+	oldProxy, _ := oldOptions.Get("proxyUrl")
+	oldGateway, _ := oldOptions.Get("byokGatewayUrl")
+	return []any{entry[0], merged}, oldProxy != proxyURL || oldGateway != gateway
+}
+
 func isOpenCodeTransportPluginPathEntry(v any) bool {
 	entry, ok := v.([]any)
 	if !ok || len(entry) != 2 {
@@ -531,6 +597,10 @@ func isOpenCodeTransportPluginPathEntry(v any) bool {
 }
 
 func isOpenCodeTransportPluginEntry(v any) bool {
+	return isOpenCodeTransportPluginEntryFor(openCodeV1ConfigTarget(), v)
+}
+
+func isOpenCodeTransportPluginEntryFor(target openCodeTransportTarget, v any) bool {
 	if !isOpenCodeTransportPluginPathEntry(v) {
 		return false
 	}
@@ -540,16 +610,75 @@ func isOpenCodeTransportPluginEntry(v any) bool {
 		return false
 	}
 	proxyURL, _ := options.Get("proxyUrl")
-	return proxyURL == util.BYOKGatewayEndpoint() || proxyURL == strings.TrimSuffix(ProxyEndpointFor("opencode"), "/v1")
+	return proxyURL == util.BYOKGatewayEndpoint() || proxyURL == strings.TrimSuffix(ProxyEndpointFor(target.agentID), "/v1")
+}
+
+// openCodeTransportEntryHasRoutes reports whether a managed plugin entry carries routes or upstreams.
+func openCodeTransportEntryHasRoutes(v any) bool {
+	entry, ok := v.([]any)
+	if !ok || len(entry) != 2 {
+		return false
+	}
+	options, ok := entry[1].(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	for _, key := range []string{"routes", "upstreams"} {
+		value, ok := options.Get(key)
+		if !ok {
+			continue
+		}
+		if m, ok := value.(*util.OrderedMap); ok && m.Len() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// openCodeTransportPluginStillReferenced reports whether another OpenCode config still points at the shared plugin JS.
+func openCodeTransportPluginStillReferenced(target openCodeTransportTarget) bool {
+	for _, path := range append(openCodeConfigFiles(), openCodeV2ConfigFiles()...) {
+		if path == target.file {
+			continue
+		}
+		raw, ok := util.ReadFileSafe(path)
+		if !ok {
+			continue
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			continue
+		}
+		plugins, ok := cfg.Get("plugin")
+		if !ok {
+			continue
+		}
+		entries, ok := plugins.([]any)
+		if !ok {
+			continue
+		}
+		for _, entry := range entries {
+			if isOpenCodeTransportPluginPathEntry(entry) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func configureOpenCodeTransportPlugin() (changed bool, file string) {
-	file = util.OpenCodePathsResolved().Config
-	if err := util.EnsureDir(filepath.Dir(openCodeBYOKPluginPath())); err != nil {
-		return false, file
-	}
-	if !util.Exists(openCodeTransportPluginPath()) {
-		return false, file
+	return configureOpenCodeTransportPluginIn(openCodeV1TransportTarget())
+}
+
+func configureOpenCodeTransportPluginIn(target openCodeTransportTarget) (changed bool, file string) {
+	file = target.file
+	if target.transportPlugin {
+		if err := util.EnsureDir(filepath.Dir(openCodeBYOKPluginPath())); err != nil {
+			return false, file
+		}
+		if !util.Exists(openCodeTransportPluginPath()) {
+			return false, file
+		}
 	}
 	pluginExisted := util.Exists(openCodeBYOKPluginPath())
 	committed := false
@@ -558,14 +687,16 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 			_ = os.Remove(openCodeBYOKPluginPath())
 		}
 	}()
-	if err := util.WriteFile(openCodeBYOKPluginPath(), string(toklessOpenCodeBYOKPlugin)); err != nil {
-		return false, file
+	if target.transportPlugin {
+		if err := util.WriteFile(openCodeBYOKPluginPath(), string(toklessOpenCodeBYOKPlugin)); err != nil {
+			return false, file
+		}
 	}
 	raw, exists := util.ReadFileSafe(file)
 	if !exists && util.Exists(file) {
 		return false, file
 	}
-	retrieveStateRaw, retrieveStateExists := util.ReadFileSafe(openCodeRetrieveStatePath())
+	retrieveStateRaw, retrieveStateExists := util.ReadFileSafe(target.retrieveStash)
 	if util.HasJSONCComments(raw) {
 		return false, file
 	}
@@ -579,7 +710,7 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 	tools, ok := mapChild(cfg, "tools")
 	if !ok {
 		if _, exists := cfg.Get("tools"); exists {
-			_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
+			_ = restoreOpenCodeRetrieveStateAt(target.retrieveStash, retrieveStateRaw, retrieveStateExists)
 			return false, file
 		}
 		tools = util.NewOrderedMap()
@@ -590,51 +721,78 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 		if value, ok := tools.Get("headroom_retrieve"); ok {
 			previous = value
 		}
-		if err := saveOpenCodeRetrieveState(previous); err != nil {
+		if err := saveOpenCodeRetrieveStateAt(target.retrieveStash, previous); err != nil {
 			return false, file
 		}
 		tools.Set("headroom_retrieve", false)
 		changed = true
 	}
+	entry := openCodeTransportPluginEntryFor(target)
 	plugins, ok := cfg.Get("plugin")
-	if ok {
+	if !target.transportPlugin {
+		if ok {
+			entries, ok := plugins.([]any)
+			if !ok {
+				_ = restoreOpenCodeRetrieveStateAt(target.retrieveStash, retrieveStateRaw, retrieveStateExists)
+				return false, file
+			}
+			next, removed := openCodeTransportEntriesWithoutManaged(entries)
+			if removed {
+				if len(next) == 0 {
+					cfg.Delete("plugin")
+				} else {
+					cfg.Set("plugin", next)
+				}
+				changed = true
+			}
+		}
+	} else if ok {
 		entries, ok := plugins.([]any)
 		if !ok {
-			_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
+			_ = restoreOpenCodeRetrieveStateAt(target.retrieveStash, retrieveStateRaw, retrieveStateExists)
 			return false, file
 		}
 		next := make([]any, 0, len(entries)+1)
 		managed := false
-		for _, entry := range entries {
-			if !isOpenCodeTransportPluginPathEntry(entry) {
-				next = append(next, entry)
+		for _, existing := range entries {
+			if !isOpenCodeTransportPluginPathEntry(existing) {
+				next = append(next, existing)
 				continue
 			}
 			if managed {
 				changed = true
 				continue
 			}
-			current := isOpenCodeTransportPluginEntry(entry)
+			current := isOpenCodeTransportPluginEntryFor(target, existing)
 			if !current {
 				changed = true
 			}
-			next = append(next, openCodeTransportPluginEntry())
+			if openCodeTransportEntryHasRoutes(existing) && !openCodeTransportEntryHasRoutes(entry) {
+				merged, refreshed := openCodeTransportPluginEntryMerged(entry, existing)
+				next = append(next, merged)
+				if refreshed {
+					changed = true
+				}
+				managed = true
+				continue
+			}
+			next = append(next, entry)
 			managed = true
 		}
 		if !managed {
-			next = append(next, openCodeTransportPluginEntry())
+			next = append(next, entry)
 			changed = true
 		}
 		cfg.Set("plugin", next)
 	} else {
-		cfg.Set("plugin", []any{openCodeTransportPluginEntry()})
+		cfg.Set("plugin", []any{entry})
 		changed = true
 	}
 	if _, ok := cfg.Get("$schema"); !ok {
 		cfg.Set("$schema", "https://opencode.ai/config.json")
 	}
 	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
-		_ = restoreOpenCodeRetrieveState(retrieveStateRaw, retrieveStateExists)
+		_ = restoreOpenCodeRetrieveStateAt(target.retrieveStash, retrieveStateRaw, retrieveStateExists)
 		return false, file
 	}
 	committed = true
@@ -642,7 +800,36 @@ func configureOpenCodeTransportPlugin() (changed bool, file string) {
 }
 
 func removeOpenCodeTransportPlugin() bool {
-	file := util.OpenCodePathsResolved().Config
+	return removeOpenCodeTransportPluginIn(openCodeV1ConfigTarget())
+}
+
+// openCodeTransportEntriesWithoutManaged drops the managed transport plugin entries.
+func openCodeTransportEntriesWithoutManaged(entries []any) (next []any, removed bool) {
+	next = make([]any, 0, len(entries))
+	for _, entry := range entries {
+		if isOpenCodeTransportPluginPathEntry(entry) {
+			removed = true
+			continue
+		}
+		next = append(next, entry)
+	}
+	return next, removed
+}
+
+// openCodeRemoveRetrieveSuppression drops the retrieve-tool flag from a config.
+func openCodeRemoveRetrieveSuppression(cfg *util.OrderedMap) {
+	tools, _ := mapChild(cfg, "tools")
+	if tools == nil {
+		return
+	}
+	tools.Delete("headroom_retrieve")
+	if tools.Len() == 0 {
+		cfg.Delete("tools")
+	}
+}
+
+func removeOpenCodeTransportPluginIn(target openCodeTransportTarget) bool {
+	file := target.file
 	raw, ok := util.ReadFileSafe(file)
 	if !ok || util.HasJSONCComments(raw) {
 		return false
@@ -651,79 +838,91 @@ func removeOpenCodeTransportPlugin() bool {
 	if cfg == nil {
 		return false
 	}
-	plugins, ok := cfg.Get("plugin")
-	if !ok {
-		return false
-	}
-	entries, ok := plugins.([]any)
-	if !ok {
-		return false
-	}
-	next := make([]any, 0, len(entries))
-	removed := false
-	for _, entry := range entries {
-		if isOpenCodeTransportPluginPathEntry(entry) {
-			removed = true
-			continue
+	entries := []any(nil)
+	if plugins, ok := cfg.Get("plugin"); ok {
+		loaded, ok := plugins.([]any)
+		if !ok {
+			return false
 		}
-		next = append(next, entry)
+		entries = loaded
 	}
-	if !removed {
+	next, removed := openCodeTransportEntriesWithoutManaged(entries)
+	if !removed && target.transportPlugin {
 		return false
 	}
-	if _, exists := util.ReadFileSafe(openCodeRetrieveStatePath()); exists {
-		if _, ok := loadOpenCodeRetrieveState(); !ok {
+	if _, exists := util.ReadFileSafe(target.retrieveStash); exists {
+		if _, ok := loadOpenCodeRetrieveStateAt(target.retrieveStash); !ok {
 			return false
 		}
 	}
-	if value, ok := loadOpenCodeRetrieveState(); ok {
+	value, hasRetrieveState := loadOpenCodeRetrieveStateAt(target.retrieveStash)
+	suppressed := openCodeRetrieveSuppressed(cfg)
+	if !removed && !hasRetrieveState && !suppressed {
+		return false
+	}
+	if hasRetrieveState {
 		if value == nil {
-			tools, _ := mapChild(cfg, "tools")
-			if tools != nil {
-				tools.Delete("headroom_retrieve")
-				if tools.Len() == 0 {
-					cfg.Delete("tools")
-				}
-			}
+			openCodeRemoveRetrieveSuppression(cfg)
 		} else {
 			tools := getOrCreateMap(cfg, "tools")
 			tools.Set("headroom_retrieve", value)
 		}
+	} else if suppressed {
+		openCodeRemoveRetrieveSuppression(cfg)
 	}
-	if len(next) == 0 {
-		cfg.Delete("plugin")
-	} else {
-		cfg.Set("plugin", next)
+	if removed {
+		if len(next) == 0 {
+			cfg.Delete("plugin")
+		} else {
+			cfg.Set("plugin", next)
+		}
 	}
 	if err := util.WriteFile(file, util.StringifyJSON(cfg)); err != nil {
 		return false
 	}
-	if err := clearOpenCodeRetrieveState(); err != nil {
-		_ = util.WriteFile(file, raw)
-		return false
+	if hasRetrieveState {
+		if err := clearOpenCodeRetrieveStateAt(target.retrieveStash); err != nil {
+			_ = util.WriteFile(file, raw)
+			return false
+		}
 	}
-	if err := os.Remove(openCodeBYOKPluginPath()); err != nil && !os.IsNotExist(err) {
-		_ = util.WriteFile(file, raw)
-		return false
+	if target.transportPlugin && !openCodeTransportPluginStillReferenced(target) {
+		if err := os.Remove(openCodeBYOKPluginPath()); err != nil && !os.IsNotExist(err) {
+			_ = util.WriteFile(file, raw)
+			return false
+		}
 	}
 	return true
 }
 
 func restoreOpenCodeRetrieveState(raw string, exists bool) error {
+	return restoreOpenCodeRetrieveStateAt(openCodeRetrieveStatePath(), raw, exists)
+}
+
+func restoreOpenCodeRetrieveStateAt(path, raw string, exists bool) error {
 	if exists {
-		return util.WriteFileMode(openCodeRetrieveStatePath(), raw, 0o600)
+		return util.WriteFileMode(path, raw, 0o600)
 	}
-	if err := os.Remove(openCodeRetrieveStatePath()); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
 func openCodeRetrieveStatePath() string {
-	return filepath.Join(util.HeadroomPathsResolved().Root, "opencode.retrieve.stash.json")
+	return openCodeRetrieveStatePathFor("opencode")
+}
+
+// openCodeRetrieveStatePathFor returns the retrieve-tool stash path of one OpenCode version.
+func openCodeRetrieveStatePathFor(agent string) string {
+	return filepath.Join(util.HeadroomPathsResolved().Root, agent+".retrieve.stash.json")
 }
 
 func saveOpenCodeRetrieveState(value any) error {
+	return saveOpenCodeRetrieveStateAt(openCodeRetrieveStatePath(), value)
+}
+
+func saveOpenCodeRetrieveStateAt(path string, value any) error {
 	b, err := json.Marshal(struct {
 		Present bool `json:"present"`
 		Value   any  `json:"value"`
@@ -731,11 +930,15 @@ func saveOpenCodeRetrieveState(value any) error {
 	if err != nil {
 		return err
 	}
-	return util.WriteFileMode(openCodeRetrieveStatePath(), string(b), 0o600)
+	return util.WriteFileMode(path, string(b), 0o600)
 }
 
 func loadOpenCodeRetrieveState() (any, bool) {
-	raw, ok := util.ReadFileSafe(openCodeRetrieveStatePath())
+	return loadOpenCodeRetrieveStateAt(openCodeRetrieveStatePath())
+}
+
+func loadOpenCodeRetrieveStateAt(path string) (any, bool) {
+	raw, ok := util.ReadFileSafe(path)
 	if !ok {
 		return nil, false
 	}
@@ -753,14 +956,22 @@ func loadOpenCodeRetrieveState() (any, bool) {
 }
 
 func clearOpenCodeRetrieveState() error {
-	if err := os.Remove(openCodeRetrieveStatePath()); err != nil && !os.IsNotExist(err) {
+	return clearOpenCodeRetrieveStateAt(openCodeRetrieveStatePath())
+}
+
+func clearOpenCodeRetrieveStateAt(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
 func openCodeTransportPluginWired() bool {
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	return openCodeTransportPluginWiredIn(openCodeV1ConfigTarget())
+}
+
+func openCodeTransportPluginWiredIn(target openCodeTransportTarget) bool {
+	raw, ok := util.ReadFileSafe(target.file)
 	if !ok || util.HasJSONCComments(raw) {
 		return false
 	}
@@ -777,7 +988,7 @@ func openCodeTransportPluginWired() bool {
 		return false
 	}
 	for _, entry := range entries {
-		if isOpenCodeTransportPluginEntry(entry) {
+		if isOpenCodeTransportPluginEntryFor(target, entry) {
 			return true
 		}
 	}
@@ -785,7 +996,11 @@ func openCodeTransportPluginWired() bool {
 }
 
 func openCodeRetrieveToolDisabled() bool {
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
+	return openCodeRetrieveToolDisabledIn(openCodeV1ConfigTarget())
+}
+
+func openCodeRetrieveToolDisabledIn(target openCodeTransportTarget) bool {
+	raw, ok := util.ReadFileSafe(target.file)
 	if !ok || util.HasJSONCComments(raw) {
 		return false
 	}
@@ -793,11 +1008,12 @@ func openCodeRetrieveToolDisabled() bool {
 	if cfg == nil {
 		return false
 	}
-	toolsV, ok := cfg.Get("tools")
-	if !ok {
-		return false
-	}
-	tools, ok := toolsV.(*util.OrderedMap)
+	return openCodeRetrieveSuppressed(cfg)
+}
+
+// openCodeRetrieveSuppressed reports whether a config disables the retrieve tool.
+func openCodeRetrieveSuppressed(cfg *util.OrderedMap) bool {
+	tools, ok := mapChild(cfg, "tools")
 	if !ok {
 		return false
 	}

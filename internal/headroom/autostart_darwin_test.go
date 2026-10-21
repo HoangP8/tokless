@@ -4,6 +4,7 @@ package headroom
 
 import (
 	"encoding/xml"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -66,4 +67,41 @@ func TestLaunchctlServiceNotFoundRequiresExplicitError(t *testing.T) {
 type plistBody struct {
 	Label            string   `xml:"dict>string"`
 	ProgramArguments []string `xml:"dict>array>string"`
+}
+
+func TestBootoutProxyAgentUsesServiceTarget(t *testing.T) {
+	orig := runLaunchctl
+	defer func() { runLaunchctl = orig }()
+	var bootoutArgs []string
+	runLaunchctl = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "bootout":
+			bootoutArgs = args
+			return []byte("Boot-out failed: 5: Input/output error"), errors.New("exit status 5")
+		case "print":
+			return []byte("Could not find service \"" + proxyAutostartLabel + "\" in domain for user gui: 501"), errors.New("exit status 113")
+		}
+		return nil, nil
+	}
+	if err := bootoutProxyAgent(); err != nil {
+		t.Fatalf("bootoutProxyAgent() error = %v, want nil for an absent service", err)
+	}
+	want := domain() + "/" + proxyAutostartLabel
+	if len(bootoutArgs) != 2 || bootoutArgs[1] != want {
+		t.Fatalf("bootout args = %#v, want target %q", bootoutArgs, want)
+	}
+}
+
+func TestBootoutProxyAgentFailsWhenServiceStillLoaded(t *testing.T) {
+	orig := runLaunchctl
+	defer func() { runLaunchctl = orig }()
+	runLaunchctl = func(args ...string) ([]byte, error) {
+		if args[0] == "print" {
+			return []byte("state = running"), nil
+		}
+		return []byte("Boot-out failed: 5: Input/output error"), errors.New("exit status 5")
+	}
+	if err := bootoutProxyAgent(); err == nil {
+		t.Fatal("bootoutProxyAgent() error = nil, want error while the service is loaded")
+	}
 }

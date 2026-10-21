@@ -10,11 +10,10 @@ import (
 )
 
 // ProxyAgentIDs is the full `tokless proxy` agent vocabulary in display order:
-// wired agents first (config-file injection), then manual/env agents.
 func ProxyAgentIDs() []string {
 	return []string{
-		"claude", "codex", "opencode", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", "kimi", "zcode", "dsh", // wired
-		"cursor", // manual / launch-env
+		"claude", "codex", "opencode", "opencode2", "omp", "kilo", "pi", "droid", "antigravity", "grok", "copilot", "cline", "kimi", "zcode", "dsh",
+		"cursor",
 	}
 }
 
@@ -110,8 +109,7 @@ func validateProxyLanePorts() error {
 	return nil
 }
 
-// proxyInstructions returns the exact manual/env guidance for agents that
-// tokless cannot wire via a config file.
+// proxyInstructions returns the manual/env guidance for agents tokless cannot wire.
 func proxyInstructions(id string) []string {
 	switch id {
 	case "cursor":
@@ -416,9 +414,7 @@ func hasGrokAgent(ids []string) bool {
 	return false
 }
 
-// RunProxyDown unwires agents, then stops the daemon when operating on the
-// complete agent set and every currently-wired config agent was unwired.
-// Copilot's private daemon stops before shared teardown; any failure restores prior state.
+// RunProxyDown unwires agents, then stops the daemon on the complete agent set.
 func RunProxyDown(opts InitOptions) int {
 	cmdHeader("proxy down", "unwire agents and stop the headroom HTTP proxy")
 	if opts.DryRun {

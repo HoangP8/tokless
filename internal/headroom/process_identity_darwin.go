@@ -5,12 +5,14 @@ package headroom
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
+	"unsafe"
 )
 
 type processIdentityInfo struct {
@@ -19,6 +21,11 @@ type processIdentityInfo struct {
 	Start      string
 }
 
+const (
+	darwinCTLKern       = 1
+	darwinKernProcargs2 = 49
+)
+
 func processIdentitySupported() bool { return true }
 
 func identifyProcess(pid int) (processIdentityInfo, error) {
@@ -26,7 +33,7 @@ func identifyProcess(pid int) (processIdentityInfo, error) {
 	if err != nil {
 		return processIdentityInfo{}, err
 	}
-	data, err := syscall.Sysctl("kern.procargs2." + strconv.Itoa(pid))
+	data, err := darwinProcArgs2(pid)
 	if err != nil {
 		return processIdentityInfo{}, err
 	}
@@ -82,8 +89,27 @@ func darwinProcArgs(data []byte) (string, []string) {
 	return execPath, argv
 }
 
+func darwinProcArgs2(pid int) ([]byte, error) {
+	mib := [3]int32{darwinCTLKern, darwinKernProcargs2, int32(pid)}
+	var size uintptr
+	if _, _, errno := syscall.Syscall6(syscall.SYS___SYSCTL, uintptr(unsafe.Pointer(&mib[0])), uintptr(len(mib)), 0, uintptr(unsafe.Pointer(&size)), 0, 0); errno != 0 {
+		return nil, errno
+	}
+	if size == 0 {
+		return nil, fmt.Errorf("empty kern.procargs2 for pid %d", pid)
+	}
+	buf := make([]byte, size)
+	if _, _, errno := syscall.Syscall6(syscall.SYS___SYSCTL, uintptr(unsafe.Pointer(&mib[0])), uintptr(len(mib)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0, 0); errno != 0 {
+		return nil, errno
+	}
+	if size > uintptr(len(buf)) {
+		size = uintptr(len(buf))
+	}
+	return buf[:size], nil
+}
+
 func killProcess(proc *os.Process) error { return proc.Kill() }
 func processGone(proc *os.Process) bool {
 	err := proc.Signal(syscall.Signal(0))
-	return err == syscall.ESRCH
+	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
 }

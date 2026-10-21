@@ -100,7 +100,6 @@ func RunDoctor(offline, fix bool) int {
 	cmdHeader("doctor", "health check")
 
 	toolManifests := core.ListTools()
-	// UI + status: only agents present on this machine (Detect is OS-aware).
 	var reports []agentReport
 	for _, agent := range core.ListAgents() {
 		if !agent.Detect().Installed {
@@ -489,8 +488,7 @@ func doctorStatusLines(outdated, broken, installedAgents int) []string {
 	return lines
 }
 
-// agentLabelWidth returns the longest agent label length plus one
-// separator space, so every status column aligns across all rows.
+// agentLabelWidth returns the longest agent label length plus one separator space.
 func agentLabelWidth() int {
 	max := 0
 	for _, a := range core.ListAgents() {
@@ -668,6 +666,10 @@ func doctorAgentRows(r agentReport) []string {
 			runtimeBranch += "; " + util.C.Yellow("missing: "+joinComma(r.missing))
 		}
 		rows = append(rows, runtimeBranch)
+	}
+
+	if skipped := doctorSkippedProvidersRow(r.id); skipped != "" {
+		rows = append(rows, skipped)
 	}
 
 	return rows

@@ -992,7 +992,19 @@ func TestBYOKWatcherLiveRevocation(t *testing.T) {
 	// before the watcher observes the deletion and then assert against step
 	// 2's stale message. Only a watcher that read a missing file can produce
 	// a registryMissingMessage error here.
-	_ = os.Remove(byokRoutesPath())
+	// The watcher reads the file in a loop, so the removal can race an open handle
+	// on Windows; retry until the file is really gone.
+	var removeErr error
+	for i := 0; i < 50; i++ {
+		removeErr = os.Remove(byokRoutesPath())
+		if removeErr == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if removeErr != nil {
+		t.Fatalf("remove routes file: %v", removeErr)
+	}
 	deletionFailedClosed := false
 	for i := 0; i < 200; i++ {
 		time.Sleep(10 * time.Millisecond)

@@ -91,6 +91,7 @@ func StartCopilotProxy() error {
 	defer log.Close()
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout, cmd.Stderr = log, log
+	cmd.Env = headroomChildEnv()
 	if err := proxySpawn(cmd); err != nil {
 		return fmt.Errorf("copilot proxy failed to start: %w", err)
 	}
@@ -107,7 +108,7 @@ func StartCopilotProxy() error {
 	deadline := proxyNow().Add(proxyReadyTimeout)
 	for proxyNow().Before(deadline) {
 		current, identityErr := proxyIdentity(cmd.Process.Pid)
-		if identityErr != nil || !current.equal(identity) {
+		if identityErr != nil || current.Start != identity.Start || !current.matches(bin, args) {
 			return rollbackCopilotProxy(cmd.Process, pidFile, &identity, fmt.Errorf("copilot proxy identity changed during startup"))
 		}
 		if copilotProxyLiveProbe(proxyProbeTimeout) {
@@ -126,7 +127,7 @@ func rollbackCopilotProxy(proc *os.Process, pidFile string, expected *processIde
 		recordRaw, recordExists = raw, true
 		var record proxyOwnership
 		if json.Unmarshal([]byte(raw), &record) == nil && record.PID == proc.Pid {
-			if identity, err := proxyIdentity(proc.Pid); err == nil && identity.matchesRecord(record) {
+			if identity, err := proxyIdentity(proc.Pid); err == nil && identity.matchesRecordShape(record) {
 				owned = true
 			}
 		}
@@ -135,7 +136,7 @@ func rollbackCopilotProxy(proc *os.Process, pidFile string, expected *processIde
 	if owned || expected == nil || expected.Executable == "" {
 		if expected != nil && expected.Executable != "" {
 			current, err := proxyIdentity(proc.Pid)
-			if err != nil || !current.equal(*expected) {
+			if err != nil || current.Start != expected.Start {
 				return cause
 			}
 		}
@@ -176,7 +177,7 @@ func copilotProxyOwnershipValid() bool {
 		return false
 	}
 	identity, err := proxyIdentity(record.PID)
-	return err == nil && identity.matchesRecord(record)
+	return err == nil && identity.matchesRecordShape(record)
 }
 
 func CopilotProxyRunning() bool { return copilotProxyLiveProbe(proxyProbeTimeout) }
@@ -201,7 +202,7 @@ func StopCopilotProxy() error {
 		return fmt.Errorf("invalid Copilot proxy ownership record %s — refusing to stop", pidFile)
 	}
 	identity, err := proxyIdentity(record.PID)
-	if err != nil || !identity.matchesRecord(record) {
+	if err != nil || !identity.matchesRecordShape(record) {
 		if proxyGone(&os.Process{Pid: record.PID}) {
 			if copilotProxyLiveProbe(proxyProbeTimeout) {
 				return fmt.Errorf("Copilot proxy pid %d is gone but a healthy listener remains — refusing to remove ownership record", record.PID)
