@@ -49,6 +49,19 @@ func TestOpenCodeV2WireTwiceUnwireRestoresNativeProvider(t *testing.T) {
 	if _, ok := headers.Get("X-Tokless-Route"); !ok {
 		t.Fatalf("the route header is missing: %s", raw)
 	}
+	models, _ := mapChild(entry, "models")
+	modelValue, _ := models.Get("m1")
+	model := modelValue.(*util.OrderedMap)
+	modelSettings, _ := mapChild(model, "settings")
+	if base, _ := modelSettings.Get("baseURL"); base != ProxyEndpointFor("opencode2") {
+		t.Fatalf("model settings.baseURL=%v want the proxy", base)
+	}
+	modelHeaders, _ := mapChild(model, "headers")
+	for k, w := range map[string]string{headroomBaseURLHeader: "https://api.acme.test", openCodeV2OriginalPathHeader: "/v1/chat/completions"} {
+		if v, _ := modelHeaders.Get(k); v != w {
+			t.Fatalf("model %s=%v want %s", k, v, w)
+		}
+	}
 	if changed, _ := ConfigureOpenCodeProxyV2(); changed {
 		t.Fatal("the second wire changed the config")
 	}
@@ -96,12 +109,20 @@ func TestOpenCodeV2WireTwiceUnwireRestoresNativeProvider(t *testing.T) {
 	if v, _ := env.Get("ACME_MODE"); v != "fast" {
 		t.Fatalf("env.ACME_MODE=%v want fast", v)
 	}
-	models, ok := mapChild(entry, "models")
+	models, ok = mapChild(entry, "models")
 	if !ok {
 		t.Fatalf("the models were dropped: %s", raw)
 	}
-	if _, ok := models.Get("m1"); !ok {
+	modelValue, ok = models.Get("m1")
+	if !ok {
 		t.Fatalf("the model m1 was dropped: %s", raw)
+	}
+	model = modelValue.(*util.OrderedMap)
+	if _, ok := mapChild(model, "settings"); ok {
+		t.Fatalf("the model mirror settings survived the unwire: %s", raw)
+	}
+	if _, ok := mapChild(model, "headers"); ok {
+		t.Fatalf("the model mirror headers survived the unwire: %s", raw)
 	}
 	plain := v2ProviderEntry(t, raw, "plain")
 	if _, ok := mapChild(plain, "headers"); ok {

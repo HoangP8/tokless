@@ -1,4 +1,10 @@
-import HeadroomPlugin from "./entry.opencode.js";
+import HeadroomOpenCodePlugin from "./entry.opencode.js";
+
+// headroom <= 0.40 exported the plugin function directly; 0.41+ exports an
+// object carrying the 1.x server and the 2.x setup entry points.
+const HeadroomPlugin = typeof HeadroomOpenCodePlugin === "function"
+  ? HeadroomOpenCodePlugin
+  : HeadroomOpenCodePlugin?.server;
 
 const routeHeader = "X-Tokless-Route";
 
@@ -13,6 +19,9 @@ function deleteHeaderCaseInsensitive(headers, targetName) {
 }
 
 export default async function ToklessBYOKPlugin(input, options = {}) {
+  if (typeof HeadroomPlugin !== "function") {
+    throw new Error("headroom OpenCode plugin does not export a server entry point");
+  }
   const { routes = {}, upstreams = {}, byokGatewayUrl = "http://127.0.0.1:18787", ...pluginOptions } = options;
   const native = await HeadroomPlugin(input, pluginOptions);
   const headers = native["chat.headers"];

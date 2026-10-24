@@ -149,7 +149,15 @@ func openCodeV2MirrorWired() bool {
 // ConfigureOpenCodeProxyV2 wires the OpenCode v2 harness to the headroom proxy.
 func ConfigureOpenCodeProxyV2() (changed bool, file string) {
 	if openCodeV2SharesV1Config() {
-		return ConfigureOpenCodeProxy()
+		err := withProxyRouteStashLock(func() error {
+			var err error
+			changed, file, err = configureOpenCodeProxySharedLocked()
+			return err
+		})
+		if err != nil {
+			util.L.Err("opencode2 proxy lock failed: " + err.Error())
+		}
+		return changed, file
 	}
 	err := withProxyRouteStashLock(func() error {
 		var err error
@@ -162,7 +170,26 @@ func ConfigureOpenCodeProxyV2() (changed bool, file string) {
 	return changed, file
 }
 
+// configureOpenCodeProxySharedLocked wires one config both OpenCode versions
+// read: the v1 plugin for 1.x and the provider mirror for 2.x.
+func configureOpenCodeProxySharedLocked() (changed bool, file string, resultErr error) {
+	v1Changed, file, err := configureOpenCodeProxyLocked()
+	if err != nil {
+		return v1Changed, file, err
+	}
+	v2Changed, _, err := configureOpenCodeProxyV2CoreLocked(false)
+	if err != nil {
+		return false, file, err
+	}
+	return v1Changed || v2Changed, file, nil
+}
+
 func configureOpenCodeProxyV2Locked() (changed bool, file string, resultErr error) {
+	return configureOpenCodeProxyV2CoreLocked(true)
+}
+
+// configureOpenCodeProxyV2CoreLocked wires the v2 lane.
+func configureOpenCodeProxyV2CoreLocked(manageTransport bool) (changed bool, file string, resultErr error) {
 	file = util.OpenCodePathsV2().Config
 	if err := openCodeV2CommentedConfigError(); err != nil {
 		return false, file, err
@@ -206,9 +233,13 @@ func configureOpenCodeProxyV2Locked() (changed bool, file string, resultErr erro
 	}
 	byoks, _ = discoverOpenCodeV2LaneBYOK()
 	target = openCodeV2TransportTarget(byoks)
-	configured, file := configureOpenCodeTransportPluginIn(target)
-	if !configured && !openCodeRetrieveToolDisabledIn(target) {
-		return false, file, errors.Join(fmt.Errorf("configure OpenCode v2 retrieve suppression"), rollbackRoutes())
+	if manageTransport {
+		configured, configuredFile := configureOpenCodeTransportPluginIn(target)
+		file = configuredFile
+		if !configured && !openCodeRetrieveToolDisabledIn(target) {
+			return false, file, errors.Join(fmt.Errorf("configure OpenCode v2 retrieve suppression"), rollbackRoutes())
+		}
+		changed = configured
 	}
 	mirrorFile := openCodeV2MirrorFile()
 	stashPath := byokStashPathFor("opencode2")
@@ -234,7 +265,7 @@ func configureOpenCodeProxyV2Locked() (changed bool, file string, resultErr erro
 		}
 		return false, file, errors.Join(errs...)
 	}
-	return configured || mirrorChanged, file, nil
+	return changed || mirrorChanged, file, nil
 }
 
 // openCodeV2ReportSkipped warns about the providers that were not wired.
@@ -279,8 +310,17 @@ func openCodeV2UniquePaths(paths []string) []string {
 
 // RemoveOpenCodeProxyV2 unwires the OpenCode v2 harness.
 func RemoveOpenCodeProxyV2() bool {
-	if openCodeV2SharesV1Config() && !openCodeV2LaneRecorded() {
-		return RemoveOpenCodeProxy()
+	if openCodeV2SharesV1Config() {
+		var removed bool
+		if err := withProxyRouteStashLock(func() error {
+			var err error
+			removed, err = removeOpenCodeProxySharedLocked()
+			return err
+		}); err != nil {
+			util.L.Err("opencode2 proxy lock failed: " + err.Error())
+			return false
+		}
+		return removed
 	}
 	var removed bool
 	if err := withProxyRouteStashLock(func() error {
@@ -294,13 +334,20 @@ func RemoveOpenCodeProxyV2() bool {
 	return removed
 }
 
-// openCodeV2LaneRecorded reports whether the v2 stash records a lane of its own.
-func openCodeV2LaneRecorded() bool {
-	lane := loadBYOKStashFileAt(byokStashPathFor("opencode2")).Lane
-	if lane == nil || lane.Config == "" {
-		return false
+// removeOpenCodeProxySharedLocked unwires both versions from their shared config.
+func removeOpenCodeProxySharedLocked() (bool, error) {
+	v1Removed, err := removeOpenCodeProxyLocked()
+	if err != nil {
+		return false, err
 	}
-	return openCodeCleanAbsPath(lane.Config) != openCodeCleanAbsPath(util.OpenCodePathsResolved().Config)
+	v2Removed := false
+	if util.Exists(byokStashPathFor("opencode2")) {
+		v2Removed, err = removeOpenCodeProxyV2Locked()
+		if err != nil {
+			return false, err
+		}
+	}
+	return v1Removed || v2Removed, nil
 }
 
 // openCodeV2UnwireFiles returns the files an unwire walks.

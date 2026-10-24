@@ -580,12 +580,12 @@ func pruneOpenCodeV2MirrorsInV1Config(stashed map[string]byokStashEntry, origina
 				continue
 			}
 			if stash, ok := stashed[id]; ok && stash.File == path {
-				restoreOpenCodeV2ProviderEntry(entry, openCodeBYOK{ID: id, BaseURL: stash.BaseURL, APIKey: stash.APIKey})
+				restoreOpenCodeV2ProviderEntry(entry, openCodeBYOK{ID: id, BaseURL: stash.BaseURL, APIKey: stash.APIKey}, openCodeProxyEndpointFor("opencode2:"))
 				fileChanged = true
 				continue
 			}
 			if stash, ok := v2Stashed[id]; ok && stash.Native && stash.File == path {
-				restoreOpenCodeV2ProviderEntry(entry, openCodeBYOK{ID: id, BaseURL: stash.BaseURL, APIKey: stash.APIKey})
+				restoreOpenCodeV2ProviderEntry(entry, openCodeBYOK{ID: id, BaseURL: stash.BaseURL, APIKey: stash.APIKey}, openCodeProxyEndpointFor("opencode2:"))
 				fileChanged = true
 				continue
 			}
@@ -672,19 +672,89 @@ func openCodeV2ProviderEntryMatches(providers *util.OrderedMap, id, endpoint, ro
 	}
 	current, _ := headers.Get(openCodeV2OriginalPathHeader)
 	if path == "" {
-		return current == nil
+		if current != nil {
+			return false
+		}
+	} else if current != path {
+		return false
 	}
-	return current == path
+	return openCodeV2ModelsMirrored(p, endpoint, upstream)
 }
 
-// openCodeV2UpstreamHeaders returns the origin and the original path a mirrored entry carries for an upstream.
+// openCodeV2ModelsMirrored reports whether every model carries the proxy endpoint and headers.
+func openCodeV2ModelsMirrored(provider *util.OrderedMap, endpoint, upstream string) bool {
+	models, ok := mapChild(provider, "models")
+	if !ok {
+		return true
+	}
+	origin, path := openCodeV2UpstreamHeaders(upstream)
+	for _, key := range models.Keys() {
+		value, _ := models.Get(key)
+		model, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		settings, ok := mapChild(model, "settings")
+		if !ok {
+			return false
+		}
+		base, _ := settings.Get("baseURL")
+		if base != endpoint {
+			return false
+		}
+		headers, ok := mapChild(model, "headers")
+		if !ok {
+			return false
+		}
+		headroom, _ := headers.Get(headroomBaseURLHeader)
+		current, _ := headers.Get(openCodeV2OriginalPathHeader)
+		if headroom != origin || (path == "" && current != nil) || (path != "" && current != path) {
+			return false
+		}
+	}
+	return true
+}
+
+// openCodeV2MirrorModels points every model of a mirrored provider at the proxy.
+func openCodeV2MirrorModels(models *util.OrderedMap, endpoint, upstream string) {
+	if models == nil {
+		return
+	}
+	origin, path := openCodeV2UpstreamHeaders(upstream)
+	for _, key := range models.Keys() {
+		value, _ := models.Get(key)
+		model, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		settings := getOrCreateMap(model, "settings")
+		settings.Set("baseURL", endpoint)
+		headers := getOrCreateMap(model, "headers")
+		headers.Set(headroomBaseURLHeader, origin)
+		if path == "" {
+			headers.Delete(openCodeV2OriginalPathHeader)
+			continue
+		}
+		headers.Set(openCodeV2OriginalPathHeader, path)
+	}
+}
+
+// openCodeV2UpstreamHeaders returns the headroom base URL and the original path a mirrored entry carries for an upstream.
 func openCodeV2UpstreamHeaders(upstream string) (origin string, path string) {
 	origin = openCodeV2Upstream(upstream)
 	u, _ := url.Parse(upstream)
-	if u != nil && strings.Trim(u.EscapedPath(), "/") != "" {
-		path = strings.TrimRight(u.EscapedPath(), "/") + "/chat/completions"
+	if u == nil {
+		return origin, ""
 	}
-	return origin, path
+	p := strings.TrimRight(u.EscapedPath(), "/")
+	switch {
+	case p == "":
+		return origin, ""
+	case strings.HasSuffix(p, "/v1"):
+		return strings.TrimRight(origin+strings.TrimSuffix(p, "/v1"), "/"), "/v1/chat/completions"
+	default:
+		return origin, p + "/chat/completions"
+	}
 }
 
 // openCodeV2NativeEntries returns the native v2 providers of one file.
@@ -859,7 +929,7 @@ func syncOpenCodeV2BYOKFor(byoks []openCodeBYOK, file string, prefix string, pru
 					route, _ := h.Get("X-Tokless-Route")
 					if s, ok := route.(string); ok && openCodeV2RoutePrefixOwned(s, prefix) {
 						if entry, isNative := stashed[id]; isNative && entry.Native && entry.File == file {
-							if restoreOpenCodeV2ProviderEntry(m, openCodeBYOK{ID: id, BaseURL: entry.BaseURL, APIKey: entry.APIKey}) {
+							if restoreOpenCodeV2ProviderEntry(m, openCodeBYOK{ID: id, BaseURL: entry.BaseURL, APIKey: entry.APIKey}, endpoint) {
 								changed = true
 							}
 							continue
@@ -940,7 +1010,9 @@ func openCodeV2ProviderEntry(b openCodeBYOK, endpoint string) *util.OrderedMap {
 		headers.Set(openCodeV2OriginalPathHeader, path)
 	}
 	entry.Set("headers", headers)
-	entry.Set("models", openCodeV2Models(b.File, b.ID))
+	models := openCodeV2Models(b.File, b.ID)
+	openCodeV2MirrorModels(models, endpoint, b.BaseURL)
+	entry.Set("models", models)
 	return entry
 }
 
@@ -975,6 +1047,9 @@ func openCodeV2RewriteProviderEntry(entry *util.OrderedMap, b openCodeBYOK, endp
 	} else {
 		headers.Delete(openCodeV2OriginalPathHeader)
 	}
+	if models, ok := mapChild(entry, "models"); ok {
+		openCodeV2MirrorModels(models, endpoint, b.BaseURL)
+	}
 }
 
 // openCodeV2EntryKey returns the key a mirrored entry keeps.
@@ -994,7 +1069,7 @@ func openCodeV2EntryKey(settings *util.OrderedMap, b openCodeBYOK) string {
 const openCodeV2OriginalPathHeader = "x-headroom-original-path"
 
 // restoreOpenCodeV2ProviderEntry gives a taken-over native provider entry back to the user.
-func restoreOpenCodeV2ProviderEntry(entry *util.OrderedMap, b openCodeBYOK) bool {
+func restoreOpenCodeV2ProviderEntry(entry *util.OrderedMap, b openCodeBYOK, endpoint string) bool {
 	if entry == nil {
 		return false
 	}
@@ -1006,6 +1081,7 @@ func restoreOpenCodeV2ProviderEntry(entry *util.OrderedMap, b openCodeBYOK) bool
 	if b.APIKey != "" {
 		settings.Set("apiKey", b.APIKey)
 	}
+	openCodeV2RestoreModelMirror(entry, endpoint)
 	headers, ok := mapChild(entry, "headers")
 	if !ok {
 		return true
@@ -1017,6 +1093,36 @@ func restoreOpenCodeV2ProviderEntry(entry *util.OrderedMap, b openCodeBYOK) bool
 		entry.Delete("headers")
 	}
 	return true
+}
+
+// openCodeV2RestoreModelMirror removes the model-level mirror fields the wire added.
+func openCodeV2RestoreModelMirror(entry *util.OrderedMap, endpoint string) {
+	models, ok := mapChild(entry, "models")
+	if !ok {
+		return
+	}
+	for _, key := range models.Keys() {
+		value, _ := models.Get(key)
+		model, ok := value.(*util.OrderedMap)
+		if !ok {
+			continue
+		}
+		if settings, ok := mapChild(model, "settings"); ok {
+			if base, _ := settings.Get("baseURL"); base == endpoint {
+				settings.Delete("baseURL")
+			}
+			if settings.Len() == 0 {
+				model.Delete("settings")
+			}
+		}
+		if headers, ok := mapChild(model, "headers"); ok {
+			headers.Delete(headroomBaseURLHeader)
+			headers.Delete(openCodeV2OriginalPathHeader)
+			if headers.Len() == 0 {
+				model.Delete("headers")
+			}
+		}
+	}
 }
 
 func openCodeV2Models(file, id string) *util.OrderedMap {

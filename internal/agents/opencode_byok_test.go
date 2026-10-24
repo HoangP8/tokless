@@ -213,9 +213,28 @@ func TestOpenCodeV2BYOKWriteAndOwnership(t *testing.T) {
 		t.Fatalf("baseURL=%v", v)
 	}
 	h, _ := mapChild(p, "headers")
-	for k, w := range map[string]string{"X-Tokless-Route": b.RouteHeader, headroomBaseURLHeader: "https://api.example.test", "x-headroom-original-path": "/api/v1/chat/completions"} {
+	for k, w := range map[string]string{"X-Tokless-Route": b.RouteHeader, headroomBaseURLHeader: "https://api.example.test/api", "x-headroom-original-path": "/v1/chat/completions"} {
 		if v, _ := h.Get(k); v != w {
 			t.Errorf("%s=%v want %s", k, v, w)
+		}
+	}
+	models, ok := mapChild(p, "models")
+	if !ok {
+		t.Fatal("models were dropped")
+	}
+	modelValue, ok := models.Get("sel")
+	if !ok {
+		t.Fatal("model sel was dropped")
+	}
+	model := modelValue.(*util.OrderedMap)
+	modelSettings, _ := mapChild(model, "settings")
+	if v, _ := modelSettings.Get("baseURL"); v != ProxyEndpointFor("opencode2") {
+		t.Errorf("model settings.baseURL=%v want the proxy", v)
+	}
+	modelHeaders, _ := mapChild(model, "headers")
+	for k, w := range map[string]string{headroomBaseURLHeader: "https://api.example.test/api", "x-headroom-original-path": "/v1/chat/completions"} {
+		if v, _ := modelHeaders.Get(k); v != w {
+			t.Errorf("model %s=%v want %s", k, v, w)
 		}
 	}
 	if v, _ := p.Get("package"); v != "@opencode/ai/providers/openai" {
@@ -253,6 +272,28 @@ func TestOpenCodeV2PackageFallback(t *testing.T) {
 	for input, want := range map[string]string{"@ai-sdk/anthropic": "@opencode/ai/providers/anthropic", "@ai-sdk/openai-compatible": "@opencode/ai/providers/openai-compatible", "unknown": "@opencode/ai/providers/openai-compatible"} {
 		if got := openCodeV2Package(input); got != want {
 			t.Errorf("%s: %s", input, got)
+		}
+	}
+}
+
+func TestOpenCodeV2UpstreamHeaders(t *testing.T) {
+	cases := []struct {
+		upstream string
+		base     string
+		path     string
+	}{
+		{"https://api.acme.test", "https://api.acme.test", ""},
+		{"https://api.acme.test/", "https://api.acme.test", ""},
+		{"https://api.acme.test/v1", "https://api.acme.test", "/v1/chat/completions"},
+		{"https://api.acme.test/v1/", "https://api.acme.test", "/v1/chat/completions"},
+		{"https://api.acme.test/api/v1", "https://api.acme.test/api", "/v1/chat/completions"},
+		{"https://gateway.example.test/proxy/openai/v1", "https://gateway.example.test/proxy/openai", "/v1/chat/completions"},
+		{"https://api.acme.test/api", "https://api.acme.test", "/api/chat/completions"},
+	}
+	for _, c := range cases {
+		base, path := openCodeV2UpstreamHeaders(c.upstream)
+		if base != c.base || path != c.path {
+			t.Errorf("%s: base=%q path=%q, want base=%q path=%q", c.upstream, base, path, c.base, c.path)
 		}
 	}
 }

@@ -482,7 +482,7 @@ func OpenCodeProxySatisfied() bool {
 	return OpenCodeProxyWired()
 }
 
-func openCodeTransportPluginPath() string {
+func openCodeHeadroomPluginDir() string {
 	p := util.HeadroomPathsResolved()
 	root := filepath.Join(p.Tools, "headroom-ai")
 	if util.IsWin {
@@ -490,7 +490,22 @@ func openCodeTransportPluginPath() string {
 	} else {
 		root = filepath.Join(root, "lib", "python3.13", "site-packages")
 	}
-	return filepath.Join(root, "headroom", "providers", "opencode", "_dist", "entry.opencode.js")
+	return filepath.Join(root, "headroom", "providers", "opencode", "_dist")
+}
+
+// openCodeTransportPluginPath returns the headroom bundle the wrapper imports.
+func openCodeTransportPluginPath() string {
+	dir := openCodeHeadroomPluginDir()
+	if util.Exists(filepath.Join(dir, "index.js")) {
+		return filepath.Join(dir, "index.js")
+	}
+	return filepath.Join(dir, "entry.opencode.js")
+}
+
+// openCodeBYOKPluginSource returns the wrapper source for the installed headroom layout.
+func openCodeBYOKPluginSource() string {
+	importPath := `"` + "./" + filepath.Base(openCodeTransportPluginPath()) + `"`
+	return strings.Replace(string(toklessOpenCodeBYOKPlugin), `"./entry.opencode.js"`, importPath, 1)
 }
 
 func openCodeBYOKPluginPath() string {
@@ -688,7 +703,7 @@ func configureOpenCodeTransportPluginIn(target openCodeTransportTarget) (changed
 		}
 	}()
 	if target.transportPlugin {
-		if err := util.WriteFile(openCodeBYOKPluginPath(), string(toklessOpenCodeBYOKPlugin)); err != nil {
+		if err := util.WriteFile(openCodeBYOKPluginPath(), openCodeBYOKPluginSource()); err != nil {
 			return false, file
 		}
 	}

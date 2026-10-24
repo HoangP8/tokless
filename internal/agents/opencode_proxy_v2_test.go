@@ -326,6 +326,71 @@ func TestConfigureOpenCodeProxyV2DelegatesToSharedConfig(t *testing.T) {
 	}
 }
 
+func TestConfigureOpenCodeProxyV2SharedConfigMirrorsProviders(t *testing.T) {
+	opencodeProxyTestHome(t)
+	t.Setenv("HOME", util.Home())
+	if util.IsWin {
+		t.Setenv("USERPROFILE", util.Home())
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("OPENCODE_CONFIG_DIR_V2", "")
+	if !openCodeV2SharesV1Config() {
+		t.Skip("v2 config dir does not fall back to the v1 dir in this environment")
+	}
+	dir := openCodeHeadroomPluginDir()
+	if err := os.Remove(filepath.Join(dir, "entry.opencode.js")); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteFile(filepath.Join(dir, "index.js"), "export default { id: \"headroom\", server: async () => ({}), setup: async () => ({}) }\n"); err != nil {
+		t.Fatal(err)
+	}
+	shared := util.OpenCodePathsResolved().Config
+	if err := util.WriteFile(shared, v2ProviderSeed); err != nil {
+		t.Fatal(err)
+	}
+	if changed, file := ConfigureOpenCodeProxyV2(); !changed || file != shared {
+		t.Fatalf("configure changed=%v file=%s, want true %s", changed, file, shared)
+	}
+	if !OpenCodeProxyWired() || !OpenCodeProxyV2Wired() {
+		t.Fatal("shared config not wired for both versions")
+	}
+	providers := openCodeV2ProvidersOf(shared)
+	if providers == nil {
+		raw, _ := util.ReadFileSafe(shared)
+		t.Fatalf("v2 provider mirror missing: %s", raw)
+	}
+	value, ok := providers.Get("acme")
+	entry, isMap := value.(*util.OrderedMap)
+	if !ok || !isMap {
+		raw, _ := util.ReadFileSafe(shared)
+		t.Fatalf("mirrored provider missing: %s", raw)
+	}
+	if base, _ := openCodeV2ProviderBaseAndKey(entry); base != openCodeProxyEndpointFor("opencode2:") {
+		t.Fatalf("mirrored provider baseURL = %q, want the proxy endpoint", base)
+	}
+	headers, _ := mapChild(entry, "headers")
+	route, _ := headers.Get("X-Tokless-Route")
+	if route, _ := route.(string); !strings.HasPrefix(route, "opencode2:acme") {
+		t.Fatalf("mirrored provider route = %v, want the opencode2 namespace", route)
+	}
+	if _, ok := util.ReadBYOKRoute("opencode2:acme"); !ok {
+		t.Fatal("opencode2 route was not registered")
+	}
+	if !RemoveOpenCodeProxyV2() {
+		t.Fatal("remove failed")
+	}
+	after, _ := util.ReadFileSafe(shared)
+	if strings.Contains(after, `"providers"`) || strings.Contains(after, "X-Tokless-Route") {
+		t.Fatalf("v2 mirror survived remove: %s", after)
+	}
+	if !strings.Contains(after, "https://api.acme.test/v1") {
+		t.Fatalf("v1 provider was not restored: %s", after)
+	}
+	if _, ok := util.ReadBYOKRoute("opencode2:acme"); ok {
+		t.Fatal("opencode2 route survived remove")
+	}
+}
+
 func TestConfigureOpenCodeProxyDoesNotTouchV2Dir(t *testing.T) {
 	openCodeV2TestHome(t)
 	v2Dir := util.OpenCodePathsV2().Dir
@@ -566,7 +631,7 @@ func TestRemoveOpenCodeProxyV2RestoresMirrorOnRouteFailure(t *testing.T) {
 func TestConfigureOpenCodeProxyV2RefreshesStaleRoutedEntry(t *testing.T) {
 	v2Dir := openCodeV2TestHome(t)
 	v2Path := filepath.Join(v2Dir, "opencode.json")
-	entry := `{"providers":{"acme":{"name":"acme","package":"@opencode/ai/providers/openai-compatible","settings":{"baseURL":"http://127.0.0.1:9999/v1","apiKey":"acme-key"},"headers":{"X-Tokless-Route":"opencode2:acme.token","x-headroom-base-url":"https://api.acme.test/v1"}}}}`
+	entry := `{"providers":{"acme":{"name":"acme","package":"@opencode/ai/providers/openai-compatible","settings":{"baseURL":"http://127.0.0.1:9999/v1","apiKey":"acme-key"},"headers":{"X-Tokless-Route":"opencode2:acme.token","x-headroom-base-url":"https://api.acme.test/v1"},"models":{"resp-1":{"modelID":"resp-1","name":"Resp One"}}}}}`
 	if err := util.WriteFile(v2Path, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -588,6 +653,15 @@ func TestConfigureOpenCodeProxyV2RefreshesStaleRoutedEntry(t *testing.T) {
 	}
 	if !strings.Contains(raw, `"x-headroom-base-url": "https://api.acme.test"`) {
 		t.Fatalf("the upstream was dropped: %s", raw)
+	}
+	cfg := util.TryParseJsonc(raw)
+	providers, _ := mapChild(cfg, "providers")
+	value, _ := providers.Get("acme")
+	models, _ := mapChild(value.(*util.OrderedMap), "models")
+	modelValue, _ := models.Get("resp-1")
+	modelSettings, _ := mapChild(modelValue.(*util.OrderedMap), "settings")
+	if base, _ := modelSettings.Get("baseURL"); base != ProxyEndpointFor("opencode2") {
+		t.Fatalf("stale entry kept a model without the proxy endpoint: %s", raw)
 	}
 	if !OpenCodeProxyV2Wired() {
 		t.Fatalf("v2 must be wired after the refresh: %s", raw)

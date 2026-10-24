@@ -79,6 +79,56 @@ func TestOpenCodeTransportPluginPathUsesWindowsLayout(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTransportPluginPathFollowsHeadroomLayout(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	dir := openCodeHeadroomPluginDir()
+	oldPath := filepath.Join(dir, "entry.opencode.js")
+	newPath := filepath.Join(dir, "index.js")
+	if err := util.WriteFile(oldPath, "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got := openCodeTransportPluginPath(); got != oldPath {
+		t.Fatalf("old layout path = %q, want %q", got, oldPath)
+	}
+	if err := util.WriteFile(newPath, "export default { id: \"headroom\", server: async () => ({}) }\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got := openCodeTransportPluginPath(); got != newPath {
+		t.Fatalf("new layout path = %q, want %q", got, newPath)
+	}
+}
+
+func TestOpenCodeBYOKPluginSourceImportsInstalledBundle(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	dir := openCodeHeadroomPluginDir()
+	if err := util.WriteFile(filepath.Join(dir, "entry.opencode.js"), "export default async () => ({})\n"); err != nil {
+		t.Fatal(err)
+	}
+	oldSource := openCodeBYOKPluginSource()
+	if !strings.Contains(oldSource, `from "./entry.opencode.js"`) {
+		t.Fatalf("old layout wrapper imports the wrong bundle: %s", oldSource)
+	}
+	if !strings.Contains(oldSource, "HeadroomOpenCodePlugin?.server") {
+		t.Fatalf("wrapper does not accept the 0.41 object export: %s", oldSource)
+	}
+	if err := util.WriteFile(filepath.Join(dir, "index.js"), "export default { id: \"headroom\", server: async () => ({}) }\n"); err != nil {
+		t.Fatal(err)
+	}
+	newSource := openCodeBYOKPluginSource()
+	if !strings.Contains(newSource, `from "./index.js"`) {
+		t.Fatalf("new layout wrapper imports the wrong bundle: %s", newSource)
+	}
+	if strings.Contains(newSource, "entry.opencode.js") {
+		t.Fatalf("new layout wrapper still imports the removed bundle: %s", newSource)
+	}
+}
+
 func openCodeTestHome(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
 	t.Helper()
