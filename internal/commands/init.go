@@ -232,7 +232,7 @@ func RunInit(opts InitOptions) int {
 			installTools = append(installTools, tool)
 		}
 	}
-	toolBar := util.NewRootSectionProgress("Tools")
+	toolBar := util.NewSectionProgress("Tools")
 	toolBar.Start(len(installTools))
 	installLogs := map[string]string{}
 	for _, tool := range installTools {
@@ -291,8 +291,8 @@ func RunInit(opts InitOptions) int {
 		util.SetQuiet(false)
 		util.L.Raw("")
 		if len(requested) == 0 && len(tools) > 0 {
-			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " Non-interactive shell and no compatible agents detected — nothing to wire.")
-			util.L.Raw("  " + util.C.Gray("Run tokless in a terminal to pick agents, or: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
+			util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " Non-interactive shell and no compatible agents detected — nothing to wire.")
+			util.TreeLeaf(util.C.Gray("Run tokless in a terminal to pick agents, or: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
 			util.L.Raw("")
 			return 0
 		}
@@ -304,8 +304,8 @@ func RunInit(opts InitOptions) int {
 			}
 		}
 		if len(requested) > 0 {
-			util.L.Raw("  " + util.C.Gray("Non-interactive shell — auto-selecting installed agents: ") + util.C.Bold(joinComma(labels)))
-			util.L.Raw("  " + util.C.Gray("To choose explicitly: ") + util.C.Cyan("tokless --agents <claude,opencode,codex>"))
+			util.TreeLeaf(util.C.Gray("Non-interactive shell — auto-selecting installed agents: ") + util.C.Bold(joinComma(labels)))
+			util.TreeLeaf(util.C.Gray("To choose explicitly: ") + util.C.Cyan("tokless --agents <claude,opencode,codex>"))
 		}
 	default:
 		var optsList []util.MultiSelectOption
@@ -330,8 +330,8 @@ func RunInit(opts InitOptions) int {
 				requested = nil
 			} else {
 				util.L.Raw("")
-				util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " No compatible agents detected — nothing to wire.")
-				util.L.Raw("  " + util.C.Gray("Install an agent, then re-run tokless; or select one explicitly: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
+				util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " No compatible agents detected — nothing to wire.")
+				util.TreeLeaf(util.C.Gray("Install an agent, then re-run tokless; or select one explicitly: ") + util.C.Cyan("tokless --agents claude,opencode,codex"))
 				util.L.Raw("")
 				return 0
 			}
@@ -353,7 +353,7 @@ func RunInit(opts InitOptions) int {
 		if a == nil {
 			continue
 		}
-		util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " " + a.Label + " not installed — install it first: " + util.C.Cyan(a.Homepage))
+		util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + a.Label + " not installed — install it first: " + util.C.Cyan(a.Homepage))
 	}
 
 	failures = map[string][]string{}
@@ -387,7 +387,7 @@ func RunInit(opts InitOptions) int {
 				}
 				cursorRollback = func() {
 					if err := cursorHookSnapshot.Restore(); err != nil {
-						util.L.Sub("Cursor project-rules hook rollback failed: " + err.Error())
+						treeSub("Cursor project-rules hook rollback failed: " + err.Error())
 					}
 					for _, rule := range newRules {
 						if raw, ok := util.ReadFileSafe(rule.path); ok && raw == rule.content {
@@ -426,7 +426,7 @@ func RunInit(opts InitOptions) int {
 			printFailureDetail(map[string]string{agent.Label: wireLogs[id]})
 		}
 		if len(requested) == 0 && len(tools) > 0 {
-			util.L.Raw("  " + util.C.Gray("Nothing selected. Tools are installed; re-run to wire an agent."))
+			util.TreeLeaf(util.C.Gray("Nothing selected. Tools are installed; re-run to wire an agent."))
 		}
 		util.L.Raw("")
 		if len(failures) > 0 {
@@ -441,10 +441,10 @@ func RunInit(opts InitOptions) int {
 		agent := core.GetAgent(agentID)
 		wireBar.Begin(agent.Label)
 		var failed []string
-		if unwireFailed := runExcludedToolsUnwire(agentID, allTools, tools, opts); len(unwireFailed) > 0 {
-			failed = append(failed, unwireFailed...)
-		}
 		wireOut, _ := util.CaptureLogs(func() error {
+			if unwireFailed := runExcludedToolsUnwire(agentID, allTools, tools, opts); len(unwireFailed) > 0 {
+				failed = append(failed, unwireFailed...)
+			}
 			for ti, tool := range tools {
 				fn, ok := tool.WireFor[agentID]
 				if !ok {
@@ -510,9 +510,9 @@ func RunInit(opts InitOptions) int {
 			if unwire, ok := change.tool.UnwireFor[change.agent]; ok {
 				removed, err := unwire(core.RunOpts{Agent: change.agent})
 				if err != nil {
-					util.L.Sub("rollback failed: " + change.tool.Label + " from " + change.agent + ": " + err.Error())
+					treeSub("rollback failed: " + change.tool.Label + " from " + change.agent + ": " + err.Error())
 				} else if !removed {
-					util.L.Sub("rollback failed: " + change.tool.Label + " from " + change.agent + ": configuration was not removed")
+					treeSub("rollback failed: " + change.tool.Label + " from " + change.agent + ": configuration was not removed")
 				}
 			}
 		}
@@ -573,7 +573,7 @@ func projectmemSeedProject(opts InitOptions, tools []*core.ToolManifest) {
 		return
 	}
 	if err := toolsPkg.EnsureProjectmemProject(root); err != nil {
-		util.L.Sub("projectmem: " + err.Error())
+		treeSub("projectmem: " + err.Error())
 	}
 	toolsPkg.RefreshProjectmemRuleFiles(root)
 }

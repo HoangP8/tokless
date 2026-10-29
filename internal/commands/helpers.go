@@ -77,11 +77,16 @@ func printFailureDetail(logs map[string]string) {
 		if len(lines) == 0 {
 			continue
 		}
-		util.L.Raw("      " + util.C.Gray(label+":"))
+		util.TreeLeaf("  " + util.C.Gray(label+":"))
 		for _, ln := range lines {
-			util.L.Raw("        " + util.C.Gray(ln))
+			util.TreeLeaf("    " + util.C.Gray(ln))
 		}
 	}
+}
+
+// treeSub prints a gray bullet row under the tree stem.
+func treeSub(msg string) {
+	util.TreeLeaf(util.C.Gray(util.Sym.Bullet) + " " + msg)
 }
 
 func lastNonEmptyLines(s string, n int) []string {
