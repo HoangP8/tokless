@@ -65,14 +65,16 @@ command:
 			argv[0] = p
 		}
 	}
+	var background []func()
 	if codegraphPath != "" {
 		if root := codegraphWorkspace(workspace); root != "" {
-			if ok, err := tools.EnsureCodegraphIndex(root, core.RunOpts{}); err != nil || !ok {
-				if err != nil {
+			background = append(background, func() {
+				if ok, err := tools.EnsureCodegraphIndex(root, core.RunOpts{}); err != nil {
 					util.L.Err("CodeGraph index: " + err.Error())
+				} else if !ok {
+					util.L.Err("CodeGraph index: not ready")
 				}
-				return 1
-			}
+			})
 		}
 		argv = injectCodegraphPath(argv, workspace)
 	}
@@ -83,11 +85,13 @@ command:
 			return 1
 		}
 		root := projectmemRoot(workspace)
-		if err := tools.EnsureProjectmemProject(root); err != nil {
-			util.L.Err("projectmem init: " + err.Error())
-		}
+		background = append(background, func() {
+			if err := tools.EnsureProjectmemProject(root); err != nil {
+				util.L.Err("projectmem init: " + err.Error())
+			}
+			tools.RefreshProjectmemRuleFiles(root)
+		})
 		projectmemEnv = []string{"PROJECTMEM_ROOT=" + root}
-		tools.RefreshProjectmemRuleFiles(root)
 		defer tools.RefreshProjectmemRuleFiles(root)
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -102,10 +106,12 @@ command:
 		util.L.Err("mcp spawn: executable not found: " + argv[0])
 		return 1
 	}
-	if err := ensureProxyForAgent(agent); err != nil {
-		util.L.Err("headroom proxy: " + err.Error())
-		return 1
-	}
+	startProxy := ensureProxyUp
+	background = append(background, func() {
+		if err := ensureProxyForAgent(agent, startProxy); err != nil {
+			util.L.Err("headroom proxy: " + err.Error())
+		}
+	})
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "PROJECTMEM_ROOT=") {
@@ -113,7 +119,17 @@ command:
 		}
 	}
 	env = append(env, projectmemEnv...)
-	return runMcpProxyAfterStart(agent, path, argv, env, tool, nil)
+	var afterStart func()
+	if len(background) > 0 {
+		afterStart = func() {
+			go func() {
+				for _, f := range background {
+					f()
+				}
+			}()
+		}
+	}
+	return runMcpProxyAfterStart(agent, path, argv, env, tool, afterStart)
 }
 
 // projectmemRoot pins the projectmem project root for the MCP child.
@@ -135,13 +151,13 @@ func projectmemRoot(workspace string) string {
 // being booted for an agent tokless wires to the proxy.
 var ensureProxyUp = headroompkg.EnsureProxyUp
 
-func ensureProxyForAgent(agent string) error {
+func ensureProxyForAgent(agent string, start func() error) error {
 	if agent == "" || proxyInstructions(agent) != nil {
 		return nil
 	}
 	for _, id := range ProxyAgentIDs() {
 		if agent == id {
-			return ensureProxyUp()
+			return start()
 		}
 	}
 	return nil
