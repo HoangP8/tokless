@@ -169,7 +169,7 @@ func settleSelectOne(question string, options []SelectOption, chosen int, replac
 	if replace {
 		fmt.Fprintf(os.Stdout, "\r\x1b[%dA\x1b[0J", len(options)+4)
 	}
-	corner := pick("├─ ", "+- ")
+	corner := treeNodeGlyph()
 	stem := C.Dim(pick("│   ", "|   "))
 	bul := pick("│", "|")
 	fmt.Fprintf(os.Stdout, "%s%s\n", C.Dim(corner), C.Bold(question))
@@ -194,7 +194,7 @@ func settleMultiSelect(question string, items []MultiSelectOption, showStatus ..
 	status := len(showStatus) == 0 || showStatus[0]
 	height := len(items) + 3
 	fmt.Fprintf(os.Stdout, "\x1b[%dA\x1b[0J", height)
-	corner := pick("├─ ", "+- ")
+	corner := treeNodeGlyph()
 	stem := C.Dim(pick("│   ", "|   "))
 	bul := pick("│", "|")
 
@@ -548,7 +548,7 @@ func renderToolSelectionRows(items []MultiSelectOption, cursor int) string {
 
 func settleToolSelection(question string, items []MultiSelectOption) {
 	fmt.Fprintf(os.Stdout, "\r\x1b[%dA\x1b[0J", len(items)+5)
-	fmt.Fprintf(os.Stdout, "%s%s\n", C.Dim(pick("├─ ", "+- ")), C.Bold(question))
+	fmt.Fprintf(os.Stdout, "%s%s\n", C.Dim(treeNodeGlyph()), C.Bold(question))
 	fmt.Fprintln(os.Stdout, C.Dim("│   ")+C.Green(Sym.Selected)+"  Full (Default)")
 	fmt.Fprintln(os.Stdout, C.Dim("│   ")+C.Gray(Sym.Unselected)+"  Selected")
 	for i, item := range items {

@@ -93,3 +93,39 @@ func TestSectionProgressNonTTYUsesTreeCorner(t *testing.T) {
 		t.Fatalf("expected corner + stem trunk:\n%s", s)
 	}
 }
+func TestTreeNodeGlyphFirstIsRoot(t *testing.T) {
+	oldGlyphs, oldOpened := glyphsEnabled, treeOpened
+	defer func() { glyphsEnabled, treeOpened = oldGlyphs, oldOpened }()
+	glyphsEnabled, treeOpened = true, false
+	if got := treeNodeGlyph(); got != "┌─ " {
+		t.Fatalf("first node = %q, want ┌─", got)
+	}
+	if got := treeNodeGlyph(); got != "├─ " {
+		t.Fatalf("second node = %q, want ├─", got)
+	}
+}
+
+func TestSectionProgressFirstNodeIsRoot(t *testing.T) {
+	oldGlyphs, oldOpened := glyphsEnabled, treeOpened
+	defer func() { glyphsEnabled, treeOpened = oldGlyphs, oldOpened }()
+	glyphsEnabled, treeOpened = true, false
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	for _, title := range []string{"Tools", "Agents"} {
+		p := NewSectionProgress(title)
+		p.tty = false
+		p.Start(0)
+		p.Done("")
+	}
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	s := stripTestANSI(string(out))
+	if !strings.Contains(s, "┌─ Tools") || !strings.Contains(s, "├─ Agents") || strings.Count(s, "┌─") != 1 {
+		t.Fatalf("expected one root then mid node:\n%s", s)
+	}
+}

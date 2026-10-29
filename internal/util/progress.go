@@ -50,8 +50,19 @@ func treeCornerGlyph(root bool) string {
 	return pick("├─ ", "+- ")
 }
 
+// treeOpened records that the root (┌─) node was already printed.
+var treeOpened bool
+
+// treeNodeGlyph returns ┌─ for the first tree node of the run, ├─ afterwards.
+func treeNodeGlyph() string {
+	root := !treeOpened
+	treeOpened = true
+	return treeCornerGlyph(root)
+}
+
 // TreeTop opens the first branch (down-only connector).
 func TreeTop(title string) {
+	treeOpened = true
 	fmt.Println(C.Dim(treeCornerGlyph(true)) + C.Bold(C.Magenta(title)))
 }
 
@@ -158,6 +169,10 @@ func NewRootSectionProgress(section string) *Progress {
 func (p *Progress) Start(total int) {
 	if p.title != "" {
 		if p.treeStyle {
+			if !treeOpened {
+				p.treeRoot = true
+			}
+			treeOpened = true
 			if p.tty {
 				fmt.Fprintf(p.out, "%s %s\n", C.Magenta(C.Bold(pick("●", "*"))), C.Magenta(C.Bold(p.title)))
 			} else if p.treeRoot {
