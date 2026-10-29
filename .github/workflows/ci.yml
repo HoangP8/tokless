@@ -39,6 +39,11 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Ensure install.ps1 is ASCII-only (PS 5.1 safe)
+        shell: bash
+        run: |
+          python3 -c "import sys; data=open('scripts/install.ps1','rb').read(); bad=[i+1 for i,l in enumerate(data.splitlines()) if any(b>127 for b in l)]; print('non-ASCII lines:', bad or 'NONE'); sys.exit(1 if bad else 0)"
+
       - name: Validate PowerShell scripts
         if: runner.os == 'Windows'
         shell: pwsh

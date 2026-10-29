@@ -57,7 +57,7 @@ try {
     $staged = $Destination + ".new"
     Move-Item -LiteralPath $Source -Destination $staged -Force
     if (Test-Path -LiteralPath $Destination) {
-        [System.IO.File]::Replace($staged, $Destination, $null)
+        [System.IO.File]::Replace($staged, $Destination, [NullString]::Value)
     } else {
         Move-Item -LiteralPath $staged -Destination $Destination
     }
@@ -67,12 +67,13 @@ try {
     $dataRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }
     $dataDir = Join-Path $dataRoot "tokless"
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-    @{
+    $installJson = @{
         method  = "install script"
         path    = $Destination
         version = $version
         at      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    } | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $dataDir "install.json") -Encoding UTF8
+    } | ConvertTo-Json -Compress
+    [System.IO.File]::WriteAllText((Join-Path $dataDir "install.json"), $installJson)
     $message = "Update replacement completed: $Destination"
 } catch {
     $failure = $_.Exception.ToString()
@@ -110,7 +111,7 @@ try {
 try {
     Move-Item -LiteralPath $tmp -Destination ($dest + ".new") -Force
     if (Test-Path $dest) {
-        [System.IO.File]::Replace($dest + ".new", $dest, $null)
+        [System.IO.File]::Replace($dest + ".new", $dest, [NullString]::Value)
     } else {
         Move-Item -LiteralPath ($dest + ".new") -Destination $dest
     }
@@ -135,17 +136,18 @@ if ($expanded -notcontains $destDir.TrimEnd("\")) {
 $key.Close()
 
 $v = & $dest --version 2>$null
-Write-Host "✔ tokless $v ready → $dest" -ForegroundColor Green
+Write-Host "[OK] tokless $v ready -> $dest" -ForegroundColor Green
 
 # install.json for `tokless info`
 $dataDir = Join-Path $env:LOCALAPPDATA "tokless"
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-@{
+$installJson = @{
     method  = "install script"
     path    = $dest
     version = "$v"
     at      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-} | ConvertTo-Json -Compress | Set-Content -Path (Join-Path $dataDir "install.json") -Encoding UTF8
+} | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText((Join-Path $dataDir "install.json"), $installJson)
 
 $hadInstallerRun = Test-Path Env:TOKLESS_INSTALLER_RUN
 $prevInstallerRun = $env:TOKLESS_INSTALLER_RUN
