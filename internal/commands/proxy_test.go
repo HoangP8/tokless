@@ -37,9 +37,13 @@ func proxyCmdTestHome(t *testing.T) {
 	if err := os.WriteFile(bin, []byte("test headroom"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	oldGrokRunning := grokProxyRunning
+	oldGrokRunning, oldConfigured := grokProxyRunning, proxyAutostartConfigured
 	grokProxyRunning = func() bool { return false }
-	t.Cleanup(func() { util.SetHomeOverride(""); grokProxyRunning = oldGrokRunning })
+	proxyAutostartConfigured = func() bool { return false }
+	t.Cleanup(func() {
+		util.SetHomeOverride("")
+		grokProxyRunning, proxyAutostartConfigured = oldGrokRunning, oldConfigured
+	})
 }
 
 // freeTestPort returns a port nothing listens on.

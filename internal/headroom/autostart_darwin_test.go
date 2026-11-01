@@ -105,3 +105,9 @@ func TestBootoutProxyAgentFailsWhenServiceStillLoaded(t *testing.T) {
 		t.Fatal("bootoutProxyAgent() error = nil, want error while the service is loaded")
 	}
 }
+
+func TestProxyAutostartMechanismNamesHostMechanism(t *testing.T) {
+	if got := ProxyAutostartMechanism(); !strings.Contains(got, proxyAutostartLabel) {
+		t.Fatalf("ProxyAutostartMechanism() = %q, missing %q", got, proxyAutostartLabel)
+	}
+}

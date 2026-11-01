@@ -20,6 +20,8 @@ import (
 // logon with the user's own environment.
 const proxyAutostartTask = "tokless-headroom-proxy"
 
+const proxyAutostartMechanism = `Task Scheduler task "` + proxyAutostartTask + `"`
+
 type scheduledTask struct {
 	Triggers struct {
 		Logon *struct{} `xml:"LogonTrigger"`
@@ -93,8 +95,37 @@ func scheduledTaskRunning() (bool, error) {
 	}
 }
 
-func readScheduledTask() ([]byte, error) {
+var readScheduledTask = func() ([]byte, error) {
 	return exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").CombinedOutput()
+}
+
+var listScheduledTasks = func() ([]byte, error) {
+	return exec.Command("schtasks", "/query", "/fo", "CSV", "/nh").Output()
+}
+
+// scheduledTaskAbsent is a locale-independent missing-task check: the full
+// task listing succeeds and has no row for our task.
+var scheduledTaskAbsent = func() bool {
+	out, err := listScheduledTasks()
+	if err != nil {
+		return false
+	}
+	r := csv.NewReader(strings.NewReader(string(out)))
+	r.FieldsPerRecord = -1
+	records, err := r.ReadAll()
+	if err != nil {
+		return false
+	}
+	for _, rec := range records {
+		if len(rec) == 0 {
+			continue
+		}
+		name := strings.TrimPrefix(strings.TrimSpace(rec[0]), `\`)
+		if strings.EqualFold(name, proxyAutostartTask) {
+			return false
+		}
+	}
+	return true
 }
 
 func scheduledTaskNotFound(output []byte) bool {
@@ -106,7 +137,7 @@ func scheduledTaskNotFound(output []byte) bool {
 
 var endProxyAutostartTask = func() error {
 	out, err := exec.Command("schtasks", "/end", "/tn", proxyAutostartTask).CombinedOutput()
-	if err != nil && scheduledTaskNotFound(out) {
+	if err != nil && (scheduledTaskNotFound(out) || scheduledTaskAbsent()) {
 		return nil
 	}
 	return err
@@ -114,7 +145,7 @@ var endProxyAutostartTask = func() error {
 
 var deleteProxyAutostartTask = func() error {
 	out, err := exec.Command("schtasks", "/delete", "/tn", proxyAutostartTask, "/f").CombinedOutput()
-	if err != nil && scheduledTaskNotFound(out) {
+	if err != nil && (scheduledTaskNotFound(out) || scheduledTaskAbsent()) {
 		return nil
 	}
 	return err
@@ -134,7 +165,7 @@ func endRunningProxyAutostartTask(running bool) error {
 	return endProxyAutostartTask()
 }
 
-func EnableProxyAutostart() (err error) {
+func enableProxyAutostartOS() (err error) {
 	bin := util.ToklessAbsStrict()
 	if bin == "" {
 		return nil
@@ -302,7 +333,7 @@ func DisableProxyAutostart() error {
 	}
 	out, err := readScheduledTask()
 	if err != nil {
-		if scheduledTaskNotFound(out) {
+		if scheduledTaskNotFound(out) || scheduledTaskAbsent() {
 			return nil
 		}
 		return fmt.Errorf("query %s: %w", proxyAutostartTask, err)

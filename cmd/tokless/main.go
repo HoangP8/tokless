@@ -17,6 +17,7 @@ import (
 
 type parsedArgs struct {
 	cmd   string
+	args  []string
 	flags map[string]string
 	bools map[string]bool
 }
@@ -46,6 +47,12 @@ func isSessionBootArg(args []string) bool {
 	return false
 }
 
+// boolFlags never take a value, so a following word stays a positional.
+var boolFlags = map[string]bool{
+	"dry-run": true, "dryrun": true, "fix": true, "help": true, "no-autostart": true,
+	"offline": true, "uninstall": true, "verbose": true, "version": true, "yes": true,
+}
+
 // parseArgs mirrors the TS parser: --k=v, --k v, --k, -x short bool.
 func parseArgs(argv []string) parsedArgs {
 	p := parsedArgs{flags: map[string]string{}, bools: map[string]bool{}}
@@ -54,7 +61,7 @@ func parseArgs(argv []string) parsedArgs {
 		if strings.HasPrefix(a, "--") {
 			if eq := strings.IndexByte(a, '='); eq != -1 {
 				p.flags[a[2:eq]] = a[eq+1:]
-			} else if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+			} else if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") && !boolFlags[a[2:]] {
 				p.flags[a[2:]] = argv[i+1]
 				i++
 			} else {
@@ -66,8 +73,11 @@ func parseArgs(argv []string) parsedArgs {
 			}
 		} else if strings.HasPrefix(a, "-") && len(a) == 2 {
 			p.bools[a[1:]] = true
-		} else if p.cmd == "" {
-			p.cmd = a
+		} else {
+			if p.cmd == "" {
+				p.cmd = a
+			}
+			p.args = append(p.args, a)
 		}
 	}
 	return p
@@ -83,11 +93,12 @@ func helpText() string {
 		"  " + cy("tokless info") + "         Show how tokless was installed, plus paths and config locations\n" +
 		"  " + cy("tokless index") + "        Build per-project indexes (codegraph) in the current dir\n" +
 		"  " + cy("tokless disable") + "      Remove wiring; use --uninstall to also remove installed tools\n" +
-		"  " + cy("tokless proxy") + "        Manage the headroom HTTP proxy: up|down|status\n\n" +
+		"  " + cy("tokless proxy") + "        Manage the headroom HTTP proxy: up|down|status|autostart\n\n" +
 		util.C.Bold("Flags:") + "\n" +
 		"  --agents <list>     Limit to a subset: " + fitList(agentSubset, termWidth(), len("  --agents <list>     Limit to a subset: ")) + "\n" +
 		"  --tools <list>      Limit to a subset: " + fitList(toolSubset, termWidth(), len("  --tools <list>      Limit to a subset: ")) + "\n" +
 		"  --dry-run           Show what would change without writing anything\n" +
+		"  --no-autostart      Do not start the headroom proxy at login (with init)\n" +
 		"  --uninstall         With disable, also remove tokless-installed binaries/packages\n" +
 		"  --verbose           Show every step\n\n" +
 		util.C.Gray("Docs: https://github.com/HoangP8/tokless")
@@ -169,9 +180,10 @@ func proxyHelpText() string {
 	cy := util.C.Cyan
 	return util.C.Bold(util.C.Cyan("tokless proxy")) + " — headroom HTTP-proxy daemon (cache mode)\n\n" +
 		util.C.Bold("Usage:") + "\n" +
-		"  " + cy("tokless proxy up") + "       Start local Headroom and route agents through it\n" +
-		"  " + cy("tokless proxy down") + "     Restore Tokless-owned routing and stop Headroom\n" +
-		"  " + cy("tokless proxy status") + "   Show daemon + per-agent wiring state\n\n" +
+		"  " + cy("tokless proxy up") + "                Start local Headroom and route agents through it\n" +
+		"  " + cy("tokless proxy down") + "              Restore Tokless-owned routing and stop Headroom\n" +
+		"  " + cy("tokless proxy status") + "            Show daemon + per-agent wiring state\n" +
+		"  " + cy("tokless proxy autostart on|off") + "  Start Headroom at login (default: on)\n\n" +
 		util.C.Bold("Safety:") + "\n" +
 		"  Native agent settings are changed; shell startup files are not.\n" +
 		"  Existing OAuth/BYOK settings are preserved where supported.\n" +
@@ -214,6 +226,12 @@ func runProxyCli(argv []string) int {
 		return commands.RunProxyDown(opts)
 	case "status":
 		return commands.RunProxyStatus(opts)
+	case "autostart":
+		if len(p.args) != 2 || (p.args[1] != "on" && p.args[1] != "off") {
+			util.L.Err("Usage: tokless proxy autostart on|off")
+			return 2
+		}
+		return commands.RunProxyAutostart(p.args[1] == "on", opts)
 	case "":
 		fmt.Println(proxyHelpText())
 		return 0
@@ -379,6 +397,8 @@ func run() int {
 		Yes:     p.bools["yes"],
 		DryRun:  p.bools["dry-run"] || p.bools["dryrun"],
 		Verbose: p.bools["verbose"],
+
+		NoAutostart: p.bools["no-autostart"],
 	}
 
 	var code int

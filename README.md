@@ -156,6 +156,7 @@ tokless disable --agents claude   # unwire harnesses (keep installed tools)
 tokless disable --uninstall       # unwire + remove installed binaries
 tokless uninstall                 # same as disable --uninstall
 tokless proxy up | down | status  # headroom proxy (accepts --agents)
+tokless proxy autostart on | off  # start headroom at login (default: on)
 ```
 
 ```text
@@ -279,4 +280,4 @@ harness → 127.0.0.1:8787 (Headroom) → provider
 
 Grok uses Headroom on both paths: its BYOK `base_url` is rewritten to the shared daemon (`8787/v1`), and its OAuth login runs on a Headroom-owned proxy (`28787`). Cursor's proxy route is deprecated and Amp is never auto-wired — those two stay on their native provider.
 
-Manage it with `tokless proxy up | down | status`. `--agents` scopes any of them to one harness, and `down --agents <list>` leaves shared Headroom running for the rest.
+Manage it with `tokless proxy up | down | status`. Turn start-at-login off with `tokless proxy autostart off` (or `tokless init --no-autostart`). `--agents` scopes any of them to one harness, and `down --agents <list>` leaves shared Headroom running for the rest.
