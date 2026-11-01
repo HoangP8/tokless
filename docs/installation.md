@@ -67,4 +67,17 @@ Tokless changes native agent settings only. It does not edit `.zshrc`,
 with the agent/provider where supported. If a managed setting changes after
 `proxy up`, `proxy down` refuses to overwrite it.
 
+### Start at login
+
+The proxy starts at login by default (Windows: Task Scheduler task
+`tokless-headroom-proxy`; Linux: systemd user service; macOS: LaunchAgent).
+
+```bash
+tokless proxy autostart off   # or: tokless init --no-autostart
+tokless proxy autostart on
+```
+
+Off: the proxy starts when an agent first runs; run `tokless proxy up` if early
+requests fail. Linux keeps `enable-linger` (undo: `loginctl disable-linger $USER`).
+
 Do not modify agent configuration manually; let tokless own its managed sections.

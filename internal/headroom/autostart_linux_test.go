@@ -162,3 +162,9 @@ func TestStopByokGatewaySupervisorPropagatesStopFailure(t *testing.T) {
 		t.Fatal("systemctl stop failure must propagate")
 	}
 }
+
+func TestProxyAutostartMechanismNamesHostMechanism(t *testing.T) {
+	if got := ProxyAutostartMechanism(); !strings.Contains(got, proxyAutostartUnit) {
+		t.Fatalf("ProxyAutostartMechanism() = %q, missing %q", got, proxyAutostartUnit)
+	}
+}

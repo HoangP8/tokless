@@ -143,3 +143,20 @@ func TestSaveProxyRuntimeRejectsInvalidPorts(t *testing.T) {
 		}
 	}
 }
+
+func TestHeadroomProxyAutostartPreferenceDefaultsOnAndPersists(t *testing.T) {
+	home := t.TempDir()
+	SetHomeOverride(home)
+	t.Cleanup(func() { SetHomeOverride("") })
+	if !ProxyAutostartAllowed() {
+		t.Fatal("autostart must default to allowed")
+	}
+	for _, allowed := range []bool{false, true} {
+		if err := SetProxyAutostartAllowed(allowed); err != nil {
+			t.Fatal(err)
+		}
+		if got := ProxyAutostartAllowed(); got != allowed {
+			t.Fatalf("ProxyAutostartAllowed() = %v, want %v", got, allowed)
+		}
+	}
+}

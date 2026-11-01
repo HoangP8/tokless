@@ -31,6 +31,10 @@ func headroomProxyPreferenceFile() string {
 	return filepath.Join(HeadroomPathsResolved().Root, "proxy.preference")
 }
 
+func headroomProxyAutostartFile() string {
+	return filepath.Join(HeadroomPathsResolved().Root, "proxy.autostart")
+}
+
 // ReadProxyRuntime returns the persisted proxy runtime, if any.
 func ReadProxyRuntime() (ProxyRuntime, bool) {
 	raw, ok := ReadFileSafe(headroomProxyRuntimeFile())
@@ -106,6 +110,25 @@ func ClearProxyRoutingPreference() error {
 		return err
 	}
 	return nil
+}
+
+// ProxyAutostartAllowed reports whether the proxy may be registered to start
+// at login. Missing file keeps install's default-on behavior.
+func ProxyAutostartAllowed() bool {
+	raw, err := os.ReadFile(headroomProxyAutostartFile())
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	return strings.TrimSpace(string(raw)) == "on"
+}
+
+// SetProxyAutostartAllowed persists the user's start-at-login choice.
+func SetProxyAutostartAllowed(allowed bool) error {
+	state := "off\n"
+	if allowed {
+		state = "on\n"
+	}
+	return WriteFileAtomic(headroomProxyAutostartFile(), state, 0o600)
 }
 
 // HeadroomProxyPort returns the headroom daemon port: env, then persisted

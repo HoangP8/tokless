@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 
 	"github.com/HoangP8/tokless/internal/agents"
@@ -158,6 +160,7 @@ var startProxy = headroompkg.StartProxy
 var enableProxyAutostart = headroompkg.EnableProxyAutostart
 var disableProxyAutostart = headroompkg.DisableProxyAutostart
 var proxyAutostartEnabled = headroompkg.ProxyAutostartEnabled
+var proxyAutostartConfigured = headroompkg.ProxyAutostartConfigured
 var proxyRunning = headroompkg.ProxyRunning
 var stopCopilotProxy = headroompkg.StopCopilotProxy
 var startCopilotProxy = headroompkg.StartCopilotProxy
@@ -363,7 +366,11 @@ func RunProxyUp(opts InitOptions) int {
 			util.L.Sub("shared Headroom: not needed for Grok OAuth")
 		}
 	} else if err := enableProxyAutostart(); err != nil {
-		util.L.Sub("autostart: " + err.Error())
+		if util.ProxyAutostartAllowed() {
+			util.L.Sub("autostart: " + err.Error())
+		} else {
+			util.L.Sub("Starts at login: off (turn on: tokless proxy autostart on)")
+		}
 		if startErr := startProxy(); startErr != nil {
 			util.L.Err(startErr.Error())
 			rollback()
@@ -371,7 +378,7 @@ func RunProxyUp(opts InitOptions) int {
 			return 1
 		}
 	} else if proxyAutostartEnabled() {
-		util.L.Sub("autostart: user service enabled (survives reboot)")
+		util.L.Sub(startsAtLoginNotice())
 	} else if !proxyRunning() {
 		util.L.Err("proxy did not remain running")
 		rollback()
@@ -463,7 +470,7 @@ func RunProxyDown(opts InitOptions) int {
 			util.L.Sub("grok proxy stale record cleanup: " + err.Error())
 		}
 	}
-	autostartBefore := complete && proxyAutostartEnabled()
+	autostartBefore := complete && (proxyAutostartEnabled() || proxyAutostartConfigured())
 	restoreCopilotWiring := func() {
 		if copilotBefore && !agents.CopilotProxyWired() {
 			if err := copilotSnapshot.Restore(); err != nil {
@@ -494,7 +501,7 @@ func RunProxyDown(opts InitOptions) int {
 				util.L.Sub("grok proxy restore failed: " + err.Error())
 			}
 		}
-		if autostartBefore && !proxyAutostartEnabled() {
+		if autostartBefore && !proxyAutostartEnabled() && !proxyAutostartConfigured() {
 			if err := enableProxyAutostart(); err != nil {
 				util.L.Sub("autostart restore: " + err.Error())
 			}
@@ -651,6 +658,117 @@ func RunProxyDown(opts InitOptions) int {
 	return 0
 }
 
+func startsAtLoginNotice() string {
+	when := "at login"
+	if runtime.GOOS == "linux" {
+		when = "at login or boot"
+	}
+	return "Starts " + when + " via " + headroompkg.ProxyAutostartMechanism() + ". Turn off: tokless proxy autostart off"
+}
+
+func headroomAgentsWired() bool {
+	for _, id := range resolveHeadroomProxyAgents(InitOptions{}) {
+		if proxyInstructions(id) != nil {
+			continue
+		}
+		if id == "copilot" {
+			if agents.CopilotProxyWired() {
+				return true
+			}
+		} else if proxyAgentWired(id) {
+			return true
+		}
+	}
+	return false
+}
+
+// setProxyAutostartOff records "do not start at login", removes any existing
+// login entry, and restarts a previously running proxy for this session.
+func setProxyAutostartOff() (restartErr, err error) {
+	release, err := headroompkg.AcquireProxyLifecycleLock()
+	if err != nil {
+		return nil, fmt.Errorf("proxy lifecycle lock: %w", err)
+	}
+	defer release()
+	wasAllowed := util.ProxyAutostartAllowed()
+	wasConfigured := proxyAutostartConfigured()
+	if err := util.SetProxyAutostartAllowed(false); err != nil {
+		return nil, err
+	}
+	wasRunning := proxyRunning()
+	if err := disableProxyAutostart(); err != nil {
+		restoreErr := util.SetProxyAutostartAllowed(wasAllowed)
+		if wasAllowed && wasConfigured && !proxyAutostartConfigured() {
+			restoreErr = errors.Join(restoreErr, enableProxyAutostart())
+		}
+		return nil, errors.Join(err, restoreErr)
+	}
+	if wasRunning && util.ProxyRoutingEnabled() {
+		restartErr = startProxy()
+	}
+	return restartErr, nil
+}
+
+// setProxyAutostartOn records "start at login" and registers it when agents
+// are already routed through the proxy. applied reports whether it registered.
+func setProxyAutostartOn() (applied bool, err error) {
+	release, err := headroompkg.AcquireProxyLifecycleLock()
+	if err != nil {
+		return false, fmt.Errorf("proxy lifecycle lock: %w", err)
+	}
+	defer release()
+	wasAllowed := util.ProxyAutostartAllowed()
+	if err := util.SetProxyAutostartAllowed(true); err != nil {
+		return false, err
+	}
+	if !util.ProxyRoutingEnabled() || !headroomAgentsWired() {
+		return false, nil
+	}
+	if err := enableProxyAutostart(); err != nil {
+		return false, errors.Join(err, util.SetProxyAutostartAllowed(wasAllowed))
+	}
+	return true, nil
+}
+
+// RunProxyAutostart turns "start the proxy at login" on or off.
+func RunProxyAutostart(on bool, opts InitOptions) int {
+	cmdHeader("proxy autostart", "start the headroom HTTP proxy at login")
+	if opts.DryRun {
+		state := "off"
+		if on {
+			state = "on"
+		}
+		util.L.Raw("  " + util.C.Gray("dry-run: would turn "+state+" Starts at login. No changes made."))
+		return 0
+	}
+	if on {
+		applied, err := setProxyAutostartOn()
+		if err != nil {
+			util.L.Err("Starts at login: " + err.Error())
+			return 1
+		}
+		if applied {
+			util.L.Raw("  " + statusOK("Starts at login: on ("+headroompkg.ProxyAutostartMechanism()+")"))
+		} else {
+			util.L.Raw("  " + statusOK("Starts at login: on (applies on next `tokless proxy up`)"))
+		}
+		util.L.Raw("")
+		return 0
+	}
+	restartErr, err := setProxyAutostartOff()
+	if err != nil {
+		util.L.Err("Starts at login: " + err.Error())
+		return 1
+	}
+	util.L.Raw("  " + statusOK("Starts at login: off"))
+	if restartErr != nil {
+		util.L.Raw("  " + statusWarn("Proxy stopped. Run: tokless proxy up ("+restartErr.Error()+")"))
+	}
+	util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" After a reboot the proxy starts when your agent first runs. If requests fail, run: tokless proxy up"))
+	util.L.Raw("")
+	return 0
+}
+
 func restoreProxyAgents(wiredBefore map[string]bool) {
 	for id, wired := range wiredBefore {
 		if id == "copilot" {
@@ -685,10 +803,15 @@ func RunProxyStatus(opts InitOptions) int {
 	} else {
 		util.L.Raw("  " + statusWarn("proxy: not running ("+url+")"))
 	}
-	if headroompkg.ProxyAutostartEnabled() {
-		util.L.Raw("  " + statusOK("autostart: user service enabled"))
-	} else {
-		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" autostart: off (run proxy up once)"))
+	switch allowed, configured := util.ProxyAutostartAllowed(), proxyAutostartConfigured() || proxyAutostartEnabled(); {
+	case !allowed && configured:
+		util.L.Raw("  " + statusWarn("Starts at login: still on ("+headroompkg.ProxyAutostartMechanism()+") although you turned it off. Fix: tokless proxy autostart off"))
+	case !allowed:
+		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" Starts at login: off (turn on: tokless proxy autostart on)"))
+	case configured:
+		util.L.Raw("  " + statusOK("Starts at login: on ("+headroompkg.ProxyAutostartMechanism()+")"))
+	default:
+		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" Starts at login: off (run: tokless proxy up)"))
 	}
 	for _, id := range resolveProxyAgents(opts) {
 		detection := agents.DetectProxy(id)

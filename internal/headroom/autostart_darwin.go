@@ -21,6 +21,8 @@ import (
 // __proxy-stop.
 const proxyAutostartLabel = "com.tokless.headroom.proxy"
 
+const proxyAutostartMechanism = `LaunchAgent "` + proxyAutostartLabel + `"`
+
 var runLaunchctl = func(args ...string) ([]byte, error) {
 	return exec.Command("launchctl", args...).CombinedOutput()
 }
@@ -72,7 +74,7 @@ func macCurrentUID() string {
 	return strconv.Itoa(os.Getuid())
 }
 
-func EnableProxyAutostart() (err error) {
+func enableProxyAutostartOS() (err error) {
 	bin := util.ToklessAbs()
 	if bin == "" || util.IsGoTestExecutable(bin) {
 		return nil

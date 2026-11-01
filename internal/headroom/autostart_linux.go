@@ -15,6 +15,8 @@ import (
 
 const proxyAutostartUnit = "tokless-proxy.service"
 
+const proxyAutostartMechanism = `systemd user service "` + proxyAutostartUnit + `"`
+
 const byokGatewayAutostartUnit = "tokless-byok-gateway.service"
 
 var stopProxyAutostartUnit = func() error {
@@ -92,7 +94,7 @@ func shellQuote(s string) string {
 	return b.String()
 }
 
-func EnableProxyAutostart() (err error) {
+func enableProxyAutostartOS() (err error) {
 	bin := util.ToklessAbs()
 	if bin == "" || util.IsGoTestExecutable(bin) {
 		return nil

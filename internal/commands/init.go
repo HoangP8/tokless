@@ -13,14 +13,15 @@ import (
 
 // InitOptions carries flags shared across init/update.
 type InitOptions struct {
-	Agents    []string
-	Tools     []string
-	Agent     string
-	DryRun    bool
-	Yes       bool
-	Verbose   bool
-	Upgrade   bool
-	Uninstall bool
+	Agents      []string
+	Tools       []string
+	Agent       string
+	DryRun      bool
+	Yes         bool
+	Verbose     bool
+	Upgrade     bool
+	Uninstall   bool
+	NoAutostart bool
 }
 
 func contains(ss []string, s string) bool {
@@ -224,6 +225,19 @@ func RunInit(opts InitOptions) int {
 	nodeOK, gitOK := true, true
 	if !opts.DryRun {
 		nodeOK, gitOK = util.EnsureDeps(needNode, needGit, minNode)
+	}
+
+	if opts.NoAutostart && !opts.DryRun {
+		restartErr, err := setProxyAutostartOff()
+		if err != nil {
+			util.SetQuiet(false)
+			util.L.Err("Starts at login: " + err.Error())
+			return 1
+		}
+		util.L.Raw("  " + util.C.Gray(util.Sym.Bullet+" Starts at login: off"))
+		if restartErr != nil {
+			util.L.Raw("  " + statusWarn("Proxy stopped. Run: tokless proxy up ("+restartErr.Error()+")"))
+		}
 	}
 
 	var installTools []*core.ToolManifest
@@ -535,6 +549,9 @@ func RunInit(opts InitOptions) int {
 	}
 	v := util.GatherVersions()
 	printEquippedAgentTree(fullyOK, tools, v)
+	if !opts.DryRun && util.ProxyAutostartAllowed() && proxyAutostartConfigured() {
+		treeSub(startsAtLoginNotice())
+	}
 	for id, failed := range failures {
 		util.TreeLeaf(util.C.Yellow(util.Sym.Warn) + " " + core.GetAgent(id).Label + ": " +
 			joinComma(failed) + " not wired. Run " + util.C.Cyan("tokless doctor") + " for details.")
