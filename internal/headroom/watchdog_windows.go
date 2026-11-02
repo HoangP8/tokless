@@ -133,7 +133,7 @@ func runHeadroomSupervised(bin string, args []string) error {
 		return errors.Join(err, cleanupSupervisedProcess(cmd.Process, ""))
 	}
 	pidFile, _ := proxyFiles()
-	if err := proxyWrite(pidFile, proxyOwnership{PID: cmd.Process.Pid, Executable: identity.Executable, Args: identity.Args, Start: identity.Start}); err != nil {
+	if err := proxyWrite(pidFile, proxyOwnership{PID: cmd.Process.Pid, Executable: identity.Executable, Args: identity.Args, Start: identity.Start, AllowedBaseURLs: headroomAllowedBaseURLs()}); err != nil {
 		return errors.Join(err, cleanupSupervisedProcess(cmd.Process, ""))
 	}
 	if err := writeProxySupervisedState(cmd.Process.Pid, bin, args, nil, identity.Start); err != nil {

@@ -400,6 +400,11 @@ func DisableProxyAutostart() error {
 	if err := endRunningProxyAutostartTask(running); err != nil {
 		return fmt.Errorf("end %s: %w", proxyAutostartTask, err)
 	}
+	if running {
+		if err := stopHeadroomDaemonForHandoff(); err != nil {
+			return errors.Join(fmt.Errorf("stop proxy: %w", err), rollbackScheduledTask(out, running))
+		}
+	}
 	if err := deleteProxyAutostartTask(); err != nil {
 		rollbackErr := rollbackScheduledTask(out, running)
 		return errors.Join(fmt.Errorf("delete %s: %w", proxyAutostartTask, err), rollbackErr)
