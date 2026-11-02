@@ -26,6 +26,9 @@ const proxyAutostartTask = "tokless-headroom-proxy"
 const proxyAutostartMechanism = `Task Scheduler task "` + proxyAutostartTask + `"`
 
 type scheduledTask struct {
+	Settings struct {
+		Enabled string `xml:"Enabled"`
+	} `xml:"Settings"`
 	Triggers struct {
 		Logon *struct{} `xml:"LogonTrigger"`
 	} `xml:"Triggers"`
@@ -76,6 +79,11 @@ func scheduledTaskManaged(raw []byte) bool {
 		isLimitedRunLevel(task.Principals.Principal.RunLevel)
 }
 
+func scheduledTaskEnabled(raw []byte) bool {
+	task, ok := parseScheduledTask(raw)
+	return ok && !strings.EqualFold(strings.TrimSpace(task.Settings.Enabled), "false")
+}
+
 func isLimitedRunLevel(level string) bool { return level == "" || level == "LeastPrivilege" }
 
 func scheduledTaskMatches(raw []byte, bin string) bool {
@@ -110,7 +118,7 @@ func scheduledTaskRunning() (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(records[0][len(records[0])-1])) {
 	case "running":
 		return true, nil
-	case "ready", "queued":
+	case "ready", "queued", "disabled":
 		return false, nil
 	default:
 		return false, fmt.Errorf("unexpected task state %q", records[0][len(records[0])-1])
@@ -213,7 +221,7 @@ func enableProxyAutostartOS() (err error) {
 		if stateErr != nil {
 			return fmt.Errorf("query state of %s: %w", proxyAutostartTask, stateErr)
 		}
-		if running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
+		if running && scheduledTaskEnabled(task) && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			return nil
 		}
 	} else if queryErr != nil && !scheduledTaskNotFound(task) {
@@ -402,7 +410,7 @@ func DisableProxyAutostart() error {
 func ProxyAutostartEnabled() bool {
 	out, err := readScheduledTask()
 	running, stateErr := scheduledTaskRunning()
-	return err == nil && stateErr == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime())
+	return err == nil && stateErr == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && scheduledTaskEnabled(out) && running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime())
 }
 
 // ProxyAutostartConfigured reports whether Tokless owns a scheduled task,

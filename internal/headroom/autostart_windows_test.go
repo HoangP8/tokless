@@ -210,3 +210,22 @@ func TestDisableProxyAutostartDeletesTaskWithUTF16Declaration(t *testing.T) {
 		t.Fatal("unrecognized task must return an error")
 	}
 }
+
+func TestScheduledTaskRunningTreatsDisabledAsNotRunning(t *testing.T) {
+	oldQuery := queryScheduledTaskState
+	t.Cleanup(func() { queryScheduledTaskState = oldQuery })
+	queryScheduledTaskState = func() ([]byte, error) { return []byte(`"\\tokless-headroom-proxy","N/A","Disabled"`), nil }
+	if running, err := scheduledTaskRunning(); err != nil || running {
+		t.Fatalf("scheduledTaskRunning() = %v, %v; want false, nil", running, err)
+	}
+}
+
+func TestScheduledTaskEnabledReadsSettings(t *testing.T) {
+	if !scheduledTaskEnabled([]byte(taskFixture)) {
+		t.Fatal("task without Settings must count as enabled")
+	}
+	off := strings.Replace(taskFixture, "<Triggers>", "<Settings><Enabled>false</Enabled></Settings><Triggers>", 1)
+	if scheduledTaskEnabled([]byte(off)) {
+		t.Fatal("Enabled=false must count as disabled")
+	}
+}
