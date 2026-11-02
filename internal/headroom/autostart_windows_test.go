@@ -160,3 +160,26 @@ func TestProxyAutostartMechanismNamesHostMechanism(t *testing.T) {
 		t.Fatalf("ProxyAutostartMechanism() = %q, missing %q", got, proxyAutostartTask)
 	}
 }
+
+func TestScheduledTaskManagedAcceptsUTF16Declaration(t *testing.T) {
+	body := `<Task><Triggers><LogonTrigger/></Triggers>` +
+		`<Principals><Principal><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>` +
+		`<Actions><Exec><Command>"C:\Users\x\tokless.exe"</Command><Arguments>__proxy-watch</Arguments></Exec></Actions></Task>`
+	header := `<?xml version="1.0" encoding="UTF-16"?>`
+
+	// Piped schtasks output: 8-bit text with a UTF-16 declaration.
+	if !scheduledTaskManaged([]byte(header + body)) {
+		t.Fatal("8-bit text with UTF-16 declaration not recognized")
+	}
+	// Real UTF-16LE with BOM.
+	raw := []byte{0xFF, 0xFE}
+	for _, c := range header + body {
+		raw = append(raw, byte(c), byte(c>>8))
+	}
+	if !scheduledTaskManaged(raw) {
+		t.Fatal("UTF-16LE task not recognized")
+	}
+	if !scheduledTaskMatches([]byte(header+body), `C:\Users\x\tokless.exe`) {
+		t.Fatal("task should match its own binary")
+	}
+}
