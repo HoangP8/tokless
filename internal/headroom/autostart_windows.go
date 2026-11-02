@@ -95,6 +95,19 @@ func scheduledTaskRunning() (bool, error) {
 	}
 }
 
+// runSchtasks runs schtasks and, on failure, includes its output in the error
+// so users see why (e.g. "Access is denied") instead of a bare exit status.
+func runSchtasks(args ...string) error {
+	out, err := exec.Command("schtasks", args...).CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("schtasks %s: %s: %w", args[0], msg, err)
+		}
+		return fmt.Errorf("schtasks %s: %w", args[0], err)
+	}
+	return nil
+}
+
 var readScheduledTask = func() ([]byte, error) {
 	return exec.Command("schtasks", "/query", "/tn", proxyAutostartTask, "/xml").CombinedOutput()
 }
@@ -247,7 +260,7 @@ func enableProxyAutostartOS() (err error) {
 				}
 			}
 			if markerReady && rollbackOK && oldTaskEnded && oldTaskRunning {
-				if runErr := exec.Command("schtasks", "/run", "/tn", proxyAutostartTask).Run(); runErr != nil {
+				if runErr := runSchtasks("/run", "/tn", proxyAutostartTask); runErr != nil {
 					err = errors.Join(err, fmt.Errorf("restart %s: %w", proxyAutostartTask, runErr))
 					if markerErr := requestProxyStop(); markerErr != nil {
 						err = errors.Join(err, fmt.Errorf("restore proxy stop request after restart failure: %w", markerErr))
@@ -266,13 +279,12 @@ func enableProxyAutostartOS() (err error) {
 	}
 	oldTaskEnded = len(oldTask) > 0
 	taskCreateAttempted = true
-	create := exec.Command("schtasks", "/create",
+	if err := runSchtasks("/create",
 		"/tn", proxyAutostartTask,
 		"/tr", `"`+bin+`" __proxy-watch`,
 		"/sc", "ONLOGON",
 		"/rl", "LIMITED",
-		"/f")
-	if err := create.Run(); err != nil {
+		"/f"); err != nil {
 		return err
 	}
 	taskCreated = true
@@ -283,7 +295,7 @@ func enableProxyAutostartOS() (err error) {
 		return fmt.Errorf("clear proxy stop request: %w", err)
 	}
 	stopRequestCleared = true
-	if err := exec.Command("schtasks", "/run", "/tn", proxyAutostartTask).Run(); err != nil {
+	if err := runSchtasks("/run", "/tn", proxyAutostartTask); err != nil {
 		return fmt.Errorf("initial start of %s: %w", proxyAutostartTask, err)
 	}
 	deadline := time.Now().Add(proxyReadyTimeout)
@@ -318,11 +330,11 @@ func rollbackScheduledTask(oldTask []byte, wasRunning bool) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := exec.Command("schtasks", "/create", "/tn", proxyAutostartTask, "/xml", path, "/f").Run(); err != nil {
+	if err := runSchtasks("/create", "/tn", proxyAutostartTask, "/xml", path, "/f"); err != nil {
 		return err
 	}
 	if wasRunning {
-		return exec.Command("schtasks", "/run", "/tn", proxyAutostartTask).Run()
+		return runSchtasks("/run", "/tn", proxyAutostartTask)
 	}
 	return nil
 }
