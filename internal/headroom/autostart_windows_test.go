@@ -160,3 +160,53 @@ func TestProxyAutostartMechanismNamesHostMechanism(t *testing.T) {
 		t.Fatalf("ProxyAutostartMechanism() = %q, missing %q", got, proxyAutostartTask)
 	}
 }
+
+const taskFixture = `<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>` +
+	`<Principals><Principal id="Author"><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>` +
+	`<Actions Context="Author"><Exec><Command>"C:\Users\x\tokless.exe"</Command><Arguments>__proxy-watch</Arguments></Exec></Actions></Task>`
+
+func utf16le(s string, bom bool) []byte {
+	var raw []byte
+	if bom {
+		raw = []byte{0xFF, 0xFE}
+	}
+	for _, c := range s {
+		raw = append(raw, byte(c), byte(c>>8))
+	}
+	return raw
+}
+
+func TestScheduledTaskParsesEveryEncoding(t *testing.T) {
+	header := `<?xml version="1.0" encoding="UTF-16"?>` + "\r\n"
+	cases := map[string][]byte{
+		"8-bit":        []byte(header + taskFixture),
+		"utf16 bom":    utf16le(header+taskFixture, true),
+		"utf16 no bom": utf16le(header+taskFixture, false),
+		"no run level": []byte(strings.Replace(header+taskFixture, "<RunLevel>LeastPrivilege</RunLevel>", "", 1)),
+	}
+	for name, raw := range cases {
+		if !scheduledTaskManaged(raw) || !scheduledTaskMatches(raw, `c:\users\x\tokless.exe`) {
+			t.Errorf("%s: task not recognized", name)
+		}
+	}
+}
+
+func TestDisableProxyAutostartDeletesTaskWithUTF16Declaration(t *testing.T) {
+	oldRead, oldState, oldDelete := readScheduledTask, queryScheduledTaskState, deleteProxyAutostartTask
+	t.Cleanup(func() {
+		readScheduledTask, queryScheduledTaskState, deleteProxyAutostartTask = oldRead, oldState, oldDelete
+	})
+	readScheduledTask = func() ([]byte, error) {
+		return []byte(`<?xml version="1.0" encoding="UTF-16"?>` + taskFixture), nil
+	}
+	queryScheduledTaskState = func() ([]byte, error) { return []byte(`"\tokless-headroom-proxy","N/A","Ready"`), nil }
+	deleted := false
+	deleteProxyAutostartTask = func() error { deleted = true; return nil }
+	if err := DisableProxyAutostart(); err != nil || !deleted {
+		t.Fatalf("DisableProxyAutostart() = %v, deleted = %v", err, deleted)
+	}
+	readScheduledTask = func() ([]byte, error) { return []byte(`<Task/>`), nil }
+	if err := DisableProxyAutostart(); err == nil {
+		t.Fatal("unrecognized task must return an error")
+	}
+}
