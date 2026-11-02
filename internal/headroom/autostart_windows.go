@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/HoangP8/tokless/internal/util"
 )
@@ -41,14 +42,16 @@ type scheduledTask struct {
 	} `xml:"Actions"`
 }
 
-// scheduledTaskText normalizes `schtasks /query /xml` output. The XML header
-// declares encoding="UTF-16", but piped output is usually 8-bit text; accept
-// both that and real UTF-16LE.
+// schtasks declares UTF-16 but pipes 8-bit text; accept both.
 func scheduledTaskText(raw []byte) string {
-	if len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE {
-		u := make([]uint16, 0, len(raw)/2)
-		for i := 2; i+1 < len(raw); i += 2 {
-			u = append(u, uint16(raw[i])|uint16(raw[i+1])<<8)
+	bom := len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE
+	if bom || len(raw) > 3 && raw[1] == 0 && raw[3] == 0 {
+		if bom {
+			raw = raw[2:]
+		}
+		u := make([]uint16, len(raw)/2)
+		for i := range u {
+			u[i] = uint16(raw[2*i]) | uint16(raw[2*i+1])<<8
 		}
 		return string(utf16.Decode(u))
 	}
@@ -70,18 +73,19 @@ func scheduledTaskManaged(raw []byte) bool {
 	command := filepath.Base(strings.Trim(strings.TrimSpace(task.Actions.Exec.Command), `"`))
 	return ok && (strings.EqualFold(command, "tokless") || strings.EqualFold(command, "tokless.exe")) &&
 		strings.TrimSpace(task.Actions.Exec.Arguments) == "__proxy-watch" &&
-		task.Principals.Principal.RunLevel == "LeastPrivilege"
+		isLimitedRunLevel(task.Principals.Principal.RunLevel)
 }
+
+func isLimitedRunLevel(level string) bool { return level == "" || level == "LeastPrivilege" }
 
 func scheduledTaskMatches(raw []byte, bin string) bool {
 	task, ok := parseScheduledTask(raw)
 	if !ok || !scheduledTaskManaged(raw) {
 		return false
 	}
-	command := filepath.Clean(strings.TrimSpace(task.Actions.Exec.Command))
+	command := filepath.Clean(strings.Trim(strings.TrimSpace(task.Actions.Exec.Command), `"`))
 	want := filepath.Clean(strings.TrimSpace(bin))
-	return command == want && strings.TrimSpace(task.Actions.Exec.Arguments) == "__proxy-watch" &&
-		task.Principals.Principal.RunLevel == "LeastPrivilege"
+	return strings.EqualFold(command, want)
 }
 
 var queryScheduledTaskState = func() ([]byte, error) {
@@ -341,7 +345,10 @@ func rollbackScheduledTask(oldTask []byte, wasRunning bool) error {
 	}
 	path := f.Name()
 	defer os.Remove(path)
-	// schtasks /create /xml expects UTF-16LE with a BOM.
+	if !utf8.Valid(oldTask) && !strings.HasPrefix(string(oldTask), "\xff\xfe") {
+		_ = f.Close()
+		return errors.New("cannot restore task: schtasks output is not UTF-8")
+	}
 	u := utf16.Encode([]rune(scheduledTaskText(oldTask)))
 	buf := make([]byte, 0, 2+2*len(u))
 	buf = append(buf, 0xFF, 0xFE)
@@ -376,7 +383,7 @@ func DisableProxyAutostart() error {
 		return fmt.Errorf("query %s: %w", proxyAutostartTask, err)
 	}
 	if !scheduledTaskManaged(out) {
-		return nil
+		return fmt.Errorf("scheduled task %s is not recognized as tokless's; remove it with: schtasks /delete /tn %s /f", proxyAutostartTask, proxyAutostartTask)
 	}
 	running, stateErr := scheduledTaskRunning()
 	if stateErr != nil {
