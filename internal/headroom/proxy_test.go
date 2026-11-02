@@ -1926,3 +1926,45 @@ func TestStopHeadroomDaemonRefusesStaleRecordWithLiveListener(t *testing.T) {
 		t.Fatalf("ownership record removed while a listener is live: %v", err)
 	}
 }
+
+func TestProxyHealthy(t *testing.T) {
+	requireProcessIdentity(t)
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	pidFile, _ := proxyFiles()
+	args := proxyArgsFromRuntime(proxyPortFromRuntime())
+	write := func(allowed string) {
+		t.Helper()
+		if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 42, Executable: bin, Args: args, Start: "s1", AllowedBaseURLs: allowed}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live := true
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(int) (processIdentityInfo, error) {
+		return processIdentityInfo{Executable: bin, Args: args, Start: "s1"}, nil
+	}
+
+	write(headroomAllowedBaseURLs())
+	if !proxyHealthy(false) {
+		t.Fatal("owned daemon with matching allowlist must be healthy")
+	}
+	if proxyHealthy(true) {
+		t.Fatal("daemon without supervised record must not count as supervised")
+	}
+	if err := writeProxySupervisedState(42, bin, args, nil, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if !proxyHealthy(true) {
+		t.Fatal("supervised child must be healthy")
+	}
+	write("http://stale.example")
+	if proxyHealthy(false) {
+		t.Fatal("allowlist mismatch must not be healthy")
+	}
+	write(headroomAllowedBaseURLs())
+	live = false
+	if proxyHealthy(false) {
+		t.Fatal("dead proxy must not be healthy")
+	}
+}

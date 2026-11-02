@@ -42,10 +42,14 @@ func stopProxySupervisorForPatch() error {
 	if !ProxyAutostartConfigured() {
 		return nil
 	}
+	running, err := scheduledTaskRunning()
+	if err != nil {
+		return err
+	}
 	if err := requestProxyStop(); err != nil {
 		return err
 	}
-	return endProxyAutostartTask()
+	return endRunningProxyAutostartTask(running)
 }
 
 func stopByokGatewaySupervisor() error { return nil }

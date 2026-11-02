@@ -221,7 +221,7 @@ func enableProxyAutostartOS() (err error) {
 		if stateErr != nil {
 			return fmt.Errorf("query state of %s: %w", proxyAutostartTask, stateErr)
 		}
-		if running && scheduledTaskEnabled(task) && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
+		if scheduledTaskEnabled(task) && proxyHealthy(running) {
 			return nil
 		}
 	} else if queryErr != nil && !scheduledTaskNotFound(task) {
@@ -243,8 +243,15 @@ func enableProxyAutostartOS() (err error) {
 		return fmt.Errorf("query %s: %w", proxyAutostartTask, queryErr)
 	}
 	proxyWasRunning := ProxyRunning() && (proxyArgsMatchRecorded(proxyPortFromRuntime()) || proxySupervisedArgsMatch(proxyPortFromRuntime()))
-	if err := requestProxyStop(); err != nil {
-		return fmt.Errorf("proxy stop request: %w", err)
+	// No task instance runs and the proxy is healthy: register the task and
+	// leave the proxy alone; the task takes over at next logon.
+	keepProxy := !oldTaskRunning && proxyHealthy(false)
+	if !keepProxy {
+		if err := requestProxyStop(); err != nil {
+			return fmt.Errorf("proxy stop request: %w", err)
+		}
+	} else if err := clearProxyStopRequest(); err != nil {
+		return fmt.Errorf("clear proxy stop request: %w", err)
 	}
 	started := false
 	taskCreated := false
@@ -318,6 +325,10 @@ func enableProxyAutostartOS() (err error) {
 		return fmt.Errorf("%w (creating the logon task may need an elevated terminal: run PowerShell as administrator)", err)
 	}
 	taskCreated = true
+	if keepProxy {
+		started = true
+		return nil
+	}
 	if err := stopHeadroomDaemonForHandoff(); err != nil {
 		return err
 	}
@@ -415,7 +426,7 @@ func DisableProxyAutostart() error {
 func ProxyAutostartEnabled() bool {
 	out, err := readScheduledTask()
 	running, stateErr := scheduledTaskRunning()
-	return err == nil && stateErr == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && scheduledTaskEnabled(out) && running && ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime())
+	return err == nil && stateErr == nil && scheduledTaskMatches(out, util.ToklessAbsStrict()) && scheduledTaskEnabled(out) && proxyHealthy(running)
 }
 
 // ProxyAutostartConfigured reports whether Tokless owns a scheduled task,
