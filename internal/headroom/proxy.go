@@ -735,6 +735,19 @@ func proxyAllowedBaseURLsMatchRecorded() bool {
 	return true
 }
 
+// proxyHealthy reports a live proxy worth keeping: the supervisor's child when
+// supervised, else an owned daemon that StartProxy would leave running.
+func proxyHealthy(supervised bool) bool {
+	port := proxyPortFromRuntime()
+	if !ProxyRunning() {
+		return false
+	}
+	if supervised {
+		return proxySupervisedArgsMatch(port)
+	}
+	return (proxyArgsMatchRecorded(port) || proxySupervisedArgsMatch(port)) && proxyAllowedBaseURLsMatchRecorded()
+}
+
 func proxyOwnedProcessLive() bool {
 	pidFile, _ := proxyFiles()
 	if raw, ok := util.ReadFileSafe(pidFile); ok {
