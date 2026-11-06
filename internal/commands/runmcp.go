@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,8 +9,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/HoangP8/tokless/internal/core"
 	headroompkg "github.com/HoangP8/tokless/internal/headroom"
@@ -56,7 +59,10 @@ command:
 		return 1
 	}
 	util.EnsureProcessPath()
-	if strings.Contains(argv[0], string(filepath.Separator)) {
+	if contextMode {
+		argv = resolveContextModeArgv(argv, agent)
+	}
+	if !contextMode && strings.Contains(argv[0], string(filepath.Separator)) {
 		util.PrependProcessPath(filepath.Dir(argv[0]))
 	}
 	codegraphPath := codegraphMcpCommand(argv)
@@ -130,6 +136,70 @@ command:
 		}
 	}
 	return runMcpProxyAfterStart(agent, path, argv, env, tool, afterStart)
+}
+
+// Test seam.
+var resolveContextMode = util.ResolveContextMode
+
+var contextModeProbeMajor = func(bin string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r := util.Run(bin, []string{"--version"}, util.RunOptions{Capture: true, Ctx: ctx})
+	if r.Code != 0 {
+		return 0
+	}
+	if m := regexp.MustCompile(`(\d+)\.\d+\.\d+`).FindStringSubmatch(r.Stdout); m != nil {
+		return util.VersionMajor(m[1])
+	}
+	return 0
+}
+
+// configuredContextModeArgv is the fallback: 2.x prints help on stdio without "server".
+func configuredContextModeArgv(argv []string, agent string) []string {
+	if len(argv) == 0 || contextModeProbeMajor(argv[0]) < 2 {
+		return argv
+	}
+	if !contains(argv, "server") {
+		argv = append(argv, "server")
+	}
+	if !contains(argv, "--agent") {
+		argv = append(argv, "--agent", contextModeAgentID(agent))
+	}
+	return argv
+}
+
+// Unknown ids get no project; gemini resolves it from the spawn dir.
+func contextModeAgentID(agent string) string {
+	if agent == "" && os.Getenv("CLAUDE_PROJECT_DIR") != "" {
+		return "claude-code"
+	}
+	switch agent {
+	case "claude":
+		return "claude-code"
+	case "copilot":
+		return "copilot-cli"
+	case "codex", "kiro", "zcode", "pi", "gemini", "qwen":
+		return agent
+	}
+	return "gemini"
+}
+
+func resolveContextModeArgv(argv []string, agent string) []string {
+	rt, err := resolveContextMode()
+	if err != nil || rt.Node == "" || rt.CLI == "" {
+		if err != nil {
+			util.L.Err("context-mode: " + err.Error() + "; using configured command")
+		}
+		return configuredContextModeArgv(argv, agent)
+	}
+	if rt.Degraded {
+		util.L.Err("context-mode: needs Node >= " + rt.MinNode + "; only ctx_doctor available")
+	}
+	out := []string{rt.Node, rt.CLI}
+	if rt.Major2 {
+		out = append(out, "server", "--agent", contextModeAgentID(agent))
+	}
+	return out
 }
 
 // projectmemRoot pins the projectmem project root for the MCP child.

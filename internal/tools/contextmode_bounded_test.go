@@ -155,9 +155,8 @@ func TestContextModeForeignMcpEntryFailsVerify(t *testing.T) {
 	}
 }
 
-// TestContextModeOpenCodePluginFailsVerify: the wire path removes the plugin and
-// writes the bounded MCP entry, so a leftover plugin entry is a bypass.
-func TestContextModeOpenCodePluginFailsVerify(t *testing.T) {
+// OpenCode loads a plugin: an MCP entry alone or beside it must not verify.
+func TestContextModeOpenCodeMcpOnlyFailsVerify(t *testing.T) {
 	tmp := t.TempDir()
 	chdirTemp(t)
 	util.SetHomeOverride(tmp)
@@ -174,19 +173,19 @@ func TestContextModeOpenCodePluginFailsVerify(t *testing.T) {
 	if c, _ := agents.ConfigureOpenCodeMcp("context-mode"); !c {
 		t.Fatal("openCode configure did not write bounded MCP")
 	}
-	if !ctxVerifyOpenCode() {
-		t.Fatal("bounded opencode MCP without plugin must verify")
+	if ctxVerifyOpenCode() {
+		t.Fatal("MCP-only opencode wiring must fail verify")
 	}
 	cfg := util.TryParseJsonc(mustRead(t, path))
 	if cfg == nil {
 		t.Fatalf("parse %s", path)
 	}
-	cfg.Set("plugin", []any{"context-mode"})
+	cfg.Set("plugin", []any{"context-mode@1.0.169"})
 	if err := util.WriteFile(path, util.StringifyJSON(cfg)); err != nil {
 		t.Fatal(err)
 	}
 	if ctxVerifyOpenCode() {
-		t.Fatal("plugin entry must fail opencode verify")
+		t.Fatal("plugin plus duplicate tokless MCP entry must fail opencode verify")
 	}
 }
 
@@ -222,9 +221,7 @@ func TestContextModeCodexLegacyHyphenFailsVerify(t *testing.T) {
 	}
 }
 
-// TestContextModeLooseVsStrictVerify proves WiredAny (loose) detects legacy
-// context-mode wiring while VerifyFor (strict) rejects it — so resync heals
-// but doctor/init still flag bypass states.
+// Loose WiredAny sees legacy tokless wiring that strict VerifyFor rejects, so resync heals.
 func TestContextModeLooseVsStrictVerify(t *testing.T) {
 	tmp := t.TempDir()
 	chdirTemp(t)
@@ -239,18 +236,25 @@ func TestContextModeLooseVsStrictVerify(t *testing.T) {
 	})
 
 	path := util.OpenCodePathsResolved().Config
-	if err := util.WriteFile(path, `{"plugin":["context-mode@0.0.1"]}`); err != nil {
+	if err := util.WriteFile(path, `{"mcp":{"context-mode":{"type":"local","command":["context-mode"],"enabled":true}}}`); err != nil {
 		t.Fatal(err)
 	}
 
-	// Loose gate must see the legacy plugin entry.
-	r := ctxWiredAnyOpenCode()
-	if !r {
-		t.Fatal("ctxWiredAnyOpenCode must be true for legacy plugin entry")
+	// Loose gate ignores a user-owned MCP entry...
+	if ctxWiredAnyOpenCode() {
+		t.Fatal("ctxWiredAnyOpenCode must ignore a user-owned MCP entry")
 	}
-	// Strict verify must reject the plugin-only entry (no bounded MCP).
+	// ...but sees a stale tokless-owned one.
+	spawn := util.PickMcpSpawn("context-mode")
+	if err := util.WriteFile(path, `{"mcp":{"context-mode":{"type":"local","command":["`+spawn.Command+`","run-mcp","--context-mode"],"enabled":true}}}`); err != nil {
+		t.Fatal(err)
+	}
+	if !ctxWiredAnyOpenCode() {
+		t.Fatal("ctxWiredAnyOpenCode must be true for a stale tokless MCP entry")
+	}
+	// Strict verify must reject it (no pinned plugin).
 	if ctxVerifyOpenCode() {
-		t.Fatal("ctxVerifyOpenCode must be false for plugin-only entry")
+		t.Fatal("ctxVerifyOpenCode must be false without the pinned plugin")
 	}
 }
 

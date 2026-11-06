@@ -79,6 +79,14 @@ func toolConfigLocation(agentID, toolID string) (path, key string) {
 		path = filepath.Join(util.Home(), ".dsh", "cordis.patch.yml")
 		key = "mcp_servers." + toolID
 	}
+	if toolID == "context-mode" {
+		switch agentID {
+		case "opencode":
+			key = "plugin"
+		case "opencode2":
+			key = "plugins"
+		}
+	}
 	if toolID == "projectmem" {
 		switch agentID {
 		case "claude", "cursor", "antigravity", "copilot", "droid", "pi", "omp", "cline", "kimi":
@@ -770,7 +778,19 @@ func listToolVersionLine(tool *core.ToolManifest, info util.VersionInfo, widths 
 
 func doctorToolDependencies(tool *core.ToolManifest) []string {
 	var deps []string
-	if toolNeedsNode(tool) {
+	if tool.ID == "context-mode" && toolNeedsNode(tool) {
+		if rt, err := util.ResolveContextMode(); err == nil {
+			if rt.Degraded {
+				deps = append(deps, fmt.Sprintf("context-mode running degraded: Node %s < %s", util.NodeFullVersion(rt.Node), rt.MinNode))
+			} else {
+				deps = append(deps, "Node.js OK (>= "+rt.MinNode+")")
+			}
+		} else if util.ResolveNodeBinary() == "" {
+			deps = append(deps, "Node.js missing")
+		} else {
+			deps = append(deps, "Node.js OK")
+		}
+	} else if toolNeedsNode(tool) {
 		if node := util.ResolveNodeBinary(); node == "" {
 			deps = append(deps, "Node.js missing")
 		} else if tool.MinNodeMajor > 0 && util.NodeMajor() < tool.MinNodeMajor {

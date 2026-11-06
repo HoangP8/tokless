@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -499,5 +500,57 @@ func TestRunMcpCodegraphBootPerAgent(t *testing.T) {
 				t.Fatalf("agent %s: proxy startups = %d, want 1", agent, n)
 			}
 		})
+	}
+}
+
+func TestResolveContextModeArgv(t *testing.T) {
+	old := resolveContextMode
+	t.Cleanup(func() { resolveContextMode = old })
+	configured := []string{"/bin/context-mode", "serve"}
+
+	for _, tc := range []struct {
+		name string
+		rt   util.CtxRuntime
+		err  error
+		want []string
+	}{
+		{"2.x", util.CtxRuntime{Node: "/n/node", CLI: "/p/cli.mjs", Major2: true}, nil, []string{"/n/node", "/p/cli.mjs", "server", "--agent", "codex"}},
+		{"1.x", util.CtxRuntime{Node: "/n/node", CLI: "/p/start.mjs"}, nil, []string{"/n/node", "/p/start.mjs"}},
+		{"resolve error", util.CtxRuntime{}, errors.New("not installed"), configured},
+		{"empty runtime", util.CtxRuntime{}, nil, configured},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolveContextMode = func() (util.CtxRuntime, error) { return tc.rt, tc.err }
+			if got := resolveContextModeArgv(append([]string(nil), configured...), "codex"); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("argv = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunMcpContextModeKeepsNodeDirOffPath(t *testing.T) {
+	nodeDir, out := t.TempDir(), filepath.Join(t.TempDir(), "path")
+	node := filepath.Join(nodeDir, "node")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\necho \"$PATH\" > \"$PATH_OUT\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := resolveContextMode
+	t.Cleanup(func() { resolveContextMode = old })
+	resolveContextMode = func() (util.CtxRuntime, error) {
+		return util.CtxRuntime{Node: node, CLI: "cli.js"}, nil
+	}
+	t.Setenv("PATH_OUT", out)
+	t.Setenv("TOKLESS_TEST", "")
+	if code := RunMcp([]string{"--context-mode", "context-mode"}); code != 0 {
+		t.Fatalf("RunMcp = %d", code)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range filepath.SplitList(strings.TrimSpace(string(got))) {
+		if d == nodeDir {
+			t.Fatalf("private node dir prepended to PATH: %s", got)
+		}
 	}
 }

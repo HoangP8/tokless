@@ -4,59 +4,27 @@ alwaysApply: true
 ---
 ## Context Tools (context-mode)
 
-MCP tools `ctx_*` keep large or uncertain analysis out of context.
+Tools `ctx_*` keep large or uncertain analysis out of context.
 
 ### Rules
 
-| Tool | Role | Replaces |
-|------|------|----------|
-| `ctx_execute` | Run code in sandbox. Only stdout enters context. | Bash for analysis tasks |
-| `ctx_execute_file` | Process file in sandbox. Raw bytes never leave. | Read on large files (>200 lines) |
-| `ctx_batch_execute` | Run N commands + auto-index output. Search in same call. Concurrency 1-8. | Multiple Bash + grep |
-| `ctx_index` | Chunk markdown/text into FTS5. Queryable via `ctx_search`. | Manual grep over pasted content |
-| `ctx_search` | Multi-strategy search across indexed content + session memory. Typo correction. | Re-asking user, re-deriving |
-| `ctx_fetch_and_index` | Fetch URL, chunk and index. Cache 24h; `ttl: 0` or `force: true` bypasses cache. Supports `requests` + `concurrency: 1-8`. | Webfetch |
+| Tool | Role |
+|------|------|
+| `ctx_execute` | Run code or a command in sandbox, or analyze a file via `file`. Only stdout enters context. |
+| `ctx_batch` | Run many commands plus search `queries` in one call. |
+| `ctx_index` | Index a file, text, or URL (`path`, `content`, `url`) with a `source` label. |
+| `ctx_search` | Query indexed content and session memory. |
+
+- `read` small files and files you will edit. Analyze large files and logs with `ctx_execute` (`file` param); print only the answer.
 
 ### Examples
 
-```shell
+```javascript
 ctx_execute(language:"shell", code:"git log --oneline -20 | wc -l")
-```
-
-```javascript
-ctx_execute(language:"javascript", code:`
-  const fs = require('node:fs');
-  const files = fs.readdirSync('src').filter(f => f.endsWith('.ts'));
-  const counts = files.map(f => ({
-    file: f,
-    lines: fs.readFileSync('src/' + f, 'utf8').split('\n').length
-  }));
-  console.log(JSON.stringify(counts));
-`)
-```
-
-```javascript
-ctx_execute_file(path:"app.log", language:"javascript", code:`
-  const lines = FILE_CONTENT.split('\n');
-  const errs = lines.filter(l => /ERROR|FATAL/.test(l));
-  console.log(errs.length + ' errors');
-`)
-```
-
-```javascript
-ctx_batch_execute(commands:[
-  {label:"diff", command:"git diff HEAD~1"},
-  {label:"status", command:"git status"},
-], queries:["failures","errors"], timeout:120000, concurrency:2,
- cwd:".", query_scope:"batch")
-```
-
-```javascript
-ctx_fetch_and_index(requests:[
-  {url:"https://docs.example.com/api", source:"api-docs"},
-  {url:"https://docs.example.com/guide", source:"guide"},
-], concurrency:4)
-ctx_search(queries:["auth endpoint","rate limits"], source:"api-docs")
+ctx_execute(language:"shell", file:"app.log", code:"grep -c ERROR \"$CTX_FILE\"")
+ctx_batch(commands:["git diff HEAD~1"], queries:["failures"])
+ctx_index(url:"https://docs.example.com/api", source:"api-docs")
+ctx_search(queries:["auth endpoint"], source:"api-docs")
 ```
 
 Use host tools for edits, Git writes, navigation, installs, and small output. Use context-mode for analysis and large command output. Sandbox writes do not affect host files.

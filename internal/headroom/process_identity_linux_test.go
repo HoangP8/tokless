@@ -3,6 +3,7 @@
 package headroom
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,12 @@ func TestIdentifyProcessRealDirectExecutable(t *testing.T) {
 	})
 
 	identity := waitForProcessIdentity(t, cmd.Process.Pid)
-	wantExecutable, err := normalizedExecutable("/bin/sleep")
+	// /bin/sleep may be a multicall wrapper; the kernel reports the real binary.
+	exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", cmd.Process.Pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExecutable, err := normalizedExecutable(exe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +41,7 @@ func TestIdentifyProcessRealDirectExecutable(t *testing.T) {
 	if identity.Start == "" {
 		t.Fatal("start fingerprint is empty")
 	}
-	if !identity.matches("/bin/sleep", wantArgs) {
+	if !identity.matches(exe, wantArgs) {
 		t.Fatal("real direct executable did not match")
 	}
 }

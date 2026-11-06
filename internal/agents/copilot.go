@@ -61,39 +61,6 @@ func copilotIdeInstructionsFile() string {
 	return filepath.Join(ideRoot(), ".github", "copilot-instructions.md")
 }
 
-// InstallCopilotContextModeHook writes the context-mode hook file.
-func InstallCopilotContextModeHook() {
-	_ = InstallCopilotContextModeHookSafe()
-}
-
-func InstallCopilotContextModeHookSafe() error {
-	p := util.CopilotPathsResolved()
-	if err := util.EnsureDir(p.HooksDir); err != nil {
-		return err
-	}
-
-	events := []struct{ event, token string }{
-		{"preToolUse", "pretooluse"},
-		{"postToolUse", "posttooluse"},
-		{"sessionStart", "sessionstart"},
-		{"userPromptSubmitted", "userpromptsubmit"},
-		{"agentStop", "stop"},
-		{"preCompact", "precompact"},
-	}
-	hooks := util.NewOrderedMap()
-	for _, e := range events {
-		h := util.NewOrderedMap()
-		h.Set("type", "command")
-		h.Set("command", "context-mode hook copilot-cli "+e.token)
-		hooks.Set(e.event, []any{h})
-	}
-
-	root := util.NewOrderedMap()
-	root.Set("version", 1)
-	root.Set("hooks", hooks)
-	return writeOwnedCopilotHook(copilotHooksFile("context-mode.json"), util.StringifyJSON(root), "context-mode hook copilot-cli")
-}
-
 func RemoveCopilotContextModeHook() {
 	_ = RemoveCopilotContextModeHookSafe()
 }
@@ -108,31 +75,6 @@ func HasCopilotContextModeHook() bool {
 	return ok && cfg != nil && copilotHookOwned(cfg, "context-mode hook copilot-cli")
 }
 
-// InstallCopilotIdeContextModeHook writes IDE context-mode hooks (.github/hooks/).
-func InstallCopilotIdeContextModeHook() {
-	_ = InstallCopilotIdeContextModeHookSafe()
-}
-
-func InstallCopilotIdeContextModeHookSafe() error {
-	if err := util.EnsureDir(copilotIdeHooksDir()); err != nil {
-		return err
-	}
-	events := []string{"PreToolUse", "PostToolUse", "SessionStart", "Stop"}
-	tokens := []string{"pretooluse", "posttooluse", "sessionstart", "stop"}
-	hooks := util.NewOrderedMap()
-	for i, ev := range events {
-		h := util.NewOrderedMap()
-		h.Set("type", "command")
-		h.Set("command", "context-mode hook copilot-vscode "+tokens[i])
-		h.Set("timeout", 10)
-		hooks.Set(ev, []any{h})
-	}
-	root := util.NewOrderedMap()
-	root.Set("version", 1)
-	root.Set("hooks", hooks)
-	return writeOwnedCopilotHook(copilotIdeHooksFile("context-mode.json"), util.StringifyJSON(root), "context-mode hook copilot-vscode")
-}
-
 func RemoveCopilotIdeContextModeHook() {
 	_ = RemoveCopilotIdeContextModeHookSafe()
 }
@@ -145,6 +87,17 @@ func HasCopilotIdeContextModeHook() bool {
 	raw, ok := util.ReadFileSafe(copilotIdeHooksFile("context-mode.json"))
 	cfg := util.TryParseJsonc(raw)
 	return ok && cfg != nil && copilotHookOwned(cfg, "context-mode hook copilot-vscode")
+}
+
+// MigrateCopilotContextModeHooks removes tokless-written hooks; context-mode 2.x is MCP-only.
+func MigrateCopilotContextModeHooks() {
+	for _, h := range []struct{ path, marker string }{
+		{copilotHooksFile("context-mode.json"), "context-mode hook copilot-cli"},
+		{copilotHooksFile("context-mode-vscode.json"), "context-mode hook copilot-vscode"},
+		{copilotIdeHooksFile("context-mode.json"), "context-mode hook copilot-vscode"},
+	} {
+		_ = removeOwnedCopilotHook(h.path, h.marker)
+	}
 }
 
 func copilotRtkHookCommand() string {

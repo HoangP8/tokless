@@ -87,7 +87,7 @@ func claudeMcpPermissionEntries(toolID string) []string {
 func claudeMcpToolNames(toolID string) []string {
 	switch toolID {
 	case "context-mode":
-		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_fetch_and_index"}
+		return []string{"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_batch", "ctx_index", "ctx_fetch_and_index"}
 	case "codegraph":
 		return []string{"codegraph_explore"}
 	case "projectmem":
@@ -228,6 +228,40 @@ func AllowClaudeMcpTool(toolID string) {
 	perms.Set("allow", allow)
 	cfg.Set("permissions", perms)
 	_ = util.WriteFile(p.Settings, util.StringifyJSON(cfg))
+}
+
+// ClaudeMcpAllowMissing reports a managed tool missing from permissions.allow; unparseable settings report false.
+func ClaudeMcpAllowMissing(toolID string) bool {
+	raw, ok := util.ReadFileSafe(util.ClaudeCodePaths().Settings)
+	if !ok || util.HasJSONCComments(raw) {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	var allow []any
+	if perms, ok := mapChild(cfg, "permissions"); ok {
+		if v, ok := perms.Get("allow"); ok {
+			if allow, ok = v.([]any); !ok {
+				return false
+			}
+		}
+	} else if _, exists := cfg.Get("permissions"); exists {
+		return false
+	}
+	have := map[string]bool{}
+	for _, x := range allow {
+		if s, ok := x.(string); ok {
+			have[s] = true
+		}
+	}
+	for _, entry := range claudeMcpPermissionEntries(toolID) {
+		if !have[entry] {
+			return true
+		}
+	}
+	return false
 }
 
 func removeClaudeContextModeWildcard(entries []any) []any {

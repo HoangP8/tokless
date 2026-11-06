@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/HoangP8/tokless/internal/core"
+	toolsPkg "github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -33,7 +34,53 @@ func toolNeedsNode(tool *core.ToolManifest) bool {
 	if tool.InstructionOnly {
 		return false
 	}
+	if tool.ID == "context-mode" && !toolsPkg.CtxNeedsGlobalCLI() {
+		return false
+	}
 	return tool.NeedsNode || tool.Channel == core.ChannelNpm || tool.MinNodeMajor > 0
+}
+
+// ctxNodeShortfall returns the Node floor when a context-mode install would run and no Node meets it.
+func ctxNodeShortfall(tools []*core.ToolManifest, upgrade bool) (minNode string, needs bool) {
+	if os.Getenv("TOKLESS_TEST") == "1" || !toolsPkg.CtxNeedsGlobalCLI() {
+		return "", false
+	}
+	has := false
+	for _, t := range tools {
+		has = has || t.ID == "context-mode"
+	}
+	if !has {
+		return "", false
+	}
+	ver, minNode, err := util.ContextModeLatest()
+	if err != nil {
+		return "", false
+	}
+	if !upgrade {
+		if rt, err := util.ResolveContextMode(); err == nil && !rt.Degraded && util.VersionMajor(rt.Version) >= util.VersionMajor(ver) {
+			return "", false
+		}
+	}
+	if _, err := util.EnsureNodeAtLeast(minNode, false); err == nil {
+		return "", false
+	}
+	return minNode, true
+}
+
+// nodeInstallNotice announces a private Node install and reports whether it is allowed.
+func nodeInstallNotice(tools []*core.ToolManifest, upgrade, nodeOK bool) bool {
+	if !nodeOK {
+		return false
+	}
+	minNode, needs := ctxNodeShortfall(tools, upgrade)
+	if !needs {
+		return false
+	}
+	prev := util.Quiet()
+	util.SetQuiet(false)
+	util.L.Sub("context-mode needs Node >= " + minNode + "; installing a private copy under " + util.PortableRuntimeDir())
+	util.SetQuiet(prev)
+	return true
 }
 
 func firstLine(s string) string {

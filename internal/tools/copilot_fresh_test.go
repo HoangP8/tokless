@@ -283,49 +283,75 @@ func TestCopilotRtkVerifyRequiresBothScopes(t *testing.T) {
 	}
 }
 
-func TestCopilotContextModeHook(t *testing.T) {
-	copilotTestHome(t)
+// Legacy hook fixtures.
+const legacyCopilotCLIHook = `{"version":1,"hooks":{"preToolUse":[{"type":"command","command":"context-mode hook copilot-cli pretooluse"}],"postToolUse":[{"type":"command","command":"context-mode hook copilot-cli posttooluse"}],"sessionStart":[{"type":"command","command":"context-mode hook copilot-cli sessionstart"}],"userPromptSubmitted":[{"type":"command","command":"context-mode hook copilot-cli userpromptsubmit"}],"agentStop":[{"type":"command","command":"context-mode hook copilot-cli stop"}],"preCompact":[{"type":"command","command":"context-mode hook copilot-cli precompact"}]}}`
+
+const legacyCopilotIDEHook = `{"version":1,"hooks":{"PreToolUse":[{"type":"command","command":"context-mode hook copilot-vscode pretooluse","timeout":10}],"PostToolUse":[{"type":"command","command":"context-mode hook copilot-vscode posttooluse","timeout":10}],"SessionStart":[{"type":"command","command":"context-mode hook copilot-vscode sessionstart","timeout":10}],"Stop":[{"type":"command","command":"context-mode hook copilot-vscode stop","timeout":10}]}}`
+
+func TestCopilotContextModeWireMigratesLegacyHooks(t *testing.T) {
+	tmp := copilotTestHome(t)
+	cliHook := filepath.Join(util.CopilotPathsResolved().HooksDir, "context-mode.json")
+	ideHook := filepath.Join(tmp, ".github", "hooks", "context-mode.json")
+	for path, body := range map[string]string{cliHook: legacyCopilotCLIHook, ideHook: legacyCopilotIDEHook} {
+		if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !agents.HasCopilotContextModeHook() || !agents.HasCopilotIdeContextModeHook() {
+		t.Fatal("fixtures must be recognised as tokless context-mode hooks")
+	}
+	if ctxVerifyCopilot() {
+		t.Fatal("leftover hook files must fail verify")
+	}
+	ok, err := ctxWireCopilot(core.RunOpts{Agent: "copilot"})
+	if err != nil || !ok {
+		t.Fatalf("wire: ok=%v err=%v", ok, err)
+	}
+	if util.Exists(cliHook) || util.Exists(ideHook) {
+		t.Fatal("wire must delete legacy context-mode hook files")
+	}
+}
+
+func TestCtxInstallMigratesLegacyCopilotHooks(t *testing.T) {
 	t.Setenv("TOKLESS_TEST", "1")
-
-	if agents.HasCopilotContextModeHook() {
-		t.Fatal("should not have before install")
-	}
-	agents.InstallCopilotContextModeHook()
-
-	hookFile := filepath.Join(util.CopilotPathsResolved().HooksDir, "context-mode.json")
-	raw, ok := util.ReadFileSafe(hookFile)
-	if !ok {
-		t.Fatal("hook file not written")
-	}
-	for _, token := range []string{
-		"pretooluse", "posttooluse", "sessionstart",
-		"userpromptsubmit", "stop", "precompact",
-	} {
-		if !strings.Contains(raw, "context-mode hook copilot-cli "+token) {
-			t.Fatalf("missing %s hook in: %s", token, raw)
+	tmp := copilotTestHome(t)
+	cliHook := filepath.Join(util.CopilotPathsResolved().HooksDir, "context-mode.json")
+	ideHook := filepath.Join(tmp, ".github", "hooks", "context-mode.json")
+	for path, body := range map[string]string{cliHook: legacyCopilotCLIHook, ideHook: legacyCopilotIDEHook} {
+		if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	for _, event := range []string{
-		"preToolUse", "postToolUse", "sessionStart",
-		"userPromptSubmitted", "agentStop", "preCompact",
-	} {
-		if !strings.Contains(raw, `"`+event+`"`) {
-			t.Fatalf("missing event key %s in: %s", event, raw)
+	if ok, err := ctxEnsureInstalled(core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("install: ok=%v err=%v", ok, err)
+	}
+	if util.Exists(cliHook) || util.Exists(ideHook) {
+		t.Fatal("install must delete legacy hooks even when the CLI wire is gated")
+	}
+}
+
+func TestCopilotContextModeMigrationKeepsForeignHooks(t *testing.T) {
+	tmp := copilotTestHome(t)
+	cliHook := filepath.Join(util.CopilotPathsResolved().HooksDir, "context-mode.json")
+	ideHook := filepath.Join(tmp, ".github", "hooks", "context-mode.json")
+	foreign := `{"version":1,"hooks":{"preToolUse":[{"type":"command","command":"my-own-hook"}]}}`
+	for _, path := range []string{cliHook, ideHook} {
+		if err := util.EnsureDir(filepath.Dir(path)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(foreign), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if strings.Contains(raw, `"hooks": [`) || strings.Contains(raw, `"hooks":[`) {
-		if strings.Contains(raw, "timeoutSec") {
-			t.Fatalf("expected flat official shape, got nested: %s", raw)
-		}
-	}
-
-	if !agents.HasCopilotContextModeHook() {
-		t.Fatal("should have after install")
-	}
-
-	agents.RemoveCopilotContextModeHook()
-	if agents.HasCopilotContextModeHook() {
-		t.Fatal("should not have after remove")
+	agents.MigrateCopilotContextModeHooks()
+	if !util.Exists(cliHook) || !util.Exists(ideHook) {
+		t.Fatal("user-owned hook files must survive migration")
 	}
 }
 
@@ -409,8 +435,8 @@ func TestCopilotContextModeWireUnwire(t *testing.T) {
 	if !agents.CopilotMcpHas("context-mode") {
 		t.Fatal("context-mode MCP not wired")
 	}
-	if !agents.HasCopilotContextModeHook() {
-		t.Fatal("context-mode hook not installed")
+	if agents.HasCopilotContextModeHook() || agents.HasCopilotIdeContextModeHook() {
+		t.Fatal("context-mode 2.x must not install Copilot hooks")
 	}
 
 	ran, err = ctxUnwireCopilot(opts)
@@ -432,9 +458,10 @@ func TestCopilotContextModeWireRollsBackOnLaterFailure(t *testing.T) {
 	copilotTestHome(t)
 	t.Setenv("TOKLESS_TEST", "1")
 	project := agents.IdeProjectRoot()
-	ideHook := filepath.Join(project, ".github", "hooks", "context-mode.json")
+	ideInstr := filepath.Join(project, ".github", "copilot-instructions.md")
+	ideMcp := filepath.Join(project, ".vscode", "mcp.json")
 	util.SetWriteFileOverride(func(path, content string) error {
-		if path == ideHook {
+		if path == ideMcp {
 			return os.ErrPermission
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -447,17 +474,18 @@ func TestCopilotContextModeWireRollsBackOnLaterFailure(t *testing.T) {
 	if ok, err := ctxWireCopilot(core.RunOpts{Agent: "copilot"}); err == nil || ok {
 		t.Fatalf("wire should fail and rollback: ok=%v err=%v", ok, err)
 	}
-	if agents.CopilotMcpHas("context-mode") || agents.HasCopilotContextModeHook() || HasOwner("copilot", "context-mode") {
-		t.Fatal("failed wiring left Copilot state behind")
+	if agents.CopilotMcpHas("context-mode") || HasOwner("copilot", "context-mode") {
+		t.Fatalf("left behind mcp=%v owner=%v", agents.CopilotMcpHas("context-mode"), HasOwner("copilot", "context-mode"))
 	}
-	if util.Exists(ideHook) {
-		t.Fatal("failed IDE hook write left file behind")
+	if util.Exists(ideInstr) || util.Exists(ideMcp) {
+		t.Fatal("failed IDE write left file behind")
 	}
 }
 
 func TestCopilotTransactionPreservesForeignReplacement(t *testing.T) {
 	tmp := copilotTestHome(t)
-	path := filepath.Join(tmp, ".github", "hooks", "context-mode.json")
+	_ = tmp
+	path := filepath.Join(agents.IdeProjectRoot(), ".vscode", "mcp.json")
 	foreign := "{\"foreign\":true}\n"
 	triggered := false
 	util.SetWriteFileOverride(func(writePath, content string) error {
