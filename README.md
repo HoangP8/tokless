@@ -5,9 +5,9 @@
 
   One tool, no config — works the moment it lands.
 
-  [![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version)](https://github.com/HoangP8/tokless/releases)
-  [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue)](https://github.com/HoangP8/tokless)
-  [![license](https://img.shields.io/github/license/HoangP8/tokless)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
+  [![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version&color=0969da)](https://github.com/HoangP8/tokless/releases)
+  [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-57606a)](https://github.com/HoangP8/tokless)
+  [![license](https://img.shields.io/github/license/HoangP8/tokless?color=2ea44f)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
 
   <br />
 
