@@ -53,7 +53,7 @@ func ConfigureClineMcpSafe(toolID string, command []string) (bool, string, error
 		}
 	}
 	if stateExists {
-		if owned, ok := state[toolID]; ok && !stringSlicesEqual(owned, command) {
+		if owned, ok := state[toolID]; ok && !util.SameModuloContextModeFlags(owned, command) {
 			return false, p, fmt.Errorf("Cline MCP %q ownership state differs from requested command", toolID)
 		}
 	}
@@ -202,7 +202,8 @@ func clineExpectedCommand(toolID string, command []string) bool {
 	}
 	switch toolID {
 	case "context-mode":
-		return len(command) >= 4 && command[2] == "--context-mode" && kiloContextServer(command[3:])
+		_, target, ok := util.SplitContextModeArgs(command[1:])
+		return ok && kiloContextServer(target)
 	case "codegraph":
 		return len(command) >= 7 && command[2] == "--agent" && command[3] == "cline" && kiloCodegraphServer(command[4:])
 	case "projectmem":

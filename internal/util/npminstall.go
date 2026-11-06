@@ -166,6 +166,9 @@ func NpmGlobalInstall(pkg, spec string) (string, bool, error) {
 		r := npmRun(args)
 		if r.Code != 0 {
 			L.Debug("npm attempt " + strconv.Itoa(i+1) + " failed: " + firstNpmLine(r.Stderr, r.Stdout))
+			if i == 0 && isEngineError(r.Stderr) {
+				L.Warn(pkg + " needs a newer Node.js than installed (" + firstNpmLine(r.Stderr, r.Stdout) + ")")
+			}
 			continue
 		}
 		actual := npmReadInstalled(pkg)
@@ -185,6 +188,10 @@ func NpmGlobalInstall(pkg, spec string) (string, bool, error) {
 		return v, true, nil
 	}
 	return "", false, nil
+}
+
+func isEngineError(stderr string) bool {
+	return strings.Contains(stderr, "EBADENGINE") || strings.Contains(stderr, "Unsupported engine")
 }
 
 func firstNpmLine(stderr, stdout string) string {

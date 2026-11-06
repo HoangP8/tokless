@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -171,12 +172,18 @@ func main() {
 	}
 	result := responses[0]["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != len(contextModeTools) {
-		t.Fatalf("tools = %v, want %v", tools, contextModeTools)
+	var want []string
+	for _, name := range contextModeTools {
+		if name != "ctx_batch" {
+			want = append(want, name)
+		}
+	}
+	if len(tools) != len(want) {
+		t.Fatalf("tools = %v, want %v", tools, want)
 	}
 	for i, tool := range tools {
-		if got := tool.(map[string]any)["name"]; got != contextModeTools[i] {
-			t.Fatalf("tool %d = %q, want %q", i, got, contextModeTools[i])
+		if got := tool.(map[string]any)["name"]; got != want[i] {
+			t.Fatalf("tool %d = %q, want %q", i, got, want[i])
 		}
 	}
 	content := responses[1]["result"].(map[string]any)["content"].([]any)
@@ -992,5 +999,98 @@ func TestScrubStaticUniverseProjectmem(t *testing.T) {
 	filtered := filterMcpToolsResponse([]byte(upstream), allowed)
 	if strings.Contains(string(filtered), "precheck_file") {
 		t.Fatalf("projectmem static-universe name leaked: %s", filtered)
+	}
+}
+
+func mcpToolsFixture(names ...string) []byte {
+	items := make([]string, len(names))
+	for i, name := range names {
+		items[i] = `{"name":"` + name + `","description":"d"}`
+	}
+	return []byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[` + strings.Join(items, ",") + `]}}`)
+}
+
+func listedMcpToolNames(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var resp struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	names := []string{}
+	for _, tool := range resp.Result.Tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+func TestContextModeProxyToolListsPerVersion(t *testing.T) {
+	allowed := mcpToolPolicies["context-mode"]
+	v2 := []string{"ctx_execute", "ctx_batch", "ctx_index", "ctx_search", "ctx_resume", "ctx_stats", "ctx_doctor", "ctx_upgrade", "ctx_purge"}
+	v1 := []string{"ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_index", "ctx_search", "ctx_fetch_and_index", "ctx_stats", "ctx_doctor", "ctx_upgrade", "ctx_purge", "ctx_insight"}
+	for _, tc := range []struct {
+		name     string
+		upstream []string
+		want     []string
+		degraded bool
+	}{
+		{"2.x", v2, []string{"ctx_batch", "ctx_execute", "ctx_index", "ctx_search"}, false},
+		{"1.x", v1, []string{"ctx_batch_execute", "ctx_execute", "ctx_execute_file", "ctx_index", "ctx_search", "ctx_fetch_and_index"}, false},
+		{"degraded", []string{"ctx_doctor"}, []string{"ctx_doctor"}, true},
+		{"nothing", []string{"hidden"}, []string{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, degraded := filterMcpToolsResponseDegraded(mcpToolsFixture(tc.upstream...), allowed)
+			got := listedMcpToolNames(t, out)
+			sort.Strings(got)
+			want := append([]string{}, tc.want...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) || degraded != tc.degraded {
+				t.Fatalf("got %v degraded=%v, want %v degraded=%v", got, degraded, want, tc.degraded)
+			}
+		})
+	}
+}
+
+func TestContextModeProxyDegradedAllowsDoctorCall(t *testing.T) {
+	allowed := mcpToolPolicies["context-mode"]
+	ids := &mcpRequestIDs{}
+	call := `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ctx_doctor"}}` + "\n"
+
+	var upstream, output bytes.Buffer
+	if err := scanMcpInput(strings.NewReader(call), &upstream, &output, ids, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if upstream.Len() != 0 || !strings.Contains(output.String(), `"code":-32601`) {
+		t.Fatalf("ctx_doctor allowed before degraded: up=%q out=%q", upstream.String(), output.String())
+	}
+
+	var listOut bytes.Buffer
+	if err := scanMcpOutput(bytes.NewReader(append(mcpToolsFixture("ctx_doctor"), '\n')), &listOut, ids, allowed, nil); err != nil {
+		t.Fatal(err)
+	}
+	upstream.Reset()
+	output.Reset()
+	if err := scanMcpInput(strings.NewReader(call), &upstream, &output, ids, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(upstream.String(), "ctx_doctor") || output.Len() != 0 {
+		t.Fatalf("ctx_doctor not forwarded when degraded: up=%q out=%q", upstream.String(), output.String())
+	}
+}
+
+func TestContextModeProxyBatchNotShadowedByBatchExecute(t *testing.T) {
+	allowed := []string{"ctx_batch"}
+	raw := `{"jsonrpc":"2.0","id":1,"result":{"tools":[
+		{"name":"ctx_batch","description":"Not ctx_batch_execute."},
+		{"name":"ctx_batch_execute","description":"x"}]}}`
+	out := string(filterMcpToolsResponse([]byte(raw), allowed))
+	if strings.Contains(out, "ctx_batch_execute") || !strings.Contains(out, `"name":"ctx_batch"`) {
+		t.Fatalf("unexpected filter result: %s", out)
 	}
 }

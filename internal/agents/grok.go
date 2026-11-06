@@ -45,7 +45,7 @@ func ConfigureGrokMcp(toolID string) (changed bool, file string, err error) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("grok", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.McpSpawnFor(toolID)
+		spawn = util.McpSpawnForAgent("grok", toolID)
 	}
 	block := util.NewTomlBlock("mcp_servers." + toolID)
 	block.Set("command", spawn.Command)
@@ -88,7 +88,7 @@ func GrokMcpHas(toolID string) bool {
 func GrokContextModeMcpHas() bool {
 	raw, ok := util.ReadFileSafe(grokConfigFile())
 	command, args, enabled, ok := grokMcpFields(raw, "context-mode")
-	return ok && enabled && !grokMcpDisabled(raw, "context-mode") && grokToklessCommand(command) && grokContextModeArgs(args)
+	return ok && enabled && !grokMcpDisabled(raw, "context-mode") && grokToklessCommand(command) && grokContextModeArgs(args) && util.ContextModeFlagsCurrent("grok", args)
 }
 
 // GrokProjectmemMcpHas reports whether projectmem uses Tokless's bounded MCP proxy.
@@ -134,6 +134,7 @@ func grokCodegraphArgs(args []string) bool {
 }
 
 func grokContextModeArgs(args []string) bool {
+	args = util.StripContextModeFlags(args)
 	command, tail, ok := grokMcpCommand(args, []string{"run-mcp", "--context-mode"})
 	if !ok {
 		return false

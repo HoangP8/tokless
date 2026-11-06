@@ -4,50 +4,213 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
+var (
+	ctxNeedsCLIOnce sync.Once
+	ctxNeedsCLI     bool
+)
+
+// CtxNeedsGlobalCLI reports whether a detected non-OpenCode harness needs the global CLI.
+// Memoized per process because agent Detect() can spawn a CLI; tests recompute.
+func CtxNeedsGlobalCLI() bool {
 	if isTest() {
-		return true, nil
+		return ctxDetectNeedsCLI()
 	}
-	if opts.DryRun {
-		util.L.Sub("[dry-run] would: npm install -g context-mode@latest (cache-skew-resistant)")
-		return true, nil
+	ctxNeedsCLIOnce.Do(func() { ctxNeedsCLI = ctxDetectNeedsCLI() })
+	return ctxNeedsCLI
+}
+
+func ctxDetectNeedsCLI() bool {
+	hasOpenCode := false
+	for _, a := range core.ListAgents() {
+		if !a.Detect().Installed {
+			continue
+		}
+		if a.ID == "opencode" || a.ID == "opencode2" {
+			hasOpenCode = true
+			continue
+		}
+		return true
 	}
-	opts.Reportf("checking", 0.1)
-	if util.Which("context-mode") != "" && !opts.Upgrade {
-		opts.Reportf("already installed", 1)
-		return true, nil
-	}
-	// context-mode needs Node 22+ (better-sqlite3 native prebuild).
-	if !util.NodeAgeAlreadyChecked() {
-		if maj := util.NodeMajor(); maj > 0 && maj < contextModeMinNode {
-			util.L.Warn("Node.js v" + strconv.Itoa(maj) + " is too old for context-mode (need v" + strconv.Itoa(contextModeMinNode) + "+).")
-			if util.Confirm("Upgrade Node.js now? (y/n)", true) {
-				if !util.InstallNodeForTools() {
-					util.L.Err("couldn't upgrade Node.js. context-mode needs v" + strconv.Itoa(contextModeMinNode) + "+.")
-					util.L.Sub("Manual: https://nodejs.org/en/download")
-					return false, nil
-				}
-			} else {
-				util.L.Sub("Skipping. context-mode may fail to install.")
+	return !hasOpenCode
+}
+
+func CtxOpenCodePinStale(latest string) bool {
+	for _, v2 := range []bool{false, true} {
+		if !HasOwner(ctxOpenCodeAgentID(v2), "context-mode") {
+			continue
+		}
+		for _, s := range agents.OpenCodePluginSpecs(v2, ctxPluginPkg) {
+			if ver, ok := strings.CutPrefix(s, ctxPluginPkg+"@"); ok && ver != latest {
+				return true
 			}
 		}
 	}
+	return false
+}
+
+// CtxOpenCodeMigrateStale reports a leftover tokless MCP entry (legacy, or duplicating the plugin).
+// A tokless-written entry proves ownership; no AGENTS.md marker needed.
+func CtxOpenCodeMigrateStale() bool {
+	for _, v2 := range []bool{false, true} {
+		if a := core.GetAgent(ctxOpenCodeAgentID(v2)); a != nil && a.Detect().Installed &&
+			agents.OpenCodeToklessMcpHas(v2, ctxPluginPkg) {
+			return true
+		}
+	}
+	return false
+}
+
+func CtxOpenCodeHideStale() bool {
+	for _, v2 := range []bool{false, true} {
+		if HasOwner(ctxOpenCodeAgentID(v2), "context-mode") &&
+			len(agents.OpenCodePluginSpecs(v2, ctxPluginPkg)) > 0 &&
+			agents.OpenCodeHidingMissing(v2, agents.OpenCodeHiddenCtxTools) {
+			return true
+		}
+	}
+	return false
+}
+
+func CtxToolPermsStale() bool {
+	on := func(id string) bool {
+		a := core.GetAgent(id)
+		return a != nil && a.Detect().Installed && HasOwner(id, "context-mode")
+	}
+	return (on("claude") && ctxWiredAnyClaude() && agents.ClaudeMcpAllowMissing("context-mode")) ||
+		(on("droid") && agents.DroidMcpHas("context-mode") && agents.DroidEnabledToolsMissing("context-mode"))
+}
+
+// ctxMcpHarnesses are the harnesses whose context-mode entry is a tokless run-mcp spawn.
+var ctxMcpHarnesses = []string{"claude", "codex", "cursor", "antigravity", "copilot", "droid", "grok", "pi", "omp", "kilo", "cline", "amp", "kimi", "cmd", "dsh", "zcode"}
+
+// CtxSpawnStale reports a tokless-owned context-mode MCP entry that no longer
+// matches the spawn written today: a missing --ctx-agent host id, or tokless
+// path drift.
+func CtxSpawnStale() bool {
+	for _, id := range ctxMcpHarnesses {
+		a := core.GetAgent(id)
+		if a == nil || !a.Detect().Installed || !HasOwner(id, "context-mode") {
+			continue
+		}
+		if mcpHas(id, "context-mode", true) && !mcpHas(id, "context-mode", false) {
+			return true
+		}
+	}
+	return false
+}
+
+// Test seams.
+var (
+	ctxResolveRuntime func() (util.CtxRuntime, error)
+	ctxResolveLatest  func() (version, minNode string, err error)
+)
+
+// ctxCLIReady: global CLI installed, Node satisfied, not a major behind latest.
+func ctxCLIReady() (bool, string) {
+	resolve := util.ResolveContextMode
+	if ctxResolveRuntime != nil {
+		resolve = ctxResolveRuntime
+	} else if isTest() {
+		return true, ""
+	}
+	rt, err := resolve()
+	if err != nil {
+		return false, "context-mode CLI is not usable: " + err.Error()
+	}
+	if rt.Degraded {
+		return false, "context-mode needs Node >= " + rt.MinNode + "; skipped"
+	}
+	latest := util.ContextModeLatest
+	if ctxResolveLatest != nil {
+		latest = ctxResolveLatest
+	} else if isTest() {
+		return true, ""
+	}
+	if ver, minNode, err := latest(); err == nil && util.VersionMajor(rt.Version) < util.VersionMajor(ver) {
+		return false, "context-mode " + rt.Version + " installed; upgrade to " + ver + " needs Node >= " + minNode + "; skipped"
+	}
+	return true, ""
+}
+
+func ctxGated(fn core.AgentFn) core.AgentFn {
+	return func(opts core.RunOpts) (bool, error) {
+		if !opts.DryRun {
+			if ok, why := ctxCLIReady(); !ok {
+				util.L.Warn(why)
+				return false, nil
+			}
+		}
+		return fn(opts)
+	}
+}
+
+// ctxGateCLI skips OpenCode, which runs a plugin rather than the CLI.
+func ctxGateCLI(wires map[string]core.AgentFn) map[string]core.AgentFn {
+	for id, fn := range wires {
+		if id != "opencode" && id != "opencode2" {
+			wires[id] = ctxGated(fn)
+		}
+	}
+	return wires
+}
+
+func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
+	if opts.DryRun {
+		util.L.Sub("[dry-run] would: npm install -g context-mode@<latest>")
+		return true, nil
+	}
+	agents.MigrateCopilotContextModeHooks()
+	if isTest() {
+		return true, nil
+	}
+	opts.Reportf("checking", 0.1)
+	if !CtxNeedsGlobalCLI() {
+		opts.Reportf("plugin", 1)
+		return true, nil
+	}
+	rt, rerr := util.ResolveContextMode()
+	installed := rerr == nil
+	ver, minNode, err := util.ContextModeLatest()
+	if err != nil {
+		if installed {
+			util.L.Sub(util.C.Dim("couldn't check latest context-mode (" + err.Error() + "); keeping installed"))
+			return true, nil
+		}
+		util.L.Err("couldn't resolve latest context-mode: " + err.Error())
+		return false, nil
+	}
+	behind := installed && util.VersionMajor(rt.Version) < util.VersionMajor(ver)
+	if installed && !opts.Upgrade && !behind && !rt.Degraded {
+		opts.Reportf("already installed", 1)
+		return true, nil
+	}
+	if _, err := util.EnsureNodeAtLeast(minNode, opts.AllowNodeInstall); err != nil {
+		if installed && !behind && !rt.Degraded {
+			util.L.Debug(err.Error())
+			util.L.Warn("context-mode " + ver + " needs Node >= " + minNode + "; keeping " + rt.Version)
+			return true, nil
+		}
+		util.L.Debug(err.Error())
+		util.L.Warn("context-mode " + ver + " needs Node >= " + minNode + "; skipped")
+		return ctxHasOpenCode(), nil
+	}
+	if installed && !opts.Upgrade && !behind {
+		opts.Reportf("ready", 1)
+		return true, nil
+	}
 	opts.Reportf("npm install -g", 0.4)
-	v, ok, _ := util.NpmGlobalInstall("context-mode", "latest")
+	v, ok, _ := util.NpmGlobalInstall("context-mode", ver)
 	if !ok {
 		util.L.Err("context-mode install failed across all strategies (npm + tarball fallback).")
 		util.L.Sub("Each attempt was logged above. Common causes: old Node, no build tools, or a registry mirror.")
-		if hint := util.NodeTooOldHint(contextModeMinNode); hint != "" {
-			util.L.Sub(hint)
-		}
 		return false, nil
 	}
 	opts.Reportf("ready", 1)
@@ -55,35 +218,13 @@ func ctxEnsureInstalled(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-const contextModeMinNode = 22
-
-func pluginIsContextMode(entry string) bool {
-	return entry == "context-mode" || strings.HasPrefix(entry, "context-mode@")
-}
-
-// setContextModePluginBare ensures the opencode.jsonc plugin array ends with
-// the bare `context-mode` entry.
-func setContextModePluginBare(cfg *util.OrderedMap) {
-	plugins := getArr(cfg, "plugin")
-	kept := make([]any, 0, len(plugins))
-	for _, p := range plugins {
-		if s, ok := p.(string); ok && pluginIsContextMode(s) {
-			continue
-		}
-		kept = append(kept, p)
-	}
-	kept = append(kept, "context-mode")
-	cfg.Set("plugin", kept)
-	if mv, ok := cfg.Get("mcp"); ok {
-		if mm, ok := mv.(*util.OrderedMap); ok {
-			if _, has := mm.Get("context-mode"); has {
-				mm.Delete("context-mode")
-				if mm.Len() == 0 {
-					cfg.Delete("mcp")
-				}
-			}
+func ctxHasOpenCode() bool {
+	for _, a := range core.ListAgents() {
+		if (a.ID == "opencode" || a.ID == "opencode2") && a.Detect().Installed {
+			return true
 		}
 	}
+	return false
 }
 
 // --- Claude ---
@@ -93,7 +234,7 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 		util.L.Sub("[dry-run] would: claude mcp add context-mode -- context-mode")
 		return true, nil
 	}
-	spawn := util.PickMcpSpawn("context-mode")
+	spawn := util.ContextModeSpawnFor("claude")
 	if isTest() {
 		cp := util.ClaudeCodePaths()
 		_ = util.EnsureDir(cp.Dir)
@@ -118,44 +259,51 @@ func ctxWireClaude(opts core.RunOpts) (bool, error) {
 
 // --- OpenCode ---
 
-func ctxWireOpenCode(opts core.RunOpts) (bool, error) {
-	if opts.DryRun {
-		util.L.Sub("[dry-run] would add 'context-mode' to opencode.json plugin[]")
-		return true, nil
+const ctxPluginPkg = "context-mode"
+
+func ctxOpenCodeAgentID(v2 bool) string {
+	if v2 {
+		return "opencode2"
 	}
-	op := util.OpenCodePathsResolved()
-	_ = util.EnsureDir(op.Dir)
-	cfg := loadOrdered(op.Config)
-	removeContextModePlugin(cfg)
-	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
-	mcpConfigure("opencode", "context-mode")
-	WriteOwner("opencode", "context-mode")
-	if isTest() {
-		return ctxVerifyOpenCode(), nil
-	}
-	cleanAllContextModeCache()
-	runPostinstallInOpenCodeCache()
-	return ctxVerifyOpenCode(), nil
+	return "opencode"
 }
 
-func ctxWireOpenCodeV2(opts core.RunOpts) (bool, error) {
+// ctxPluginSpec returns the latest pinned spec, else the one already configured.
+func ctxPluginSpec(v2 bool) (string, error) {
+	ver, err := util.ContextModeLatestVersion()
+	if err == nil {
+		return ctxPluginPkg + "@" + ver, nil
+	}
+	for _, s := range agents.OpenCodePluginSpecs(v2, ctxPluginPkg) {
+		if strings.HasPrefix(s, ctxPluginPkg+"@") {
+			return s, nil
+		}
+	}
+	return "", err
+}
+
+func ctxWireOpenCodeShape(opts core.RunOpts, v2 bool) (bool, error) {
+	key := agents.OpenCodePluginKey(v2)
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add 'context-mode' to OpenCode v2 opencode.json plugin[]")
+		util.L.Sub("[dry-run] would add context-mode@<latest> to OpenCode " + key)
 		return true, nil
 	}
-	op := util.OpenCodePathsV2()
-	_ = util.EnsureDir(op.Dir)
-	cfg := loadOrdered(op.Config)
-	removeContextModePlugin(cfg)
-	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
-	mcpConfigure("opencode2", "context-mode")
-	WriteOwner("opencode2", "context-mode")
-	if !isTest() {
-		cleanAllContextModeCache()
-		runPostinstallInOpenCodeCache()
+	spec, err := ctxPluginSpec(v2)
+	if err != nil {
+		util.L.Err("couldn't resolve context-mode version: " + err.Error())
+		return false, err
 	}
-	return ctxVerifyOpenCodeV2(), nil
+	if _, err := agents.SetOpenCodePluginHiding(v2, ctxPluginPkg, spec, agents.OpenCodeHiddenCtxTools); err != nil {
+		util.L.Err("couldn't write context-mode plugin to OpenCode config: " + err.Error())
+		return false, err
+	}
+	WriteOwner(ctxOpenCodeAgentID(v2), "context-mode")
+	return ctxVerifyOpenCodeShape(v2), nil
 }
+
+func ctxWireOpenCode(opts core.RunOpts) (bool, error) { return ctxWireOpenCodeShape(opts, false) }
+
+func ctxWireOpenCodeV2(opts core.RunOpts) (bool, error) { return ctxWireOpenCodeShape(opts, true) }
 
 func ctxWireKilo(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
@@ -193,63 +341,6 @@ func ctxUnwireCline(core.RunOpts) (bool, error) {
 	}
 	RemoveOwner("cline", "context-mode")
 	return true, nil
-}
-
-func removeContextModePlugin(cfg *util.OrderedMap) {
-	plugins := getArr(cfg, "plugin")
-	kept := make([]any, 0, len(plugins))
-	for _, p := range plugins {
-		if s, ok := p.(string); ok && pluginIsContextMode(s) {
-			continue
-		}
-		kept = append(kept, p)
-	}
-	cfg.Set("plugin", kept)
-}
-
-// cleanAllContextModeCache clears stale cached dirs so bare @latest refetches.
-func cleanAllContextModeCache() {
-	cacheRoot := filepath.Join(util.Home(), ".cache", "opencode", "packages")
-	entries, err := os.ReadDir(cacheRoot)
-	if err != nil {
-		return
-	}
-	n := 0
-	for _, e := range entries {
-		d := e.Name()
-		if d == "context-mode" || strings.HasPrefix(d, "context-mode@") {
-			_ = os.RemoveAll(filepath.Join(cacheRoot, d))
-			n++
-		}
-	}
-	if n > 0 {
-		util.L.Sub(util.C.Dim("cleaned " + strconv.Itoa(n) + " old context-mode cache dir(s)"))
-	}
-}
-
-func runPostinstallInOpenCodeCache() {
-	if util.Which("bun") == "" {
-		return
-	}
-	cacheRoot := filepath.Join(util.Home(), ".cache", "opencode", "packages")
-	entries, err := os.ReadDir(cacheRoot)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		d := e.Name()
-		if d != "context-mode" && !strings.HasPrefix(d, "context-mode@") {
-			continue
-		}
-		pkgHost := filepath.Join(cacheRoot, d)
-		if !util.Exists(filepath.Join(pkgHost, "node_modules", "context-mode")) {
-			continue
-		}
-		r := util.Run(util.ResolveBunBinary(), []string{"pm", "trust", "context-mode"}, util.RunOptions{Cwd: pkgHost, Capture: true})
-		if r.Code == 0 {
-			util.L.Sub(util.C.Dim("healed OpenCode plugin cache (" + d + ")"))
-		}
-	}
 }
 
 // --- Codex ---
@@ -409,60 +500,27 @@ func ctxUnwireClaude(opts core.RunOpts) (bool, error) {
 	return true, nil
 }
 
-func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) {
+func ctxUnwireOpenCodeShape(opts core.RunOpts, v2 bool) (bool, error) {
 	if opts.DryRun {
 		return true, nil
 	}
-	op := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(op.Config)
-	if !ok {
-		mcpRemove("opencode", "context-mode")
-		RemoveOwner("opencode", "context-mode")
-		return true, nil
+	id := ctxOpenCodeAgentID(v2)
+	if !HasOwner(id, "context-mode") {
+		_, err := agents.RemoveOpenCodeToklessMcp(v2, ctxPluginPkg)
+		return err == nil, err
 	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		cfg = util.NewOrderedMap()
+	_, err := agents.RemoveOpenCodePluginHiding(v2, ctxPluginPkg, agents.OpenCodeHiddenCtxTools)
+	if err != nil {
+		return false, err
 	}
-	if pv, ok := cfg.Get("plugin"); ok {
-		if arr, ok := pv.([]any); ok {
-			var kept []any
-			for _, p := range arr {
-				if s, ok := p.(string); ok && pluginIsContextMode(s) {
-					continue
-				}
-				kept = append(kept, p)
-			}
-			if len(kept) == 0 {
-				cfg.Delete("plugin")
-			} else {
-				cfg.Set("plugin", kept)
-			}
-		}
-	}
-	_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
-	mcpRemove("opencode", "context-mode")
-	RemoveOwner("opencode", "context-mode")
+	RemoveOwner(id, "context-mode")
 	return true, nil
 }
 
+func ctxUnwireOpenCode(opts core.RunOpts) (bool, error) { return ctxUnwireOpenCodeShape(opts, false) }
+
 func ctxUnwireOpenCodeV2(opts core.RunOpts) (bool, error) {
-	if opts.DryRun {
-		return true, nil
-	}
-	op := util.OpenCodePathsV2()
-	raw, ok := util.ReadFileSafe(op.Config)
-	if ok {
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			cfg = util.NewOrderedMap()
-		}
-		removeContextModePlugin(cfg)
-		_ = util.WriteFile(op.Config, util.StringifyJSON(cfg))
-	}
-	mcpRemove("opencode2", "context-mode")
-	RemoveOwner("opencode2", "context-mode")
-	return true, nil
+	return ctxUnwireOpenCodeShape(opts, true)
 }
 
 func ctxUnwireCodex(opts core.RunOpts) (bool, error) {
@@ -533,7 +591,7 @@ func ctxVerifyPi() bool {
 }
 
 func ctxVerifyCopilot() bool {
-	return agents.CopilotMcpBounded("context-mode", false) && agents.CopilotMcpBounded("context-mode", true) && agents.HasCopilotContextModeHook() && agents.HasCopilotIdeContextModeHook()
+	return agents.CopilotMcpBounded("context-mode", false) && agents.CopilotMcpBounded("context-mode", true) && !agents.HasCopilotContextModeHook() && !agents.HasCopilotIdeContextModeHook()
 }
 
 func ctxVerifyGrok() bool {
@@ -561,75 +619,14 @@ func ctxWiredAnyClaude() bool {
 	return false
 }
 
-// ctxWiredAnyOpenCode reports whether context-mode appears as a plugin or MCP entry.
-func ctxWiredAnyOpenCode() bool {
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsResolved().Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if pv, ok := cfg.Get("plugin"); ok {
-		if arr, ok := pv.([]any); ok {
-			for _, p := range arr {
-				if s, ok := p.(string); ok && pluginIsContextMode(s) {
-					return true
-				}
-			}
-		}
-	}
-	if mv, ok := cfg.Get("mcp"); ok {
-		if mm, ok := mv.(*util.OrderedMap); ok {
-			if _, has := mm.Get("context-mode"); has {
-				return true
-			}
-			if servers, ok := mm.Get("servers"); ok {
-				if sm, ok := servers.(*util.OrderedMap); ok {
-					if _, has := sm.Get("context-mode"); has {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
+func ctxWiredAnyOpenCodeShape(v2 bool) bool {
+	owned := HasOwner(ctxOpenCodeAgentID(v2), "context-mode") && len(agents.OpenCodePluginSpecs(v2, ctxPluginPkg)) > 0
+	return owned || agents.OpenCodeToklessMcpHas(v2, ctxPluginPkg)
 }
 
-func ctxWiredAnyOpenCodeV2() bool {
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsV2().Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if pv, ok := cfg.Get("plugin"); ok {
-		if arr, ok := pv.([]any); ok {
-			for _, p := range arr {
-				if s, ok := p.(string); ok && pluginIsContextMode(s) {
-					return true
-				}
-			}
-		}
-	}
-	if mv, ok := cfg.Get("mcp"); ok {
-		if mm, ok := mv.(*util.OrderedMap); ok {
-			if _, has := mm.Get("context-mode"); has {
-				return true
-			}
-			if servers, ok := mm.Get("servers"); ok {
-				if sm, ok := servers.(*util.OrderedMap); ok {
-					_, has := sm.Get("context-mode")
-					return has
-				}
-			}
-		}
-	}
-	return false
-}
+func ctxWiredAnyOpenCode() bool { return ctxWiredAnyOpenCodeShape(false) }
+
+func ctxWiredAnyOpenCodeV2() bool { return ctxWiredAnyOpenCodeShape(true) }
 
 // ctxWiredAnyCodex reports whether any context-mode MCP block exists (hyphen or underscore).
 func ctxWiredAnyCodex() bool {
@@ -679,23 +676,18 @@ func ctxVerifyAntigravity() bool {
 	return agents.AntigravityMcpBounded("context-mode") && !agents.HasAntigravityContextModeHook()
 }
 
-// --- Copilot (MCP + hooks + copilot-instructions.md) ---
+// --- Copilot (MCP + copilot-instructions.md) ---
 
 func ctxWireCopilot(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
-		util.L.Sub("[dry-run] would add context-mode MCP + hooks + copilot-instructions.md for copilot")
+		util.L.Sub("[dry-run] would add context-mode MCP + copilot-instructions.md for copilot")
 		return true, nil
 	}
 	err := withCopilotTransaction(func() error {
 		if reply := mcpAdapter("copilot").ConfigureMcp("context-mode"); reply.Err != nil {
 			return reply.Err
 		}
-		if err := agents.InstallCopilotContextModeHookSafe(); err != nil {
-			return err
-		}
-		if err := agents.InstallCopilotIdeContextModeHookSafe(); err != nil {
-			return err
-		}
+		agents.MigrateCopilotContextModeHooks()
 		if !WriteOwner("copilot", "context-mode") && !HasOwner("copilot", "context-mode") {
 			return fmt.Errorf("failed to write Copilot context-mode owner")
 		}
@@ -775,52 +767,20 @@ func ctxVerifyCodex() bool {
 	return true
 }
 
-func ctxVerifyOpenCode() bool {
-	op := util.OpenCodePathsResolved()
-	raw, ok := util.ReadFileSafe(op.Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if pv, ok := cfg.Get("plugin"); ok {
-		if arr, ok := pv.([]any); ok {
-			for _, p := range arr {
-				if s, ok := p.(string); ok && pluginIsContextMode(s) {
-					return false
-				}
-			}
+// ctxVerifyOpenCodeShape: a pinned plugin spec exists and no tokless MCP entry duplicates it.
+func ctxVerifyOpenCodeShape(v2 bool) bool {
+	pinned := false
+	for _, s := range agents.OpenCodePluginSpecs(v2, ctxPluginPkg) {
+		if strings.HasPrefix(s, ctxPluginPkg+"@") && len(s) > len(ctxPluginPkg)+1 {
+			pinned = true
 		}
 	}
-	spawn := util.PickMcpSpawn("context-mode")
-	command := append([]string{spawn.Command}, spawn.Args...)
-	return agents.OpenCodeMcpMatches(cfg, "context-mode", command)
+	return pinned && !agents.OpenCodeToklessMcpHas(v2, ctxPluginPkg)
 }
 
-func ctxVerifyOpenCodeV2() bool {
-	raw, ok := util.ReadFileSafe(util.OpenCodePathsV2().Config)
-	if !ok {
-		return false
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		return false
-	}
-	if pv, ok := cfg.Get("plugin"); ok {
-		if arr, ok := pv.([]any); ok {
-			for _, p := range arr {
-				if s, ok := p.(string); ok && pluginIsContextMode(s) {
-					return false
-				}
-			}
-		}
-	}
-	spawn := util.PickMcpSpawn("context-mode")
-	command := append([]string{spawn.Command}, spawn.Args...)
-	return agents.OpenCodeMcpMatches(cfg, "context-mode", command)
-}
+func ctxVerifyOpenCode() bool { return ctxVerifyOpenCodeShape(false) }
+
+func ctxVerifyOpenCodeV2() bool { return ctxVerifyOpenCodeShape(true) }
 
 func codexHookDirs(activeCodexDir string) []string {
 	dirs := []string{activeCodexDir}
@@ -851,15 +811,14 @@ func hasCodexHookEntry(hooks *util.OrderedMap, event, _ string) bool {
 }
 
 var contextMode = &core.ToolManifest{
-	ID:           "context-mode",
-	Label:        "Context-Mode",
-	Description:  "Routes long context off-thread to a sandbox, keeping the agent's window small.",
-	Homepage:     "https://github.com/mksglu/context-mode",
-	InstallHint:  "npm i -g context-mode",
-	Channel:      core.ChannelNpm,
-	MinNodeMajor: contextModeMinNode,
-	Install:      ctxEnsureInstalled,
-	WireFor: map[string]core.AgentFn{
+	ID:          "context-mode",
+	Label:       "Context-Mode",
+	Description: "Routes long context off-thread to a sandbox, keeping the agent's window small.",
+	Homepage:    "https://github.com/mksglu/context-mode",
+	InstallHint: "npm i -g context-mode",
+	Channel:     core.ChannelNpm,
+	Install:     ctxEnsureInstalled,
+	WireFor: ctxGateCLI(map[string]core.AgentFn{
 		"claude":    ctxWireClaude,
 		"opencode":  ctxWireOpenCode,
 		"opencode2": ctxWireOpenCodeV2,
@@ -903,7 +862,7 @@ var contextMode = &core.ToolManifest{
 		"kilo":  ctxWireKilo,
 		"cline": ctxWireCline,
 		"amp":   ctxWireHarness("amp"), "kimi": ctxWireHarness("kimi"), "cmd": ctxWireHarness("cmd"), "dsh": ctxWireHarness("dsh"), "zcode": ctxWireHarness("zcode"),
-	},
+	}),
 	UnwireFor: map[string]core.AgentFn{
 		"claude":    ctxUnwireClaude,
 		"opencode":  ctxUnwireOpenCode,
@@ -957,12 +916,12 @@ var contextMode = &core.ToolManifest{
 		"pi":    func() *bool { return core.BoolPtr(ctxVerifyPi()) },
 		"omp":   func() *bool { return core.BoolPtr(agents.OmpMcpHas("context-mode") && HasOwner("omp", "context-mode")) },
 		"kilo": func() *bool {
-			spawn := util.PickMcpSpawn("context-mode")
+			spawn := util.ContextModeSpawnFor("kilo")
 			expected := append([]string{spawn.Command}, spawn.Args...)
 			return core.BoolPtr(agents.KiloMcpMatches("context-mode", expected) && kiloHasOwner("context-mode"))
 		},
 		"cline": func() *bool {
-			spawn := util.PickMcpSpawn("context-mode")
+			spawn := util.ContextModeSpawnFor("cline")
 			expected := append([]string{spawn.Command}, spawn.Args...)
 			return core.BoolPtr(agents.ClineMcpMatches("context-mode", expected) && HasOwner("cline", "context-mode"))
 		},

@@ -58,8 +58,10 @@ func runMcpProxyIOAfterStart(agent, path string, argv, env []string, input io.Re
 	return waitExit(cmd)
 }
 
+// contextModeTools is the union allowlist across versions.
 var contextModeTools = []string{
 	"ctx_batch_execute",
+	"ctx_batch",
 	"ctx_execute",
 	"ctx_execute_file",
 	"ctx_index",
@@ -126,9 +128,25 @@ func runBoundedMcpProxy(cmd *exec.Cmd, input io.Reader, output io.Writer, allowe
 }
 
 type mcpRequestIDs struct {
-	mu      sync.RWMutex
-	initIDs map[string]bool
+	mu       sync.RWMutex
+	initIDs  map[string]bool
+	degraded bool
 }
+
+func (ids *mcpRequestIDs) setDegraded() {
+	ids.mu.Lock()
+	ids.degraded = true
+	ids.mu.Unlock()
+}
+
+func (ids *mcpRequestIDs) isDegraded() bool {
+	ids.mu.RLock()
+	defer ids.mu.RUnlock()
+	return ids.degraded
+}
+
+// contextModeDoctorTool is the only tool context-mode exposes on a too-old Node.
+const contextModeDoctorTool = "ctx_doctor"
 
 type mcpLockedWriter struct {
 	mu     sync.Mutex
@@ -198,7 +216,8 @@ func scanMcpInput(input io.Reader, upstream, output io.Writer, listIDs *mcpReque
 				listIDs.mu.Unlock()
 			}
 		}
-		if request.Method == "tools/call" && !isAllowedMcpTool(request.Params.Name, allowed) {
+		if request.Method == "tools/call" && !isAllowedMcpTool(request.Params.Name, allowed) &&
+			!(request.Params.Name == contextModeDoctorTool && listIDs.isDegraded()) {
 			if _, ok := canonicalMCPID(request.ID); ok {
 				if err := writeMCPMessage(output, framing, mcpToolDeniedResponse(request.ID, request.Params.Name)); err != nil {
 					return err
@@ -236,7 +255,11 @@ func scanMcpOutput(upstream io.Reader, output io.Writer, listIDs *mcpRequestIDs,
 			continue
 		}
 		if filterMcpTools(line) {
-			line = filterMcpToolsResponse(line, allowed)
+			var degraded bool
+			line, degraded = filterMcpToolsResponseDegraded(line, allowed)
+			if degraded {
+				listIDs.setDegraded()
+			}
 		}
 		if instructions != nil {
 			if id, ok := canonicalMCPID(mcpResponseID(line)); ok && mcpInitIDMatches(listIDs, id) {
@@ -489,17 +512,23 @@ func writeMCPMessageUnlocked(writer io.Writer, framing mcpFraming, message []byt
 }
 
 func filterMcpToolsResponse(line []byte, allowedTools []string) []byte {
+	out, _ := filterMcpToolsResponseDegraded(line, allowedTools)
+	return out
+}
+
+// filterMcpToolsResponseDegraded also reports whether only ctx_doctor survived.
+func filterMcpToolsResponseDegraded(line []byte, allowedTools []string) ([]byte, bool) {
 	var response map[string]json.RawMessage
 	if json.Unmarshal(line, &response) != nil {
-		return line
+		return line, false
 	}
 	var result map[string]json.RawMessage
 	if json.Unmarshal(response["result"], &result) != nil {
-		return line
+		return line, false
 	}
 	var tools []json.RawMessage
 	if json.Unmarshal(result["tools"], &tools) != nil {
-		return line
+		return line, false
 	}
 	byName := make(map[string]json.RawMessage, len(tools))
 	for _, tool := range tools {
@@ -510,13 +539,30 @@ func filterMcpToolsResponse(line []byte, allowedTools []string) []byte {
 			byName[item.Name] = tool
 		}
 	}
-	allowedSet := make(map[string]bool, len(allowedTools))
-	for _, name := range allowedTools {
-		allowedSet[name] = true
+	keep := allowedTools
+	degraded := false
+	if _, hasDoctor := byName[contextModeDoctorTool]; hasDoctor && isContextModeAllowlist(allowedTools) {
+		degraded = true
+		for _, name := range allowedTools {
+			if _, ok := byName[name]; ok {
+				degraded = false
+				break
+			}
+		}
+		if degraded {
+			keep = []string{contextModeDoctorTool}
+		}
+	}
+	// Allowlisted names absent upstream stay hidden so text references are scrubbed.
+	allowedSet := make(map[string]bool, len(keep))
+	for _, name := range keep {
+		if _, ok := byName[name]; ok {
+			allowedSet[name] = true
+		}
 	}
 	hidden := buildHiddenToolNames(byName, allowedSet, staticToolUniverse(allowedTools))
-	filtered := make([]json.RawMessage, 0, len(allowedTools))
-	for _, name := range allowedTools {
+	filtered := make([]json.RawMessage, 0, len(keep))
+	for _, name := range keep {
 		if tool, ok := byName[name]; ok {
 			if len(hidden) > 0 {
 				tool = scrubHiddenToolNames(tool, name, hidden)
@@ -528,9 +574,13 @@ func filterMcpToolsResponse(line []byte, allowedTools []string) []byte {
 	response["result"], _ = json.Marshal(result)
 	filteredResponse, err := json.Marshal(response)
 	if err != nil {
-		return line
+		return line, false
 	}
-	return filteredResponse
+	return filteredResponse, degraded
+}
+
+func isContextModeAllowlist(allowed []string) bool {
+	return len(allowed) == len(contextModeTools) && stringSubset(allowed, contextModeTools)
 }
 
 // staticToolUniverses lists the full known upstream tool names for each bounded
@@ -547,9 +597,9 @@ var staticToolUniverses = []struct {
 		"search_events",
 	}},
 	{"context-mode", []string{
-		"ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_search",
+		"ctx_execute", "ctx_execute_file", "ctx_batch_execute", "ctx_batch", "ctx_search",
 		"ctx_index", "ctx_fetch_and_index", "ctx_stats", "ctx_doctor",
-		"ctx_upgrade", "ctx_insight", "ctx_purge",
+		"ctx_upgrade", "ctx_insight", "ctx_purge", "ctx_resume",
 	}},
 }
 

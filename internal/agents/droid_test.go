@@ -115,6 +115,26 @@ func TestRemoveDroidMcp(t *testing.T) {
 	}
 }
 
+// An entry with older (1.x) enabledTools is still tokless-owned and removable.
+func TestRemoveDroidMcp_OldEnabledTools(t *testing.T) {
+	setTestHome(t)
+	spawn := util.McpSpawnForAgent("droid", "context-mode")
+	cfg := util.NewOrderedMap()
+	entry := util.NewOrderedMap()
+	entry.Set("command", spawn.Command)
+	entry.Set("args", util.StripContextModeFlags(spawn.Args))
+	entry.Set("enabledTools", []string{"ctx_search"})
+	servers := util.NewOrderedMap()
+	servers.Set("context-mode", entry)
+	cfg.Set("mcpServers", servers)
+	if err := util.WriteFile(droidMcpFile(), util.StringifyJSON(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	if !RemoveDroidMcp("context-mode") {
+		t.Fatal("old-shape entry with 1.x enabledTools must be removable")
+	}
+}
+
 func TestRemoveDroidMcp_NotFound(t *testing.T) {
 	setTestHome(t)
 	if RemoveDroidMcp("codegraph") {

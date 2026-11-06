@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -78,7 +79,7 @@ func downloadToTemp(url string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", &os.PathError{Op: "download", Path: url, Err: os.ErrNotExist}
 	}
-	f, err := os.CreateTemp("", "tokless-node-*.zip")
+	f, err := os.CreateTemp("", "tokless-dl-*"+path.Ext(url))
 	if err != nil {
 		return "", err
 	}

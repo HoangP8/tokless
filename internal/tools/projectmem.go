@@ -1222,7 +1222,7 @@ func claudeMcpBounded(toolID string) bool {
 			if !has || !isMap {
 				return false
 			}
-			spawn := util.McpSpawnFor(toolID)
+			spawn := util.McpSpawnForAgent("claude", toolID)
 			cmd, _ := em.Get("command")
 			args, _ := em.Get("args")
 			return cmd == spawn.Command && mcpStrArrEq(args, spawn.Args)

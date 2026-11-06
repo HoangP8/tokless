@@ -30,9 +30,15 @@ func TestAgentInstructionsContent(t *testing.T) {
 		}
 	}
 
+	for _, forbidden := range []string{"ctx_execute_file", "ctx_batch_execute", "ctx_fetch_and_index", "ctx_insight"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("instructions contain removed context-mode 1.x tool: %s", forbidden)
+		}
+	}
+
 	for _, kw := range []string{
 		"Drop articles", "terse", "YAGNI", "codegraph_explore",
-		"ctx_execute", "Think Before Coding", "Simplicity First",
+		"ctx_execute", "ctx_batch", "Think Before Coding", "Simplicity First",
 		"Surgical Changes", "Goal-Driven Execution",
 	} {
 		if !strings.Contains(body, kw) {

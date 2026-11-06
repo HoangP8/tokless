@@ -872,7 +872,7 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.McpSpawnFor(toolID)
+		spawn = util.McpSpawnForAgent("antigravity", toolID)
 	}
 	allConfigured := true
 	for _, f := range antigravityMcpConfigFiles() {
@@ -902,11 +902,13 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		}
 		entry.Set("trust", true)
 		if existing, ok := servers.Get(toolID); ok {
-			if !jsonEqual(existing, entry) {
+			if jsonEqual(existing, entry) {
+				continue
+			}
+			if !antigravityMcpManaged(toolID, existing) {
 				allConfigured = false
 				continue
 			}
-			continue
 		}
 		servers.Set(toolID, entry)
 		if next := util.StringifyJSON(cfg); next != raw {
@@ -952,7 +954,7 @@ func AntigravityMcpBounded(toolID string) bool {
 			return false
 		}
 		existing, found := sm.Get(toolID)
-		if !found || !antigravityMcpManaged(toolID, existing) {
+		if !found || !antigravityMcpMatches(toolID, existing, false) {
 			return false
 		}
 	}
@@ -1211,7 +1213,12 @@ func removeAntigravityMcpFromFiles(toolID string, files []string) {
 	}
 }
 
+// antigravityMcpManaged accepts the current entry and, for context-mode, the pre-host-flag shape.
 func antigravityMcpManaged(toolID string, existing any) bool {
+	return antigravityMcpMatches(toolID, existing, true)
+}
+
+func antigravityMcpMatches(toolID string, existing any, legacyOK bool) bool {
 	em, ok := existing.(*util.OrderedMap)
 	if !ok {
 		return false
@@ -1219,11 +1226,14 @@ func antigravityMcpManaged(toolID string, existing any) bool {
 	command, _ := em.Get("command")
 	args, _ := em.Get("args")
 	trust, _ := em.Get("trust")
-	spawn := util.McpSpawnFor(toolID)
+	spawn := util.McpSpawnForAgent("antigravity", toolID)
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	}
-	return command == spawn.Command && argsEq(args, spawn.Args) && trust == true
+	if command != spawn.Command || trust != true {
+		return false
+	}
+	return argsEq(args, spawn.Args) || legacyOK && toolID == "context-mode" && argsEq(args, util.StripContextModeFlags(spawn.Args))
 }
 
 // --- projectmem SessionStart hook ---
