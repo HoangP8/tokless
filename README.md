@@ -99,26 +99,24 @@ https://raw.githubusercontent.com/HoangP8/tokless/main/docs/installation.md
 | [rtk](https://github.com/rtk-ai/rtk) | ![](https://img.shields.io/github/stars/rtk-ai/rtk?style=flat-square&label=) | Rewrites and compresses command output before it reaches the harness. |
 | [headroom](https://github.com/headroomlabs-ai/headroom) | ![](https://img.shields.io/github/stars/headroomlabs-ai/headroom?style=flat-square&label=) | Local HTTP proxy that compresses large prompts and routes BYOK model traffic. |
 | [codegraph](https://github.com/colbymchenry/codegraph) | ![](https://img.shields.io/github/stars/colbymchenry/codegraph?style=flat-square&label=) | Indexed code graph for source, call paths, and impact. |
-| [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | Sandboxed context tools with session memory and focused analysis. |
+| [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | Sandboxed code execution and indexed search; keeps large output out of context. |
 | [projectmem](https://github.com/riponcm/projectmem) | ![](https://img.shields.io/github/stars/riponcm/projectmem?style=flat-square&label=) | Per-project memory: issues, attempts, fixes, decisions, auto-captured from git. |
 
 ### MCP tools
 
 Three tools run as MCP servers. Headroom and rtk wire through their own mechanisms (proxy, hooks, plugins) — no MCP needed.
 
-Upstream those three expose **29 tools**. Tokless spawns each server through a bounded proxy that filters its tool list, so **12 land in your context — 17 are trimmed automatically**, at install, nothing to configure.
+Upstream those three expose **27 tools**. Tokless spawns each server through a bounded proxy that filters its tool list, so **10 land in your context — 17 are trimmed automatically**, at install, nothing to configure.
 
 ```text
 MCP Tools
 ├── CodeGraph · 1/1
 │   └── codegraph_explore
-├── Context Mode · 6/11
+├── Context Mode · 4/9
 │   ├── ctx_execute
-│   ├── ctx_batch_execute
-│   ├── ctx_execute_file
+│   ├── ctx_batch
 │   ├── ctx_index
-│   ├── ctx_search
-│   └── ctx_fetch_and_index
+│   └── ctx_search
 └── ProjectMem · 5/17
     ├── log_issue
     ├── record_attempt
@@ -132,8 +130,10 @@ MCP Tools
 | Server | Upstream | Kept | Trimmed | Why |
 | :--- | :---: | :--- | :--- | :--- |
 | CodeGraph | 1 | ✅ 1 | — | one tool, nothing to cut |
-| Context Mode | 11 | ✅ 6 | ❌ `ctx_stats` · `ctx_doctor` · `ctx_upgrade` · `ctx_insight` · `ctx_purge` | diagnostics and package maintenance — not part of a coding turn |
+| Context Mode | 9 | ✅ 4 | ❌ `ctx_resume` · `ctx_stats` · `ctx_doctor` · `ctx_upgrade` · `ctx_purge` | session resume, diagnostics, and package maintenance — not part of a coding turn |
 | ProjectMem | 17 | ✅ 5 | ❌ `current_project` · `get_context` · `get_global_gotchas` · `get_instructions` · `get_issue` · `get_plan` · `get_project_map` · `get_score` · `get_summary` · `list_projects` · `precheck_file` · `search_events` | its reads arrive before the first prompt |
+
+**Context Mode wiring.** Always the latest 2.x. OpenCode loads it as a config plugin (no MCP entry) and hides the admin tools via permission deny. Other agents use the MCP proxy, which exposes 4 tools: `ctx_execute`, `ctx_batch`, `ctx_index`, `ctx_search`. 1.x users must run `tokless update`.
 
 **ProjectMem is the case that matters.** Its 12 read tools (`get_summary`, `get_plan`, …) are replaced by a memory block pushed at session start — hook, plugin/extension, or rule file depending on the harness. Nothing to call: only the 5 writers stay on the list. `tokless doctor` reports the exposed set.
 
@@ -176,7 +176,7 @@ Wiring is the product: after install, everything runs on its own — no runtime 
 | rtk | hook · plugin · extension · cordis patch | every Bash command — rewrite + compress output |
 | headroom | local HTTP proxy + route in config | every model API call — compress prompts, route BYOK + OAuth |
 | codegraph | MCP server (`codegraph_explore`) | on demand; index builds at first connect |
-| context-mode | MCP server (`ctx_*`) | on demand — large files / logs stay out of context |
+| context-mode | OpenCode plugin · MCP proxy elsewhere (`ctx_*`) | on demand — large files / logs stay out of context |
 | projectmem | MCP server + context injection | ~2000-token memory block at session start |
 
 ```text
@@ -215,7 +215,7 @@ Without tokless, the harness re-reads the raw tree every session, Bash output la
   </thead>
   <tbody>
     <tr><td nowrap><b>Claude Code</b></td><td align="center">Instruction</td><td align="center">Hook</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">anthropic-native</td><td align="center">MCP + Hook</td></tr>
-    <tr><td nowrap><b>OpenCode</b></td><td align="center">Instruction</td><td align="center">Plugin</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP + Plugin</td></tr>
+    <tr><td nowrap><b>OpenCode</b></td><td align="center">Instruction</td><td align="center">Plugin</td><td align="center">MCP</td><td align="center">Plugin</td><td align="center">openai-compatible</td><td align="center">MCP + Plugin</td></tr>
     <tr><td nowrap><b>Codex</b></td><td align="center">Instruction</td><td align="center">Hook</td><td align="center">MCP</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP + Hook</td></tr>
     <tr><td nowrap><b>Antigravity</b></td><td align="center">Instruction</td><td align="center">Hook</td><td align="center">MCP + Hook</td><td align="center">MCP</td><td align="center">gemini-native</td><td align="center">MCP + Hook</td></tr>
     <tr><td nowrap><b>GitHub Copilot</b></td><td align="center">Instruction</td><td align="center">Hook</td><td align="center">MCP + Hook</td><td align="center">MCP</td><td align="center">openai-compatible</td><td align="center">MCP + Hook</td></tr>

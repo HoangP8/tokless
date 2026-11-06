@@ -24,7 +24,7 @@ func ConfigureCodexMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("codex", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.McpSpawnFor(toolID)
+		spawn = util.McpSpawnForAgent("codex", toolID)
 	}
 	section := "mcp_servers." + toolID
 	if toolID == "context-mode" {

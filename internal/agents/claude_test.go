@@ -47,6 +47,7 @@ func TestAllowClaudeMcpToolProjectLocalPreservesAndAppends(t *testing.T) {
 		"mcp__context-mode__ctx_execute",
 		"mcp__context-mode__ctx_execute_file",
 		"mcp__context-mode__ctx_batch_execute",
+		"mcp__context-mode__ctx_batch",
 		"mcp__context-mode__ctx_index",
 		"mcp__context-mode__ctx_fetch_and_index",
 		"mcp__codegraph__.*",

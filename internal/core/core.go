@@ -2,10 +2,11 @@ package core
 
 // RunOpts carries per-call flags through install/wire/unwire.
 type RunOpts struct {
-	DryRun  bool
-	Upgrade bool
-	Agent   string
-	Report  func(phase string, frac float64)
+	DryRun           bool
+	Upgrade          bool
+	Agent            string
+	AllowNodeInstall bool
+	Report           func(phase string, frac float64)
 }
 
 func (o RunOpts) Reportf(phase string, frac float64) {

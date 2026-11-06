@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,16 +125,21 @@ func npmLatest(pkg string) *string {
 	return strp(data.DistTags.Latest)
 }
 
-// npmViewLatest resolves a package's latest version via the npm CLI (nil if npm
-// is absent, times out, or errors). Uses --json to avoid notifier/stderr noise.
 func npmViewLatest(pkg string) *string {
+	if m := reSemver.FindStringSubmatch(npmViewField(pkg+"@latest", "version")); m != nil {
+		return strp(m[1])
+	}
+	return nil
+}
+
+func npmViewFields(spec string, fields ...string) map[string]string {
 	npmBin := ResolveNpmBinary()
 	if npmBin == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	c := exec.CommandContext(ctx, npmBin, "info", pkg+"@latest", "version", "--json")
+	c := exec.CommandContext(ctx, npmBin, append([]string{"info", spec}, append(fields, "--json")...)...)
 	c.Env = append(os.Environ(), "NPM_CONFIG_PREFER_OFFLINE=false", "NPM_CONFIG_PREFER_ONLINE=true")
 	var out bytes.Buffer
 	c.Stdout = &out
@@ -141,13 +147,22 @@ func npmViewLatest(pkg string) *string {
 	if err := c.Run(); err != nil {
 		return nil
 	}
-	s := strings.TrimSpace(out.String())
-	s = strings.Trim(s, "\"") // --json wraps a bare version string in quotes
-	if m := reSemver.FindStringSubmatch(s); m != nil {
-		return strp(m[1])
+	res := map[string]string{}
+	raw := bytes.TrimSpace(out.Bytes())
+	var obj map[string]any
+	if json.Unmarshal(raw, &obj) == nil {
+		for k, v := range obj {
+			if s, ok := v.(string); ok {
+				res[k] = s
+			}
+		}
+	} else if len(fields) == 1 {
+		res[fields[0]] = strings.Trim(string(raw), "\"")
 	}
-	return nil
+	return res
 }
+
+func npmViewField(spec, field string) string { return npmViewFields(spec, field)[field] }
 
 func githubLatestRelease(repo string) *string {
 	var data struct {
@@ -262,9 +277,14 @@ func GatherVersions() map[string]VersionInfo { return gatherVersions(false) }
 
 func GatherVersionsForce() map[string]VersionInfo { return gatherVersions(true) }
 
-func gatherVersions(force bool) map[string]VersionInfo {
+func GatherVersionsForceFor(ids []string) map[string]VersionInfo { return gatherVersions(true, ids...) }
+
+var versionChannels = map[string]string{"rtk": "github", "codegraph": "npm", "context-mode": "npm", "tokless": "npm", "headroom": "uv", "projectmem": "uv"}
+
+// gatherVersions probes ids (all tools when empty).
+func gatherVersions(force bool, ids ...string) map[string]VersionInfo {
 	if os.Getenv("TOKLESS_TEST") == "1" {
-		return map[string]VersionInfo{
+		all := map[string]VersionInfo{
 			"rtk":          {Installed: strp("0.43.0"), Latest: strp("0.43.0"), Channel: "github", Present: false},
 			"codegraph":    {Installed: nil, Latest: strp("1.1.6"), Channel: "npm", Present: false},
 			"context-mode": {Installed: nil, Latest: strp("1.0.169"), Channel: "npm", Present: false},
@@ -272,16 +292,38 @@ func gatherVersions(force bool) map[string]VersionInfo {
 		"tokless":      {Installed: strp("0.1.0"), Latest: strp("0.1.0"), Channel: "npm", Present: false},
 		"projectmem":   {Installed: strp("0.3.4"), Latest: strp("0.3.4"), Channel: "uv", Present: false},
 		}
+		if len(ids) == 0 {
+			return all
+		}
+		out := map[string]VersionInfo{}
+		for id, v := range all {
+			if slices.Contains(ids, id) {
+				out[id] = v
+			}
+		}
+		return out
+	}
+	if len(ids) == 0 {
+		ids = toolIDs
 	}
 	// Latest (slow, network) is cached; installed (fast, local) is always live.
-	latest := cachedLatest(force)
+	latest := cachedLatestFor(force, ids)
 	out := map[string]VersionInfo{}
-	out["rtk"] = VersionInfo{Installed: rtkInstalledVersion(), Latest: latest["rtk"], Channel: "github", Present: rtkInstalledVersion() != nil}
-	out["codegraph"] = VersionInfo{Installed: npmInstalledVersion("@colbymchenry/codegraph"), Latest: latest["codegraph"], Channel: "npm", Present: npmInstalledVersion("@colbymchenry/codegraph") != nil}
-	out["context-mode"] = VersionInfo{Installed: npmInstalledVersion("context-mode"), Latest: latest["context-mode"], Channel: "npm", Present: npmInstalledVersion("context-mode") != nil}
-	out["headroom"] = VersionInfo{Installed: HeadroomInstalledVersion(), Latest: latest["headroom"], Channel: "uv", Present: HeadroomInstalled()}
-	out["projectmem"] = VersionInfo{Installed: ProjectmemInstalledVersion(), Latest: latest["projectmem"], Channel: "uv", Present: ProjectmemInstalled()}
-	out["tokless"] = VersionInfo{Installed: npmInstalledVersion("tokless"), Latest: latest["tokless"], Channel: "npm", Present: npmInstalledVersion("tokless") != nil}
+	for _, id := range ids {
+		ch, ok := versionChannels[id]
+		if !ok {
+			continue
+		}
+		installed := InstalledVersionFor(id)
+		present := installed != nil
+		switch id {
+		case "headroom":
+			present = HeadroomInstalled()
+		case "projectmem":
+			present = ProjectmemInstalled()
+		}
+		out[id] = VersionInfo{Installed: installed, Latest: latest[id], Channel: ch, Present: present}
+	}
 	return out
 }
 
@@ -390,8 +432,11 @@ func fetchLatestFor(id string) *string {
 		return githubLatestRelease("rtk-ai/rtk")
 	case "codegraph":
 		return npmLatest("@colbymchenry/codegraph")
-	case "context-mode":
-		return npmLatest("context-mode")
+	case "context-mode": // capped at the supported major
+		if v, err := ContextModeLatestVersion(); err == nil {
+			return &v
+		}
+		return nil
 	case "tokless":
 		return npmLatest("tokless")
 	case "headroom":
@@ -403,7 +448,9 @@ func fetchLatestFor(id string) *string {
 }
 
 // cachedLatest returns the latest-version lookups, cached to disk (6h TTL).
-func cachedLatest(force bool) map[string]*string {
+func cachedLatest(force bool) map[string]*string { return cachedLatestFor(force, toolIDs) }
+
+func cachedLatestFor(force bool, ids []string) map[string]*string {
 	if os.Getenv("TOKLESS_TEST") == "1" {
 		m := map[string]*string{}
 		for k, v := range GatherVersions() {
@@ -425,7 +472,7 @@ func cachedLatest(force bool) map[string]*string {
 	// Fetch needed ids in parallel; npm CLI spawn is heavy, so pay it once in
 	// wall-clock time rather than once per tool.
 	var todo []string
-	for _, id := range toolIDs {
+	for _, id := range ids {
 		if result[id] != nil && fresh && !force {
 			continue
 		}

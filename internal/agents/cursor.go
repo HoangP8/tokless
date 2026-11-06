@@ -18,7 +18,11 @@ func cursorMcpEntry(toolID string) *util.OrderedMap {
 }
 
 func cursorMcpEntryFor(toolID string, windowsBridge bool) *util.OrderedMap {
-	spawn := util.McpSpawnFor(toolID)
+	harness := "cursor"
+	if windowsBridge {
+		harness = "cursor-wsl" // no ${workspaceFolder} through wsl.exe; context-mode runs from spawn dir
+	}
+	spawn := util.McpSpawnForAgent(harness, toolID)
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("cursor", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 		spawn.Args = append([]string{"run-mcp", "--agent", "cursor", "--workspace", "${workspaceFolder}"}, spawn.Args[3:]...)
@@ -194,6 +198,38 @@ func cursorStaleToklessEntryMatches(v any, want *util.OrderedMap) bool {
 
 	return cursorIsToklessCommand(oldCommand) && cursorIsToklessCommand(wantCommand) &&
 		anyStringSliceEqual(aa, stringArgs(wantArgs))
+}
+
+// cursorPreHostFlagEntryMatches recognizes a context-mode entry written before
+// host flags existed: same shape as want minus the flags, tokless path may differ.
+func cursorPreHostFlagEntryMatches(v any, want *util.OrderedMap) bool {
+	a, ok := v.(*util.OrderedMap)
+	if !ok || !cursorEntryHasExactFields(a, want) {
+		return false
+	}
+	ac, _ := a.Get("command")
+	wc, _ := want.Get("command")
+	aa, _ := a.Get("args")
+	wa, _ := want.Get("args")
+	oldArgs, ok1 := aa.([]any)
+	wantArgs, ok2 := wa.([]any)
+	if !ok1 || !ok2 {
+		return false
+	}
+	o, w := stringArgs(oldArgs), stringArgs(wantArgs)
+	if wc == "wsl.exe" {
+		i := toklessArgIndex(wantArgs)
+		if ac != wc || i < 0 || len(o) <= i || !cursorIsToklessCommand(o[i]) || !stringSlicesEqual(o[:i], w[:i]) {
+			return false
+		}
+		return ctxArgsLegacy(o[i+1:], w[i+1:])
+	}
+	return cursorIsToklessCommand(ac) && cursorIsToklessCommand(wc) && ctxArgsLegacy(o, w)
+}
+
+func ctxArgsLegacy(old, want []string) bool {
+	stripped := util.StripContextModeFlags(want)
+	return len(stripped) != len(want) && stringSlicesEqual(old, stripped)
 }
 
 func cursorToklessCodegraphArgs(command string, args []any) bool {
@@ -372,7 +408,7 @@ func ConfigureCursorMcp(toolID string) (bool, string) {
 			return false, p
 		}
 		desired := cursorMcpEntryFor(toolID, target.bridge)
-		if existing, found := servers.Get(toolID); found && !cursorEntryMatches(existing, desired) && !cursorStaleToklessEntryMatches(existing, desired) && !cursorLegacyEntryMatches(existing, desired) {
+		if existing, found := servers.Get(toolID); found && !cursorEntryMatches(existing, desired) && !cursorStaleToklessEntryMatches(existing, desired) && !cursorLegacyEntryMatches(existing, desired) && !cursorPreHostFlagEntryMatches(existing, desired) {
 			return false, p
 		}
 		if existing, found := servers.Get(toolID); found && cursorEntryMatches(existing, desired) {
@@ -433,7 +469,8 @@ func RemoveCursorMcp(toolID string) bool {
 		if !ok {
 			continue
 		}
-		if !cursorEntryMatches(v, cursorMcpEntryFor(toolID, target.bridge)) {
+		want := cursorMcpEntryFor(toolID, target.bridge)
+		if !cursorEntryMatches(v, want) && !cursorPreHostFlagEntryMatches(v, want) {
 			return false
 		}
 		servers.Delete(toolID)
@@ -466,7 +503,12 @@ func cursorMcpMapRead(cfg *util.OrderedMap) (*util.OrderedMap, bool) {
 	return m, ok && mok
 }
 
-func CursorMcpHas(toolID string) bool {
+func CursorMcpHas(toolID string) bool { return cursorMcpHas(toolID, false) }
+
+// CursorMcpHasAny also accepts an entry written before host flags existed.
+func CursorMcpHasAny(toolID string) bool { return cursorMcpHas(toolID, true) }
+
+func cursorMcpHas(toolID string, anyShape bool) bool {
 	for _, target := range cursorMcpTargets() {
 		raw, ok := util.ReadFileSafe(target.path)
 		if !ok {
@@ -481,7 +523,8 @@ func CursorMcpHas(toolID string) bool {
 			return false
 		}
 		v, ok := servers.Get(toolID)
-		if !ok || !cursorEntryMatches(v, cursorMcpEntryFor(toolID, target.bridge)) {
+		want := cursorMcpEntryFor(toolID, target.bridge)
+		if !ok || !(cursorEntryMatches(v, want) || anyShape && cursorPreHostFlagEntryMatches(v, want)) {
 			return false
 		}
 	}

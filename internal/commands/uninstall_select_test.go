@@ -8,6 +8,7 @@ import (
 
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
+	toolsPkg "github.com/HoangP8/tokless/internal/tools"
 	"github.com/HoangP8/tokless/internal/util"
 )
 
@@ -189,20 +190,31 @@ func TestResyncWiring_RepinsContextModeVersion(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	defer util.SetHomeOverride("")
 
+	if util.IsWin {
+		t.Skip("fake shell CLI")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte("#!/bin/sh\necho 1.4.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	ocJSON := filepath.Join(ocDir, "opencode.json")
 	if err := os.WriteFile(ocJSON, []byte(`{"plugin":["context-mode@0.0.1"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	toolsPkg.WriteOwner("opencode", "context-mode")
 	resyncWiring([]*core.ToolManifest{ctxToolForTest(t)})
 
 	got := opencodePlugins(t, ocJSON)
-	if len(got) != 0 {
-		t.Fatalf("resync must remove context-mode plugin: got %v", got)
+	if len(got) != 1 || got[0] != "context-mode@1.0.169" {
+		b, _ := os.ReadFile(ocJSON)
+		t.Fatalf("resync must repin context-mode plugin: got %v file=%s", got, b)
 	}
 	raw, err := os.ReadFile(ocJSON)
-	if err != nil || !strings.Contains(string(raw), "\"context-mode\"") || !strings.Contains(string(raw), "--context-mode") {
-		t.Fatalf("resync must wire bounded context-mode MCP: %s", raw)
+	if err != nil || strings.Contains(string(raw), "--context-mode") {
+		t.Fatalf("resync must not wire a context-mode MCP entry for OpenCode: %s", raw)
 	}
 }
 

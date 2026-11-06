@@ -191,7 +191,8 @@ func ompMcpManaged(toolID string, existing any) bool {
 		return len(values) >= 6 && values[0] == "run-mcp" && values[1] == "--agent" && values[2] == "omp" && ompCodegraphTarget(values[3:])
 	}
 	if toolID == "context-mode" {
-		return len(values) >= 3 && values[0] == "run-mcp" && values[1] == "--context-mode" && ompContextModeTarget(values[2:])
+		_, target, ok := util.SplitContextModeArgs(values)
+		return ok && ompContextModeTarget(target)
 	}
 	return false
 }
@@ -302,7 +303,7 @@ func ompMcpEntry(toolID string) *util.OrderedMap {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("omp", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.McpSpawnFor(toolID)
+		spawn = util.McpSpawnForAgent("omp", toolID)
 	}
 	entry := util.NewOrderedMap()
 	entry.Set("type", "stdio")

@@ -100,7 +100,7 @@ func TestKiloContextAndCodegraphWireVerify(t *testing.T) {
 	if !strings.Contains(got, `"context-mode"`) || !strings.Contains(got, `"provider": "user"`) {
 		t.Fatalf("Kilo global MCP not written/preserved: %s", got)
 	}
-	spawn := util.PickMcpSpawn("context-mode")
+	spawn := util.ContextModeSpawnFor("kilo")
 	if !agents.KiloMcpMatches("context-mode", append([]string{spawn.Command}, spawn.Args...)) || !kiloHasOwner("context-mode") {
 		t.Fatal("context Kilo verify failed")
 	}

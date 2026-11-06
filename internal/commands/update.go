@@ -13,6 +13,8 @@ import (
 func updateToolFlow(id string, info util.VersionInfo, install func() (bool, bool, error)) (needsInstall, verified bool, err error) {
 	if id == "projectmem" || id == "headroom" {
 		needsInstall = !info.Present
+	} else if id == "context-mode" && !toolsPkg.CtxNeedsGlobalCLI() {
+		needsInstall = false
 	} else {
 		needsInstall = info.Installed == nil && info.Latest != nil
 	}
@@ -23,8 +25,34 @@ func updateToolFlow(id string, info util.VersionInfo, install func() (bool, bool
 	return needsInstall, false, nil
 }
 
+func updateScope(opts InitOptions) ([]*core.ToolManifest, error) {
+	all := core.ListTools()
+	if len(opts.Tools) == 0 {
+		return all, nil
+	}
+	var bad []string
+	for _, id := range opts.Tools {
+		if core.GetTool(id) == nil {
+			bad = append(bad, id)
+		}
+	}
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("Invalid value(s): %s. Allowed: %s", joinComma(bad), joinComma(core.ToolIDs()))
+	}
+	scope, _ := resolveToolSelection(opts, all)
+	return scope, nil
+}
+
 func RunUpdate(opts InitOptions) int {
-	MaybeSelfUpdate(opts)
+	scope, err := updateScope(opts)
+	if err != nil {
+		util.L.Err(err.Error())
+		return 2
+	}
+	scoped := len(opts.Tools) > 0
+	if !scoped {
+		MaybeSelfUpdate(opts)
+	}
 
 	cmdHeader("update", "refresh tools to latest")
 
@@ -39,7 +67,7 @@ func RunUpdate(opts InitOptions) int {
 	} else {
 		util.L.Raw(probingLine)
 	}
-	versions := util.GatherVersionsForce()
+	versions := util.GatherVersionsForceFor(opts.Tools)
 	if stdoutTTY() {
 		fmt.Print(util.EraseStyledLine(probingLine))
 	} else {
@@ -47,8 +75,9 @@ func RunUpdate(opts InitOptions) int {
 	}
 
 	var changed []string
+	ctxWiringStale := false // host id / permissions: rewrite config only, no reinstall
 	util.TreeTop("Versions")
-	for _, t := range core.ListTools() {
+	for _, t := range scope {
 		if t.InstructionOnly {
 			continue
 		}
@@ -68,10 +97,35 @@ func RunUpdate(opts InitOptions) int {
 			latest = paintVer(padEnd("v"+*info.Latest, 10))
 		}
 
+		// OpenCode pins a plugin: compare the pin, not the CLI.
+		pinStale, hideStale, migrateStale, pluginOnly := false, false, false, false
+		if t.ID == "context-mode" {
+			pluginOnly = !toolsPkg.CtxNeedsGlobalCLI()
+			ctxWiringStale = toolsPkg.CtxToolPermsStale() || toolsPkg.CtxSpawnStale()
+			hideStale = toolsPkg.CtxOpenCodeHideStale()
+			migrateStale = toolsPkg.CtxOpenCodeMigrateStale()
+			if lv, err := util.ContextModeLatestVersion(); err == nil {
+				pinStale = toolsPkg.CtxOpenCodePinStale(lv)
+				if pluginOnly {
+					latest = paintVer(padEnd("v"+lv, 10))
+				}
+			}
+			if pluginOnly {
+				installed = util.C.Dim(padEnd("plugin", 10))
+			}
+		}
+
 		mark := util.C.Gray(util.Sym.Bullet)
 		suffix := util.C.Dim(" (latest unknown)")
 
 		switch {
+		case pinStale || hideStale || migrateStale:
+			mark = util.C.Yellow("↑")
+			suffix = util.C.Yellow(" → " + openCodeResyncNote(pinStale, hideStale, migrateStale))
+			changed = append(changed, t.ID)
+		case pluginOnly:
+			mark = util.C.Green(util.Sym.Check)
+			suffix = util.C.Green(" (up to date)")
 		case has && info.Installed != nil && info.Latest != nil && util.SemverCompare(info.Installed, info.Latest) < 0:
 			mark = util.C.Yellow("↑")
 			latest = util.C.Bold(util.C.Green(padEnd("v"+*info.Latest, 10)))
@@ -110,17 +164,27 @@ func RunUpdate(opts InitOptions) int {
 		return 0
 	}
 
+	if ctxWiringStale {
+		if ctx := core.GetTool("context-mode"); ctx != nil {
+			for id, e := range resyncWiringOpts([]*core.ToolManifest{ctx}, core.RunOpts{}) {
+				util.L.Debug(id + " wiring refresh failed: " + firstLine(e.Error()))
+			}
+		}
+	}
+
 	if len(changed) == 0 {
 		toolsPkg.ConfigureInstructionConflicts(true)
-		resyncInstructionWiring()
+		resyncInstructionWiring(opts.Tools...)
 		toolsPkg.ConfigureInstructionConflicts(false)
-		agents.PiUpdatePackages()
+		if !scoped {
+			agents.PiUpdatePackages()
+		}
 		treeStatus(statusOK("Everything up to date."))
 		printRepoFooter(true)
 		util.L.Raw("")
 		return 0
 	}
-	if !opts.Yes && util.IsInteractive() {
+	if !scoped && !opts.Yes && util.IsInteractive() {
 		var pick []util.MultiSelectOption
 		for _, t := range core.ListTools() {
 			if !contains(changed, t.ID) {
@@ -150,6 +214,7 @@ func RunUpdate(opts InitOptions) int {
 		}
 	}
 
+	nodeOK := true
 	if !opts.DryRun {
 		needNode, needGit, minNode := false, false, 0
 		for _, t := range core.ListTools() {
@@ -161,7 +226,8 @@ func RunUpdate(opts InitOptions) int {
 				}
 			}
 		}
-		nodeOK, gitOK := util.EnsureDeps(needNode, needGit, minNode)
+		var gitOK bool
+		nodeOK, gitOK = util.EnsureDeps(needNode, needGit, minNode)
 		if !nodeOK || !gitOK {
 			var keep []string
 			for _, id := range changed {
@@ -193,6 +259,10 @@ func RunUpdate(opts InitOptions) int {
 			tools = append(tools, t)
 		}
 	}
+	allowNode := false
+	if !opts.DryRun {
+		allowNode = nodeInstallNotice(tools, true, nodeOK)
+	}
 	bar := util.NewSectionProgress("Upgrading " + joinComma(changed))
 	bar.Start(len(tools))
 	var failed, updated []string
@@ -203,7 +273,7 @@ func RunUpdate(opts InitOptions) int {
 		_, verified, err := updateToolFlow(tool.ID, versions[tool.ID], func() (bool, bool, error) {
 			var installErr error
 			installErr = util.WithSilencedLogs(func() error {
-				ok, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, Report: report})
+				ok, e := tool.Install(core.RunOpts{DryRun: opts.DryRun, Upgrade: true, AllowNodeInstall: allowNode, Report: report})
 				installed = ok
 				return e
 			})
@@ -236,10 +306,18 @@ func RunUpdate(opts InitOptions) int {
 	// Re-pin upgraded tools' per-agent config to the freshly installed version.
 	if !opts.DryRun {
 		toolsPkg.ConfigureInstructionConflicts(true)
-		resyncWiring(tools)
-		resyncInstructionWiring()
+		for id, e := range resyncWiringOpts(tools, core.RunOpts{Upgrade: true}) {
+			treeStatus(statusWarn(id + " re-pin failed: " + firstLine(e.Error())))
+			updated = removeString(updated, id)
+			if !contains(failed, id) {
+				failed = append(failed, id)
+			}
+		}
+		resyncInstructionWiring(opts.Tools...)
 		toolsPkg.ConfigureInstructionConflicts(false)
-		agents.PiUpdatePackages()
+		if !scoped {
+			agents.PiUpdatePackages()
+		}
 	}
 
 	// Upgrade mutated installed versions; drop cached latest so next read is fresh.
@@ -265,6 +343,11 @@ func RunUpdate(opts InitOptions) int {
 // resyncWiring re-runs WireFor for each upgraded tool only on agents where it is
 // already wired (gated by VerifyFor), syncing version pins without newly wiring.
 func resyncWiring(tools []*core.ToolManifest) {
+	resyncWiringOpts(tools, core.RunOpts{Upgrade: true})
+}
+
+func resyncWiringOpts(tools []*core.ToolManifest, ro core.RunOpts) map[string]error {
+	errs := map[string]error{}
 	agents := core.ListAgents()
 	for _, tool := range tools {
 		for _, agent := range agents {
@@ -282,20 +365,48 @@ func resyncWiring(tools []*core.ToolManifest) {
 				}
 			}
 			_ = util.WithSilencedLogs(func() error {
-				_, e := wire(core.RunOpts{Upgrade: true})
-				return e
+				_, e := wire(ro)
+				if e != nil && errs[tool.ID] == nil {
+					errs[tool.ID] = e
+				}
+				return nil
 			})
 		}
 	}
+	return errs
+}
+
+func removeString(ss []string, s string) []string {
+	out := ss[:0:0]
+	for _, v := range ss {
+		if v != s {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // resyncInstructionWiring refreshes already-wired static instructions on update.
-func resyncInstructionWiring() {
+func resyncInstructionWiring(ids ...string) {
 	var tools []*core.ToolManifest
 	for _, tool := range core.ListTools() {
-		if tool.InstructionOnly {
+		if tool.InstructionOnly && (len(ids) == 0 || contains(ids, tool.ID)) {
 			tools = append(tools, tool)
 		}
 	}
 	resyncWiring(tools)
+}
+
+func openCodeResyncNote(pin, hide, migrate bool) string {
+	switch {
+	case migrate:
+		return "migrate to plugin"
+	case pin && hide:
+		return "re-pin OpenCode plugin, hide ctx tools"
+	case pin:
+		return "re-pin OpenCode plugin"
+	case hide:
+		return "hide ctx tools"
+	}
+	return "add tool permissions"
 }

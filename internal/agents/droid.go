@@ -92,7 +92,7 @@ func ConfigureDroidMcp(toolID string) (changed bool, file string) {
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("droid", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.McpSpawnFor(toolID)
+		spawn = util.McpSpawnForAgent("droid", toolID)
 	}
 
 	f := droidMcpFile()
@@ -202,15 +202,15 @@ func RemoveDroidMcp(toolID string) bool {
 	if !ok {
 		return false
 	}
-	spawn := util.McpSpawnFor(toolID)
+	spawn := util.McpSpawnForAgent("droid", toolID)
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("droid", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	}
 	if em, ok := existing.(*util.OrderedMap); !ok || func() bool {
 		command, _ := em.Get("command")
 		args, _ := em.Get("args")
-		tools, _ := em.Get("enabledTools")
-		return command == spawn.Command && argsEq(args, spawn.Args) && enabledToolsEq(tools, droidEnabledTools[toolID])
+		// Old (pre-host-flag) args and older enabledTools lists are still tokless-owned.
+		return command == spawn.Command && (argsEq(args, spawn.Args) || argsEq(args, util.StripContextModeFlags(spawn.Args)))
 	}() == false {
 		return false
 	}
@@ -238,7 +238,7 @@ func DroidMcpBounded(toolID string) bool {
 	if !found || !isMap {
 		return false
 	}
-	spawn := util.McpSpawnFor(toolID)
+	spawn := util.McpSpawnForAgent("droid", toolID)
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("droid", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	}
@@ -272,10 +272,51 @@ func DroidMcpHas(toolID string) bool {
 	return false
 }
 
+// DroidEnabledToolsMissing: an absent enabledTools list is not stale.
+func DroidEnabledToolsMissing(toolID string) bool {
+	raw, ok := util.ReadFileSafe(droidMcpFile())
+	if !ok {
+		return false
+	}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return false
+	}
+	servers, ok := mapChild(cfg, "mcpServers")
+	if !ok {
+		return false
+	}
+	v, _ := servers.Get(toolID)
+	em, ok := v.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	et, ok := em.Get("enabledTools")
+	if !ok {
+		return false
+	}
+	arr, ok := et.([]any)
+	if !ok {
+		return false
+	}
+	have := map[string]bool{}
+	for _, x := range arr {
+		if s, ok := x.(string); ok {
+			have[s] = true
+		}
+	}
+	for _, name := range droidEnabledTools[toolID] {
+		if !have[name] {
+			return true
+		}
+	}
+	return false
+}
+
 // Known MCP tool names per server, used to pre-populate persistentPermissions.
 var ContextModeDroidToolNames = []string{
 	"ctx_search", "ctx_execute", "ctx_execute_file", "ctx_batch_execute",
-	"ctx_index", "ctx_fetch_and_index",
+	"ctx_batch", "ctx_index", "ctx_fetch_and_index",
 }
 
 var CodegraphDroidToolNames = []string{

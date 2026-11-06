@@ -412,7 +412,7 @@ func piMcpSpawn(toolID string) util.McpSpawn {
 	if toolID == "codegraph" {
 		return util.WrapAutoIndex("pi", util.PickMcpSpawn(toolID, "serve", "--mcp"))
 	}
-	return util.PickMcpSpawn(toolID)
+	return util.McpSpawnForAgent("pi", toolID)
 }
 
 // piMcpEntryMatches reports whether em is exactly the entry tokless writes.

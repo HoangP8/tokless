@@ -24,7 +24,7 @@ func openCodeMcpCommand(agentID, toolID string) []string {
 		spawn := util.WrapAutoIndex(agentID, util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 		return append([]string{spawn.Command}, spawn.Args...)
 	}
-	spawn := util.McpSpawnFor(toolID)
+	spawn := util.McpSpawnForAgent(agentID, toolID)
 	return append([]string{spawn.Command}, spawn.Args...)
 }
 

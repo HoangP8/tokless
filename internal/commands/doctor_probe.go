@@ -189,7 +189,7 @@ func unwrapRunMcp(command string, args []string) (string, []string) {
 	args = args[1:]
 	for len(args) > 0 {
 		switch args[0] {
-		case "--agent", "--workspace", "--tool":
+		case "--agent", "--workspace", "--tool", util.CtxAgentFlag:
 			if len(args) < 2 || args[1] == "" || strings.HasPrefix(args[1], "--") {
 				return command, args
 			}
@@ -563,7 +563,8 @@ func isManagedClineMcpSpawn(toolID string, spawn util.McpSpawn) bool {
 	}
 	switch toolID {
 	case "context-mode":
-		return len(spawn.Args) >= 3 && spawn.Args[1] == "--context-mode" && isClineMcpTarget(spawn.Args[2:], "context-mode")
+		_, target, ok := util.SplitContextModeArgs(spawn.Args)
+		return ok && isClineMcpTarget(target, "context-mode")
 	case "codegraph":
 		return len(spawn.Args) >= 4 && spawn.Args[1] == "--agent" && spawn.Args[2] == "cline" && isClineMcpTarget(spawn.Args[3:], "codegraph")
 	default:

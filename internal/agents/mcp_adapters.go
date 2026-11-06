@@ -13,7 +13,7 @@ import (
 )
 
 func McpCommand(agentID, toolID string) []string {
-	spawn := util.McpSpawnFor(toolID)
+	spawn := util.McpSpawnForAgent(agentID, toolID)
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex(agentID, util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	}
@@ -659,7 +659,7 @@ var cursorMcpAdapter = agentMcpAdapter{
 	},
 	has: func(req core.McpRequest) bool {
 		if req.AnyShape {
-			return CursorMcpHas(req.ToolID)
+			return CursorMcpHasAny(req.ToolID)
 		}
 		return CursorMcpHas(req.ToolID) && HasCursorMcpPermissions(req.ToolID)
 	},

@@ -61,39 +61,6 @@ func copilotIdeInstructionsFile() string {
 	return filepath.Join(ideRoot(), ".github", "copilot-instructions.md")
 }
 
-// InstallCopilotContextModeHook writes the context-mode hook file.
-func InstallCopilotContextModeHook() {
-	_ = InstallCopilotContextModeHookSafe()
-}
-
-func InstallCopilotContextModeHookSafe() error {
-	p := util.CopilotPathsResolved()
-	if err := util.EnsureDir(p.HooksDir); err != nil {
-		return err
-	}
-
-	events := []struct{ event, token string }{
-		{"preToolUse", "pretooluse"},
-		{"postToolUse", "posttooluse"},
-		{"sessionStart", "sessionstart"},
-		{"userPromptSubmitted", "userpromptsubmit"},
-		{"agentStop", "stop"},
-		{"preCompact", "precompact"},
-	}
-	hooks := util.NewOrderedMap()
-	for _, e := range events {
-		h := util.NewOrderedMap()
-		h.Set("type", "command")
-		h.Set("command", "context-mode hook copilot-cli "+e.token)
-		hooks.Set(e.event, []any{h})
-	}
-
-	root := util.NewOrderedMap()
-	root.Set("version", 1)
-	root.Set("hooks", hooks)
-	return writeOwnedCopilotHook(copilotHooksFile("context-mode.json"), util.StringifyJSON(root), "context-mode hook copilot-cli")
-}
-
 func RemoveCopilotContextModeHook() {
 	_ = RemoveCopilotContextModeHookSafe()
 }
@@ -108,31 +75,6 @@ func HasCopilotContextModeHook() bool {
 	return ok && cfg != nil && copilotHookOwned(cfg, "context-mode hook copilot-cli")
 }
 
-// InstallCopilotIdeContextModeHook writes IDE context-mode hooks (.github/hooks/).
-func InstallCopilotIdeContextModeHook() {
-	_ = InstallCopilotIdeContextModeHookSafe()
-}
-
-func InstallCopilotIdeContextModeHookSafe() error {
-	if err := util.EnsureDir(copilotIdeHooksDir()); err != nil {
-		return err
-	}
-	events := []string{"PreToolUse", "PostToolUse", "SessionStart", "Stop"}
-	tokens := []string{"pretooluse", "posttooluse", "sessionstart", "stop"}
-	hooks := util.NewOrderedMap()
-	for i, ev := range events {
-		h := util.NewOrderedMap()
-		h.Set("type", "command")
-		h.Set("command", "context-mode hook copilot-vscode "+tokens[i])
-		h.Set("timeout", 10)
-		hooks.Set(ev, []any{h})
-	}
-	root := util.NewOrderedMap()
-	root.Set("version", 1)
-	root.Set("hooks", hooks)
-	return writeOwnedCopilotHook(copilotIdeHooksFile("context-mode.json"), util.StringifyJSON(root), "context-mode hook copilot-vscode")
-}
-
 func RemoveCopilotIdeContextModeHook() {
 	_ = RemoveCopilotIdeContextModeHookSafe()
 }
@@ -145,6 +87,17 @@ func HasCopilotIdeContextModeHook() bool {
 	raw, ok := util.ReadFileSafe(copilotIdeHooksFile("context-mode.json"))
 	cfg := util.TryParseJsonc(raw)
 	return ok && cfg != nil && copilotHookOwned(cfg, "context-mode hook copilot-vscode")
+}
+
+// MigrateCopilotContextModeHooks removes tokless-written hooks; context-mode 2.x is MCP-only.
+func MigrateCopilotContextModeHooks() {
+	for _, h := range []struct{ path, marker string }{
+		{copilotHooksFile("context-mode.json"), "context-mode hook copilot-cli"},
+		{copilotHooksFile("context-mode-vscode.json"), "context-mode hook copilot-vscode"},
+		{copilotIdeHooksFile("context-mode.json"), "context-mode hook copilot-vscode"},
+	} {
+		_ = removeOwnedCopilotHook(h.path, h.marker)
+	}
 }
 
 func copilotRtkHookCommand() string {
@@ -837,12 +790,20 @@ func copilotMcpServers(cfg *util.OrderedMap, key, path string) (*util.OrderedMap
 	return servers, nil
 }
 
+// copilotHarness is the context-mode host id for the CLI or the VS Code surface.
+func copilotHarness(ide bool) string {
+	if ide {
+		return "copilot-ide"
+	}
+	return "copilot"
+}
+
 func copilotMcpDesired(toolID string, ide bool) *util.OrderedMap {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("copilot", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
-		spawn = util.McpSpawnFor(toolID)
+		spawn = util.McpSpawnForAgent(copilotHarness(ide), toolID)
 	}
 	desired := util.NewOrderedMap()
 	if ide {
@@ -868,8 +829,25 @@ func copilotMcpDesired(toolID string, ide bool) *util.OrderedMap {
 	return desired
 }
 
+// copilotManagedMcpEntry also accepts the context-mode entry written before host flags existed.
 func copilotManagedMcpEntry(v any, toolID string, ide bool) bool {
-	return copilotMcpEqual(v, copilotMcpDesired(toolID, ide))
+	desired := copilotMcpDesired(toolID, ide)
+	if copilotMcpEqual(v, desired) {
+		return true
+	}
+	args, _ := desired.Get("args")
+	list, _ := args.([]any)
+	legacy := util.StripContextModeFlags(stringArgs(list))
+	if toolID != "context-mode" || len(legacy) == len(list) {
+		return false
+	}
+	old := util.NewOrderedMap()
+	for _, k := range desired.Keys() {
+		val, _ := desired.Get(k)
+		old.Set(k, val)
+	}
+	old.Set("args", toAnySlice(legacy))
+	return copilotMcpEqual(v, old)
 }
 
 func copilotMcpEqual(existing any, desired *util.OrderedMap) bool {
