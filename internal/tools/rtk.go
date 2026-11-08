@@ -1299,7 +1299,7 @@ func claudeRtkHookCommand(exe string) string {
 }
 
 func claudeRtkHookManaged(command string) bool {
-	fields := strings.Fields(command)
+	fields := util.SplitCommand(strings.TrimSpace(command))
 	if len(fields) == 3 && fields[0] == "rtk" && fields[1] == "hook" && fields[2] == "claude" {
 		return true
 	}

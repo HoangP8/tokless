@@ -728,3 +728,144 @@ func TestPiUnwire(t *testing.T) {
 		t.Errorf("settings.json lost user theme after unwire, got:\n%s", settingsStr)
 	}
 }
+
+// rollbackSandbox sets up a fake home, claude/agy on PATH, seeded user configs, and a
+// tokless stand-in registered as the persisted exe.
+func rollbackSandbox(t *testing.T, exeBody string) (home, exe string, before map[string]string) {
+	t.Helper()
+	if util.IsWin {
+		t.Skip("uses a shell-script stand-in for the tokless executable")
+	}
+	t.Setenv("TOKLESS_TEST", "")
+	t.Setenv("TOKLESS_INSTALLER_RUN", "1")
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+
+	for _, name := range []string{"claude", "agy"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exeDir := filepath.Join(t.TempDir(), "john doe")
+	if err := os.MkdirAll(exeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe = filepath.Join(exeDir, "tokless")
+	if err := os.WriteFile(exe, []byte(exeBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.WriteInstallMarker("test", exe, "0.0.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	seed := map[string]string{
+		filepath.Join(home, ".claude", "settings.json"):        "{\n  \"theme\": \"dark\"\n}\n",
+		filepath.Join(home, ".claude.json"):                    "{\n  \"mcpServers\": {\n    \"user\": {\n      \"command\": \"user-mcp\"\n    }\n  }\n}\n",
+		filepath.Join(home, ".gemini", "config", "hooks.json"): "{\n  \"user\": {\n    \"keep\": true\n  }\n}\n",
+	}
+	before = map[string]string{}
+	for path, body := range seed {
+		if err := util.WriteFile(path, body); err != nil {
+			t.Fatal(err)
+		}
+		sum, err := getSHA256(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = sum
+	}
+	return home, exe, before
+}
+
+func assertConfigsUnchanged(t *testing.T, before map[string]string) {
+	t.Helper()
+	for path, want := range before {
+		got, err := getSHA256(path)
+		if err != nil || got != want {
+			b, _ := os.ReadFile(path)
+			t.Errorf("%s changed (err=%v): %q", path, err, b)
+		}
+	}
+}
+
+// homeFilesOutsideDataDir walks home, skipping tokless's own data dir.
+func homeFilesOutsideDataDir(t *testing.T, home string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	err := filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path == util.ToklessDataDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		files[path] = string(b)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+func TestInitRollsBackEveryAgentWhenBinaryDisappears(t *testing.T) {
+	home, exe, before := rollbackSandbox(t, "#!/bin/sh\nexit 0\n")
+
+	rtk := core.GetTool("rtk")
+	origInstall, origWire := rtk.Install, rtk.WireFor["antigravity"]
+	t.Cleanup(func() { rtk.Install, rtk.WireFor["antigravity"] = origInstall, origWire })
+	rtk.Install = func(core.RunOpts) (bool, error) { return true, nil }
+	pjm := core.GetTool("projectmem")
+	origPjmInstall := pjm.Install
+	t.Cleanup(func() { pjm.Install = origPjmInstall })
+	pjm.Install = func(core.RunOpts) (bool, error) { return true, nil }
+	seeded := homeFilesOutsideDataDir(t, home)
+	
+	// Defender deletes the exe right after the second agent is wired.
+	rtk.WireFor["antigravity"] = func(opts core.RunOpts) (bool, error) {
+		ok, err := origWire(opts)
+		if rmErr := os.Remove(exe); rmErr != nil {
+			t.Fatal(rmErr)
+		}
+		return ok, err
+	}
+
+	if code := commands.RunInit(commands.InitOptions{Agents: []string{"claude", "antigravity"}, Tools: []string{"rtk", "projectmem"}}); code != 1 {
+		t.Fatalf("RunInit returned %d, want 1", code)
+	}
+	assertConfigsUnchanged(t, before)
+	for path, body := range homeFilesOutsideDataDir(t, home) {
+		if strings.Contains(body, "command(rtk") || strings.Contains(body, exe) {
+			t.Errorf("%s still references tokless after rollback: %q", path, body)
+		}
+		if _, ok := seeded[path]; !ok && strings.NewReplacer(" ", "", "\n", "", `"mcpServers":{}`, "").Replace(body) != "{}" {
+			t.Errorf("%s created by aborted init and left behind: %q", path, body)
+		}
+	}
+	if sel := util.LoadSelection(); sel != nil {
+		t.Errorf("selection saved after aborted init: %+v", sel)
+	}
+}
+
+func TestInitFailsBeforeWiringWhenBinaryCannotRun(t *testing.T) {
+	home, _, before := rollbackSandbox(t, "#!/bin/sh\nexit 1\n")
+	seeded := homeFilesOutsideDataDir(t, home)
+
+	if code := commands.RunInit(commands.InitOptions{Agents: []string{"claude", "antigravity"}, Tools: []string{"rtk"}}); code != 1 {
+		t.Fatalf("RunInit returned %d, want 1", code)
+	}
+	assertConfigsUnchanged(t, before)
+	after := homeFilesOutsideDataDir(t, home)
+	if len(after) != len(seeded) {
+		t.Errorf("files under HOME changed: before %d, after %d", len(seeded), len(after))
+	}
+}

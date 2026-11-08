@@ -6,7 +6,7 @@
   One tool, no config — works the moment it lands.
 
   [![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version&color=0969da)](https://github.com/HoangP8/tokless/releases)
-  [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-57606a)](https://github.com/HoangP8/tokless)
+  [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-yellow)](https://github.com/HoangP8/tokless)
   [![license](https://img.shields.io/github/license/HoangP8/tokless?color=2ea44f)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
 
   <br />
@@ -21,7 +21,7 @@
 
 <table>
   <tr><td>✅</td><td><b>Clear purpose</b> — best tool for each job, wired without conflict</td></tr>
-  <tr><td>✅</td><td><b>No overload</b> — minimal MCP tools with clear, unified instructions</td></tr>
+  <tr><td>✅</td><td><b>No overload</b> — minimal tools with clear, unified instructions</td></tr>
   <tr><td>✅</td><td><b>Zero config</b> — works as soon as installed, in under 30 seconds</td></tr>
   <tr><td>✅</td><td><b>One place</b> — install, update, and manage all tools across every configured harness</td></tr>
 </table>
@@ -102,14 +102,14 @@ https://raw.githubusercontent.com/HoangP8/tokless/main/docs/installation.md
 | [context-mode](https://github.com/mksglu/context-mode) | ![](https://img.shields.io/github/stars/mksglu/context-mode?style=flat-square&label=) | Sandboxed code execution and indexed search; keeps large output out of context. |
 | [projectmem](https://github.com/riponcm/projectmem) | ![](https://img.shields.io/github/stars/riponcm/projectmem?style=flat-square&label=) | Per-project memory: issues, attempts, fixes, decisions, auto-captured from git. |
 
-### MCP tools
+### Tools
 
 Three tools run as MCP servers. Headroom and rtk wire through their own mechanisms (proxy, hooks, plugins) — no MCP needed.
 
 Upstream those three expose **27 tools**. Tokless spawns each server through a bounded proxy that filters its tool list, so **10 land in your context — 17 are trimmed automatically**, at install, nothing to configure.
 
 ```text
-MCP Tools
+Tools
 ├── CodeGraph · 1/1
 │   └── codegraph_explore
 ├── Context Mode · 4/9

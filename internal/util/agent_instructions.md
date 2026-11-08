@@ -8,9 +8,9 @@ Apply on every coding task:
 - Build Discipline (ponytail) — reuse first, write only what must exist.
 
 **Tools (call):**
-- Code Index (codegraph) — MCP `codegraph_explore` for structure, flows, dependencies.
+- Code Index (codegraph) — `codegraph_explore` for structure, flows, dependencies.
 - Context Tools (context-mode) — `ctx_*` for large, uncertain, multi-source analysis.
-- Project Memory (projectmem) — MCP tools log issues, attempts, fixes, decisions, gotchas.
+- Project Memory (projectmem) — tools log issues, attempts, fixes, decisions, gotchas.
 
 ## Principles
 
@@ -201,7 +201,7 @@ Stop at the first rung that holds:
 
 ## Code Index (codegraph)
 
-MCP tool `codegraph_explore` gives source, call path, and blast radius in one call.
+Tool `codegraph_explore` gives source, call path, and blast radius in one call.
 
 ### Rules
 
@@ -253,7 +253,7 @@ Windows: `pwsh -NoProfile -Command`, absolute paths, `X:\` maps to `/x/`, quote 
 
 ## Project Memory (projectmem)
 
-MCP tools record what broke, what was tried, and what was decided, across sessions, in `.projectmem/`.
+Tools record what broke, what was tried, and what was decided, across sessions, in `.projectmem/`.
 
 ### Rules
 

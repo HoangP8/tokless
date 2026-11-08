@@ -126,6 +126,8 @@ func TestClaudeRtkHookManaged(t *testing.T) {
 		{"tokless rtk-hook claude", true},
 		{`C:\bin\tokless.exe rtk-hook claude`, true},
 		{"C:/bin/tokless.exe rtk-hook claude", true},
+		{`"C:/Users/John Doe/AppData/Local/Programs/tokless/tokless.exe" rtk-hook claude`, true},
+		{`'/home/john doe/.local/bin/tokless' rtk-hook claude`, true},
 		{"custom-wrapper rtk-hook claude", false},
 		{"echo rtk-hook claude", false},
 		{"tokless rtk-hook claude --extra", false},

@@ -134,6 +134,16 @@ func TestConfigureOmpMcpPreservesConfigAndBoundsContextMode(t *testing.T) {
 	}
 }
 
+func TestRemoveOmpMcpRemovesProjectmem(t *testing.T) {
+	setOmpTestHome(t)
+	if changed, _ := ConfigureOmpMcp("projectmem"); !changed || !OmpMcpHas("projectmem") {
+		t.Fatal("projectmem not configured")
+	}
+	if !RemoveOmpMcp("projectmem") || OmpMcpHas("projectmem") {
+		t.Fatal("projectmem not removed")
+	}
+}
+
 func TestOmpCodegraphTargetAcceptsWindowsNpxShim(t *testing.T) {
 	if !ompCodegraphTarget([]string{"cmd", "/c", "npx.cmd", "--no-install", "@colbymchenry/codegraph", "serve", "--mcp"}) {
 		t.Fatal("Windows npx shim must be recognized as managed CodeGraph target")

@@ -431,7 +431,6 @@ func antigravityRtkGroupManaged(value any) bool {
 	if !ok {
 		return false
 	}
-	want := toklessCommand("rtk-hook", "agy")
 	for _, item := range entries {
 		entry, ok := item.(*util.OrderedMap)
 		if !ok {
@@ -448,7 +447,8 @@ func antigravityRtkGroupManaged(value any) bool {
 		for _, hook := range arr {
 			hm, ok := hook.(*util.OrderedMap)
 			if ok {
-				if command, _ := hm.Get("command"); command == want {
+				v, _ := hm.Get("command")
+				if command, _ := v.(string); toklessManagedCommand(command, "rtk-hook", "agy") {
 					return true
 				}
 			}
@@ -832,7 +832,14 @@ func RemoveAntigravityEntry(entry string) {
 			out = append(out, e)
 		}
 		if dropped {
-			pm.Set("allow", out)
+			if len(out) == 0 {
+				pm.Delete("allow")
+				if pm.Len() == 0 {
+					cfg.Delete("permissions")
+				}
+			} else {
+				pm.Set("allow", out)
+			}
 			_ = util.WriteFile(f, util.StringifyJSON(cfg))
 		}
 	}
@@ -840,7 +847,16 @@ func RemoveAntigravityEntry(entry string) {
 
 func antigravityPermissionManaged(entry, settingsFile string) bool {
 	if entry == "command(rtk)" || entry == "command(rtk )" {
-		return HasAntigravityRtkHook()
+		raw, ok := util.ReadFileSafe(antigravityHooksFile())
+		if !ok {
+			return false
+		}
+		cfg := util.TryParseJsonc(raw)
+		if cfg == nil {
+			return false
+		}
+		group, _ := cfg.Get("rtk")
+		return antigravityRtkGroupManaged(group)
 	}
 	if strings.HasPrefix(entry, "mcp(") {
 		toolID := strings.TrimSuffix(strings.TrimPrefix(entry, "mcp("), "/*)")
