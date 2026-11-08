@@ -127,8 +127,15 @@ func ToklessAbs() string {
 	return exe
 }
 
+var persistedPin string
+
+func PinToklessPersisted(p string) { persistedPin = p }
+
 // ToklessPersistedAbs resolves the stable installed executable written into agent config.
 func ToklessPersistedAbs() string {
+	if persistedPin != "" {
+		return persistedPin
+	}
 	if raw, ok := ReadFileSafe(InstallMarkerPath()); ok {
 		var marker InstallRecord
 		if json.Unmarshal([]byte(raw), &marker) == nil && stableExecutable(marker.Path) {

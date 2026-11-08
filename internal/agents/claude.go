@@ -465,6 +465,9 @@ func DisallowClaudeBashPattern(pattern string) {
 	}
 	if len(out) == 0 {
 		perms.Delete("allow")
+		if perms.Len() == 0 {
+			cfg.Delete("permissions")
+		}
 	} else {
 		perms.Set("allow", out)
 	}

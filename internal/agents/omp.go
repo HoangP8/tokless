@@ -194,6 +194,9 @@ func ompMcpManaged(toolID string, existing any) bool {
 		_, target, ok := util.SplitContextModeArgs(values)
 		return ok && ompContextModeTarget(target)
 	}
+	if toolID == "projectmem" {
+		return argsEq(toAnySlice(values), util.McpSpawnForAgent("omp", toolID).Args)
+	}
 	return false
 }
 
