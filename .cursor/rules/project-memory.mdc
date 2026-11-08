@@ -4,7 +4,7 @@ alwaysApply: true
 ---
 ## Project Memory (projectmem)
 
-MCP tools record what broke, what was tried, and what was decided, across sessions, in `.projectmem/`.
+Tools record what broke, what was tried, and what was decided, across sessions, in `.projectmem/`.
 
 ### Rules
 

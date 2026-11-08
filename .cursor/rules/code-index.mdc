@@ -4,7 +4,7 @@ alwaysApply: true
 ---
 ## Code Index (codegraph)
 
-MCP tool `codegraph_explore` gives source, call path, and blast radius in one call.
+Tool `codegraph_explore` gives source, call path, and blast radius in one call.
 
 ### Rules
 
