@@ -2,6 +2,7 @@ package headroom
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,6 +23,9 @@ func TestHeadroomInstallArgsAndNativeRisk(t *testing.T) {
 	}
 	if got, want := headroomInstallArgs(true), []string{"tool", "install", "--upgrade", "--python", "3.13", "headroom-ai[proxy]"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("upgrade args = %v, want %v", got, want)
+	}
+	if got, want := headroomInstallArgs(true, "--no-build"), []string{"tool", "install", "--upgrade", "--no-build", "--python", "3.13", "headroom-ai[proxy]"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("no-build upgrade args = %v want %v", got, want)
 	}
 	if !headroomNativeBuildRiskFor("windows", "amd64") || !headroomNativeBuildRiskFor("darwin", "amd64") || headroomNativeBuildRiskFor("darwin", "arm64") || headroomNativeBuildRiskFor("linux", "amd64") {
 		t.Fatal("native build risk classification is incorrect")
@@ -202,7 +206,7 @@ func TestHeadroomFailedUpgradeKeepsManagedExecutable(t *testing.T) {
 	}
 	old := runHeadroom
 	t.Cleanup(func() { runHeadroom = old })
-	upgradeCalled := false
+	upgradeCalled, noBuildCalled := false, false
 	runHeadroom = func(_ string, args, _ []string, _ context.Context) util.ExecResult {
 		if reflect.DeepEqual(args, []string{"--version"}) {
 			return util.ExecResult{}
@@ -214,14 +218,21 @@ func TestHeadroomFailedUpgradeKeepsManagedExecutable(t *testing.T) {
 			upgradeCalled = true
 			return util.ExecResult{Code: 1, Stderr: "build failed"}
 		}
+		if reflect.DeepEqual(args, headroomInstallArgs(true, "--no-build")) {
+			noBuildCalled = true
+			return util.ExecResult{Code: 1, Stderr: "no wheel"}
+		}
 		t.Fatalf("unexpected Headroom call args: %v", args)
 		return util.ExecResult{Code: 1, Stderr: "build failed"}
 	}
-	if ok, err := EnsureInstalled(core.RunOpts{Upgrade: true}); err == nil || ok || !strings.Contains(err.Error(), "package install") {
+	if ok, err := EnsureInstalled(core.RunOpts{Upgrade: true}); err == nil || ok || !strings.Contains(err.Error(), "package install failed: build failed") {
 		t.Fatalf("failed upgrade = %v, %v", ok, err)
 	}
 	if !upgradeCalled {
 		t.Fatal("upgrade call was not made")
+	}
+	if !noBuildCalled {
+		t.Fatal("prebuilt-wheel retry was not made")
 	}
 	if got, err := os.ReadFile(util.HeadroomBin()); err != nil || string(got) != "working" {
 		t.Fatalf("existing executable changed: %q, %v", got, err)
@@ -241,9 +252,66 @@ func TestHeadroomFailureIncludesRemediation(t *testing.T) {
 	if !strings.Contains(got, "Rust/native toolchain may be required on this platform") {
 		t.Fatalf("native warning missing: %q", got)
 	}
-	wantCommand := strings.Join(append([]string{util.HeadroomPathsResolved().UV}, headroomInstallArgs(false)...), " ")
-	if !strings.Contains(got, "Manual: "+wantCommand) {
-		t.Fatalf("managed install command missing: %q", got)
+	if !strings.Contains(got, "re-run: tokless update --tools headroom") {
+		t.Fatalf("re-run remediation missing: %q", got)
+	}
+	// A bare uv command installs outside the Tokless-managed dirs (#63).
+	if strings.Contains(got, "tool install") {
+		t.Fatalf("remediation must not suggest an unmanaged uv install: %q", got)
+	}
+}
+
+// A dependency without a wheel for the platform fails the default install when
+// no Rust toolchain exists; the prebuilt-wheel retry must rescue it (#63).
+func TestHeadroomInstallFallsBackToPrebuiltWheels(t *testing.T) {
+	for _, upgrade := range []bool{false, true} {
+		t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
+			home := t.TempDir()
+			util.SetHomeOverride(home)
+			t.Setenv("TOKLESS_TEST", "")
+			t.Cleanup(func() { util.SetHomeOverride("") })
+			p := util.HeadroomPathsResolved()
+			if err := os.MkdirAll(filepath.Dir(p.UV), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p.UV, []byte("managed uv"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			old := runHeadroom
+			t.Cleanup(func() { runHeadroom = old })
+			var installs [][]string
+			runHeadroom = func(command string, args, env []string, _ context.Context) util.ExecResult {
+				if len(args) < 2 || args[0] != "tool" || args[1] != "install" {
+					return util.ExecResult{}
+				}
+				installs = append(installs, args)
+				for _, item := range util.HeadroomEnv() {
+					if !containsString(env, item) {
+						return util.ExecResult{Code: 1, Stderr: "missing managed env"}
+					}
+				}
+				if !containsString(args, "--no-build") {
+					return util.ExecResult{Code: 1, Stderr: "failed to build `tokenizers`: cargo not found"}
+				}
+				if err := os.MkdirAll(filepath.Dir(util.HeadroomBin()), 0o755); err != nil {
+					return util.ExecResult{Code: 1, Stderr: err.Error()}
+				}
+				if err := os.WriteFile(util.HeadroomBin(), []byte("headroom"), 0o755); err != nil {
+					return util.ExecResult{Code: 1, Stderr: err.Error()}
+				}
+				return util.ExecResult{}
+			}
+			if ok, err := EnsureInstalled(core.RunOpts{Upgrade: upgrade}); err != nil || !ok {
+				t.Fatalf("install = %v, %v", ok, err)
+			}
+			want := [][]string{headroomInstallArgs(upgrade), headroomInstallArgs(upgrade, "--no-build")}
+			if !reflect.DeepEqual(installs, want) {
+				t.Fatalf("install calls = %v want %v", installs, want)
+			}
+			if !util.HeadroomInstalled() {
+				t.Fatal("managed executable missing after fallback")
+			}
+		})
 	}
 }
 

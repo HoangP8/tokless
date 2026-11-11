@@ -20,11 +20,12 @@ var runHeadroom = func(command string, args, env []string, ctx context.Context) 
 	return util.Run(command, args, util.RunOptions{Capture: true, Env: env, Ctx: ctx})
 }
 
-func headroomInstallArgs(upgrade bool) []string {
+func headroomInstallArgs(upgrade bool, extra ...string) []string {
 	args := []string{"tool", "install"}
 	if upgrade {
 		args = append(args, "--upgrade")
 	}
+	args = append(args, extra...)
 	return append(args, "--python", "3.13", headroomPackage)
 }
 func headroomPythonInstallArgs() []string { return []string{"python", "install", "3.13"} }
@@ -40,7 +41,7 @@ func headroomFailure(stage string, result util.ExecResult) error {
 func headroomFailureFor(stage string, result util.ExecResult, nativeRisk bool) error {
 	hint := ""
 	if nativeRisk {
-		hint = " Rust/native toolchain may be required on this platform. Manual: " + strings.Join(append([]string{util.HeadroomPathsResolved().UV}, headroomInstallArgs(false)...), " ")
+		hint = " Rust/native toolchain may be required on this platform. Install it, then re-run: tokless update --tools headroom"
 	}
 	detail := strings.TrimSpace(result.Stderr)
 	if detail == "" {
@@ -147,7 +148,13 @@ func EnsureInstalled(opts core.RunOpts) (bool, error) {
 	opts.Reportf("package install", 0.5)
 	result := runHeadroom(uv, headroomInstallArgs(opts.Upgrade), util.HeadroomEnv(), ctx)
 	if result.Code != 0 {
-		return false, headroomFailure("package install", result)
+		// A dependency whose newest release has no wheel for this platform needs
+		// a native (Rust) build. Retry on prebuilt wheels only: uv then resolves
+		// to versions that ship one. The first failure stays the reported error.
+		opts.Reportf("package install (prebuilt wheels)", 0.6)
+		if retry := runHeadroom(uv, headroomInstallArgs(opts.Upgrade, "--no-build"), util.HeadroomEnv(), ctx); retry.Code != 0 {
+			return false, headroomFailure("package install", result)
+		}
 	}
 	if !util.HeadroomInstalled() {
 		return false, fmt.Errorf("headroom executable verification failed: %s", util.HeadroomBin())
