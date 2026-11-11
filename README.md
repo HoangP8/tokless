@@ -8,6 +8,13 @@
   [![version](https://img.shields.io/github/v/release/HoangP8/tokless?label=version&color=0969da)](https://github.com/HoangP8/tokless/releases)
   [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-yellow)](https://github.com/HoangP8/tokless)
   [![license](https://img.shields.io/github/license/HoangP8/tokless?color=2ea44f)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
+  [![go](https://img.shields.io/github/go-mod/go-version/HoangP8/tokless)](https://github.com/HoangP8/tokless/blob/main/go.mod)
+
+  [![stars](https://img.shields.io/github/stars/HoangP8/tokless?style=flat&logo=github&color=e3b341)](https://github.com/HoangP8/tokless/stargazers)
+  [![downloads](https://img.shields.io/github/downloads/HoangP8/tokless/total?label=downloads&color=8250df)](https://github.com/HoangP8/tokless/releases)
+  [![forks](https://img.shields.io/github/forks/HoangP8/tokless?style=flat&color=6e7781)](https://github.com/HoangP8/tokless/forks)
+  [![ci](https://img.shields.io/github/actions/workflow/status/HoangP8/tokless/ci.yml?branch=main&label=ci)](https://github.com/HoangP8/tokless/actions/workflows/ci.yml)
+  [![last commit](https://img.shields.io/github/last-commit/HoangP8/tokless?color=1f883d)](https://github.com/HoangP8/tokless/commits/main)
 
   <br />
 
@@ -281,3 +288,21 @@ harness → 127.0.0.1:8787 (Headroom) → provider
 Grok uses Headroom on both paths: its BYOK `base_url` is rewritten to the shared daemon (`8787/v1`), and its OAuth login runs on a Headroom-owned proxy (`28787`). Cursor's proxy route is deprecated and Amp is never auto-wired — those two stay on their native provider.
 
 Manage it with `tokless proxy up | down | status`. Turn start-at-login off with `tokless proxy autostart off` (or `tokless init --no-autostart`). `--agents` scopes any of them to one harness, and `down --agents <list>` leaves shared Headroom running for the rest.
+
+## Contributors
+
+<a href="https://github.com/HoangP8/tokless/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=HoangP8/tokless" alt="tokless contributors" />
+</a>
+
+## Star History
+
+<div align="center">
+  <a href="https://www.star-history.com/#HoangP8/tokless&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=HoangP8/tokless&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=HoangP8/tokless&type=Date" />
+      <img src="https://api.star-history.com/svg?repos=HoangP8/tokless&type=Date" width="80%" alt="tokless star history" />
+    </picture>
+  </a>
+</div>
