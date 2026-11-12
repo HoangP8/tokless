@@ -10,11 +10,11 @@
   [![license](https://img.shields.io/github/license/HoangP8/tokless?color=2ea44f)](https://github.com/HoangP8/tokless/blob/main/LICENSE)
   [![go](https://img.shields.io/github/go-mod/go-version/HoangP8/tokless)](https://github.com/HoangP8/tokless/blob/main/go.mod)
 
-  [![stars](https://img.shields.io/github/stars/HoangP8/tokless?style=flat&logo=github&color=e3b341)](https://github.com/HoangP8/tokless/stargazers)
+  [![stars](https://img.shields.io/github/stars/HoangP8/tokless?style=flat&logo=github&color=f0883e)](https://github.com/HoangP8/tokless/stargazers)
   [![downloads](https://img.shields.io/github/downloads/HoangP8/tokless/total?label=downloads&color=8250df)](https://github.com/HoangP8/tokless/releases)
-  [![forks](https://img.shields.io/github/forks/HoangP8/tokless?style=flat&color=6e7781)](https://github.com/HoangP8/tokless/forks)
+  [![forks](https://img.shields.io/github/forks/HoangP8/tokless?style=flat&color=0d9488)](https://github.com/HoangP8/tokless/forks)
   [![ci](https://img.shields.io/github/actions/workflow/status/HoangP8/tokless/ci.yml?branch=main&label=ci)](https://github.com/HoangP8/tokless/actions/workflows/ci.yml)
-  [![last commit](https://img.shields.io/github/last-commit/HoangP8/tokless?color=1f883d)](https://github.com/HoangP8/tokless/commits/main)
+  [![last commit](https://img.shields.io/github/last-commit/HoangP8/tokless?color=4c51bf)](https://github.com/HoangP8/tokless/commits/main)
 
   <br />
 
