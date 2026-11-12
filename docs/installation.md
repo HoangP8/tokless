@@ -67,6 +67,15 @@ Tokless changes native agent settings only. It does not edit `.zshrc`,
 with the agent/provider where supported. If a managed setting changes after
 `proxy up`, `proxy down` refuses to overwrite it.
 
+### Headroom install fails on a native build
+
+If a Headroom dependency has no prebuilt wheel for your platform, `uv` tries to
+compile it, which needs a Rust toolchain. Tokless then retries once with
+prebuilt wheels only (`--no-build`), so some dependencies may be older than the
+latest. Rust is needed only if no wheel exists at all. Re-run
+`tokless update --tools headroom` rather than a bare `uv tool install`, which
+installs outside the Tokless-managed directory.
+
 ### Start at login
 
 The proxy starts at login by default (Windows: Task Scheduler task
