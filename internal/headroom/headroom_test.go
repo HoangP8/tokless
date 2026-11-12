@@ -323,3 +323,51 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+// uv prints "Resolved N packages" first; the real failure comes later (#63).
+func TestHeadroomFailureReportsRealUVError(t *testing.T) {
+	stderr := "Resolved 99 packages in 508ms\n  × Failed to build `cryptography==50.0.2`\n  ╰─▶ cargo not found\n"
+	got := headroomFailureFor("package install", util.ExecResult{Code: 1, Stderr: stderr}, false).Error()
+	if !strings.Contains(got, "× Failed to build `cryptography==50.0.2`") || strings.Contains(got, "Resolved 99") {
+		t.Fatalf("real uv error not surfaced: %q", got)
+	}
+	got = headroomFailureFor("package install", util.ExecResult{Code: 1, Stderr: "no marker\nsecond"}, false).Error()
+	if !strings.Contains(got, "failed: no marker") {
+		t.Fatalf("first-line fallback broken: %q", got)
+	}
+}
+
+// When the default install works, there is no retry (#63).
+func TestHeadroomInstallSucceedsWithoutRetry(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Setenv("TOKLESS_TEST", "")
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	p := util.HeadroomPathsResolved()
+	if err := os.MkdirAll(filepath.Dir(p.UV), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.UV, []byte("managed uv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := runHeadroom
+	t.Cleanup(func() { runHeadroom = old })
+	installs := 0
+	runHeadroom = func(_ string, args, _ []string, _ context.Context) util.ExecResult {
+		if len(args) >= 2 && args[0] == "tool" && args[1] == "install" {
+			installs++
+			if containsString(args, "--no-build") {
+				t.Fatalf("unexpected --no-build: %v", args)
+			}
+			_ = os.MkdirAll(filepath.Dir(util.HeadroomBin()), 0o755)
+			_ = os.WriteFile(util.HeadroomBin(), []byte("headroom"), 0o755)
+		}
+		return util.ExecResult{}
+	}
+	if ok, err := EnsureInstalled(core.RunOpts{}); err != nil || !ok {
+		t.Fatalf("install = %v, %v", ok, err)
+	}
+	if installs != 1 {
+		t.Fatalf("install calls = %d, want 1", installs)
+	}
+}

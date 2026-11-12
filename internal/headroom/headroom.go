@@ -48,9 +48,23 @@ func headroomFailureFor(stage string, result util.ExecResult, nativeRisk bool) e
 		detail = strings.TrimSpace(result.Stdout)
 	}
 	if detail != "" {
-		detail = ": " + strings.Split(detail, "\n")[0]
+		detail = ": " + headroomDetailLine(detail)
 	}
 	return fmt.Errorf("headroom %s failed%s%s", stage, detail, hint)
+}
+
+// headroomDetailLine picks the most informative line of uv output. uv prints
+// "Resolved N packages" first and the real failure ("× Failed to build ...",
+// "error: ...") later, so prefer those over line 1.
+func headroomDetailLine(detail string) string {
+	lines := strings.Split(detail, "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "×") || strings.HasPrefix(strings.ToLower(l), "error") {
+			return l
+		}
+	}
+	return strings.TrimSpace(lines[0])
 }
 
 // headroomUVBootstrapCmd picks the official Astral uv installer for the OS.
@@ -151,10 +165,15 @@ func EnsureInstalled(opts core.RunOpts) (bool, error) {
 		// A dependency whose newest release has no wheel for this platform needs
 		// a native (Rust) build. Retry on prebuilt wheels only: uv then resolves
 		// to versions that ship one. The first failure stays the reported error.
+		// The retry gets its own deadline: a failed source build can eat the
+		// shared one.
 		opts.Reportf("package install (prebuilt wheels)", 0.6)
-		if retry := runHeadroom(uv, headroomInstallArgs(opts.Upgrade, "--no-build"), util.HeadroomEnv(), ctx); retry.Code != 0 {
+		retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer retryCancel()
+		if retry := runHeadroom(uv, headroomInstallArgs(opts.Upgrade, "--no-build"), util.HeadroomEnv(), retryCtx); retry.Code != 0 {
 			return false, headroomFailure("package install", result)
 		}
+		util.L.Sub("headroom installed from prebuilt wheels only; some dependencies may be older than the latest releases")
 	}
 	if !util.HeadroomInstalled() {
 		return false, fmt.Errorf("headroom executable verification failed: %s", util.HeadroomBin())
