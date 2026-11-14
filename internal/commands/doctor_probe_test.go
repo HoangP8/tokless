@@ -390,6 +390,7 @@ func TestManagedHookCommandsClaude(t *testing.T) {
 func TestManagedRuntimeFiles(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 
 	op := util.OpenCodePathsResolved()
@@ -417,6 +418,7 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	binDir := t.TempDir()
 	suffix := ""
@@ -451,6 +453,7 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 func TestManagedRuntimeFilesOpenCodeVersion(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	plugins := util.OpenCodePathsResolved().PluginsDir
 	v2Path := filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
@@ -481,6 +484,7 @@ func TestManagedRuntimeFilesOpenCode2(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	want := filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
 	files := managedRuntimeFiles("opencode2")
@@ -779,5 +783,25 @@ func writeExit0(t *testing.T, path string) {
 	}
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAntigravityDoctorPathIsCanonicalAndProbed(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	canonical := util.AntigravityPathsResolved().McpConfigCLI
+	path, key := toolConfigLocation("antigravity", "codegraph")
+	if path != canonical || key != "mcpServers.codegraph" {
+		t.Fatalf("toolConfigLocation = (%q, %q), want canonical %q", path, key, canonical)
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"mcpServers":{"codegraph":{"command":"/opt/tokless","args":["run-mcp","--agent","antigravity","/opt/codegraph","serve","--mcp"]}}}`
+	if err := os.WriteFile(canonical, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if spawns := managedMcpSpawns("antigravity"); len(spawns) != 1 {
+		t.Fatalf("managedMcpSpawns must read the path doctor displays; got %+v", spawns)
 	}
 }

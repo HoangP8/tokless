@@ -3,6 +3,7 @@ package commands_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -380,6 +381,67 @@ func TestInitCursorProjectRulesFromCurrentDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, ".cursor")); !os.IsNotExist(err) {
 		t.Fatalf("Cursor dry-run wrote project files: %v", err)
 	}
+}
+
+func TestInitDryRunAntigravityShowsPayloadAndWritesNothing(t *testing.T) {
+	t.Setenv("TOKLESS_TEST", "1")
+	fakeUVPATH(t)
+	home := t.TempDir()
+	pinAppDataEnv(t, home)
+	t.Setenv("HOME", home)
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	if err := os.MkdirAll(util.AntigravityPathsResolved().Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, "proj")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldWd)
+
+	realOut := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	code := commands.RunInit(commands.InitOptions{
+		Agents: []string{"antigravity"},
+		Tools:  []string{"codegraph", "context-mode", "projectmem"},
+		DryRun: true,
+	})
+	w.Close()
+	os.Stdout = realOut
+	out := <-done
+	if code != 0 {
+		t.Fatalf("RunInit returned %d:\n%s", code, out)
+	}
+
+	canonical := filepath.Join(home, ".gemini", "config", "mcp_config.json")
+	if !strings.Contains(out, canonical) {
+		t.Fatalf("dry-run output must name canonical path %s:\n%s", canonical, out)
+	}
+	for _, want := range []string{"would set mcpServers.projectmem", "would set mcpServers.codegraph", "would set mcpServers.context-mode", `"run-mcp"`, `"--tool"`, `"projectmem"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, out)
+		}
+	}
+	_ = filepath.WalkDir(filepath.Join(home, ".gemini"), func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			t.Errorf("dry-run wrote %s", path)
+		}
+		return nil
+	})
 }
 
 func getSHA256(path string) (string, error) {
@@ -829,7 +891,7 @@ func TestInitRollsBackEveryAgentWhenBinaryDisappears(t *testing.T) {
 	t.Cleanup(func() { pjm.Install = origPjmInstall })
 	pjm.Install = func(core.RunOpts) (bool, error) { return true, nil }
 	seeded := homeFilesOutsideDataDir(t, home)
-	
+
 	// Defender deletes the exe right after the second agent is wired.
 	rtk.WireFor["antigravity"] = func(opts core.RunOpts) (bool, error) {
 		ok, err := origWire(opts)

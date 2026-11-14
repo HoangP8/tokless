@@ -43,7 +43,7 @@ func toolConfigLocation(agentID, toolID string) (path, key string) {
 		path = util.CursorGlobalMcpPath()
 		key = "mcpServers." + toolID
 	case "antigravity":
-		path = util.AntigravityPathsResolved().McpConfig
+		path = util.AntigravityPathsResolved().McpConfigCLI
 		key = "mcpServers." + toolID
 	case "copilot":
 		path = util.CopilotPathsResolved().McpConfig
@@ -606,18 +606,16 @@ func doctorAgentRows(r agentReport) []string {
 			continue
 		}
 
-		if tool.ID == "projectmem" {
-			if cfgPath, key := toolConfigLocation(r.id, tool.ID); cfgPath != "" && key != "" {
-				rows = append(rows, mark+" "+tool.Label+" → "+util.C.Gray(tildePath(cfgPath))+util.C.Dim(" ("+key+")"))
-			} else {
-				rows = append(rows, mark+" "+tool.Label+" → "+util.C.Dim("configuration location unknown"))
+		note := ""
+		if r.id == "claude" && (passed == nil || !*passed) && (tool.ID == "context-mode" || tool.ID == "projectmem") {
+			if reason := agents.ClaudeMcpRefusal(tool.ID); reason != "" {
+				note = util.C.Dim(" — " + reason)
 			}
-			continue
 		}
 		if cfgPath, key := toolConfigLocation(r.id, tool.ID); cfgPath != "" && key != "" {
-			rows = append(rows, mark+" "+tool.Label+" → "+util.C.Gray(tildePath(cfgPath))+util.C.Dim(" ("+key+")"))
+			rows = append(rows, mark+" "+tool.Label+" → "+util.C.Gray(tildePath(cfgPath))+util.C.Dim(" ("+key+")")+note)
 		} else {
-			rows = append(rows, mark+" "+tool.Label+" → "+util.C.Dim("configuration location unknown"))
+			rows = append(rows, mark+" "+tool.Label+" → "+util.C.Dim("configuration location unknown")+note)
 		}
 	}
 

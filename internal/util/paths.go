@@ -109,6 +109,37 @@ func Home() string {
 	return resolveHome()
 }
 
+// goosForUserConfig lets tests exercise every platform path on one host.
+var goosForUserConfig = runtime.GOOS
+
+// UserConfigDir mirrors dirs::config_dir() on each platform.
+func UserConfigDir() string {
+	if homeOverride != "" {
+		switch goosForUserConfig {
+		case "windows":
+			return filepath.Join(homeOverride, "AppData", "Roaming")
+		case "darwin":
+			return filepath.Join(homeOverride, "Library", "Application Support")
+		default:
+			return filepath.Join(homeOverride, ".config")
+		}
+	}
+	switch goosForUserConfig {
+	case "windows":
+		if base := os.Getenv("APPDATA"); base != "" {
+			return base
+		}
+		return filepath.Join(Home(), "AppData", "Roaming")
+	case "darwin":
+		return filepath.Join(Home(), "Library", "Application Support")
+	default:
+		if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
+			return x
+		}
+		return filepath.Join(Home(), ".config")
+	}
+}
+
 // ToklessAbs returns the absolute path to the running tokless binary.
 func ToklessAbs() string {
 	exe, err := os.Executable()

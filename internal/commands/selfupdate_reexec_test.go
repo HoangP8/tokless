@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,34 +161,73 @@ func main() {
 	}
 }
 
-func TestWindowsSelfUpdateEnvIncludesPIDHandoff(t *testing.T) {
-	got := strings.Join(windowsSelfUpdateEnv(1234, `C:\\Users\\test\\tokless.exe`), ",")
-	for _, want := range []string{"CI=1", "TOKLESS_SELF_UPDATE_PID=1234", `TOKLESS_SELF_UPDATE_PATH=C:\\Users\\test\\tokless.exe`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("Windows update env missing %q: %s", want, got)
-		}
-	}
-}
-
 func TestWindowsUpdateInstallerStagesAfterDownload(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "install.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"TOKLESS_SELF_UPDATE_PID", "TOKLESS_SELF_UPDATE_PATH", "$process.WaitForExit()", "[System.IO.File]::Replace($staged, $Destination, $bak)", "if (Test-Path -LiteralPath $Destination)", "Move-Item -LiteralPath $staged -Destination $Destination", "StatusFile", "Update replacement completed", "--version", "$dataRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE \"AppData\\Local\" }", "Join-Path $dataRoot \"tokless\"", "path    = $Destination", "version = $version", "at      = (Get-Date).ToUniversalTime()", "Update replacement failed", "$helperArgs", "ConvertFrom-Json", "Process ID must be a positive integer", "Remove-Item -LiteralPath $staged", "ProcessId = $selfUpdate", "StartTime = $targetStartTime", "Path = $targetPath", "Get-Process -Id $ProcessId -ErrorAction Stop", "Self-update process identity changed", "$process.WaitForExit()", "finally {", "status write failed", "Remove-Item -LiteralPath $ConfigFile", "Update scheduled; replacement runs after tokless exits; run tokless again", "Download failed ($asset): $($_.Exception.ToString())", "$PSVersionTable.PSVersion.Major -eq 5", "$PSVersionTable.PSVersion.Minor -eq 1", "SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12", "Replacement failed", "Move-Item -LiteralPath $restore -Destination $Destination -Force -ErrorAction Stop", "$bak = \"$Destination.$([Guid]::NewGuid().ToString('N')).bak\"", "$bak = \"$dest.$([Guid]::NewGuid().ToString('N')).bak\"", "-Filter ((Split-Path -Leaf $Destination) + \".*.bak\")", "$verified = $true", "-not $verified", "$versionExit -ne 0", "https://www.microsoft.com/en-us/wdsi/filesubmission"} {
+	for _, want := range []string{
+		"TOKLESS_SELF_UPDATE_PATH",
+		`$tmp = "$dest.download"`,
+		`$old = "$dest.old"`,
+		"Get-FileHash -LiteralPath $tmp -Algorithm SHA256",
+		"SHA256SUMS",
+		"Checksum mismatch",
+		"Move-Item -LiteralPath $dest -Destination $old -Force",
+		"Move-Item -LiteralPath $tmp -Destination $dest -Force",
+		"Restore-Previous",
+		"Previous tokless.exe restored.",
+		"Get-InstalledVersion",
+		"FileVersionInfo",
+		`$dataRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }`,
+		`Join-Path $dataRoot "tokless"`,
+		"path    = $dest",
+		"version = $Version",
+		"at      = (Get-Date).ToUniversalTime()",
+		`method  = "install script"`,
+		`Download failed ($asset): $($_.Exception.Message)`,
+		"$PSVersionTable.PSVersion.Major -eq 5",
+		"$PSVersionTable.PSVersion.Minor -eq 1",
+		"SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+		`Replacement failed: $($_.Exception.Message)`,
+		`-Filter ((Split-Path -Leaf $dest) + ".old*")`,
+		`-Filter ((Split-Path -Leaf $dest) + ".*.bak")`,
+		"https://www.microsoft.com/en-us/wdsi/filesubmission",
+		"Update installed: $v",
+		"Run tokless again to use the new version.",
+	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("install.ps1 missing %q", want)
 		}
 	}
-	if strings.Contains(s, "windows-defender.md") {
-		t.Error("install.ps1 must not link to deleted docs/windows-defender.md")
+	for _, gone := range []string{
+		"windows-defender.md",
+		"WindowStyle Hidden",
+		"ConvertFrom-Json",
+		"WaitForExit",
+		"ToFileTimeUtc",
+		"Self-update process identity changed",
+		"tokless-update-status-",
+		"[System.IO.File]::Replace",
+		`Get-Process -Id $ProcessId`,
+		"StatusFile",
+		"$helperArgs",
+		"$ConfigFile",
+		"$staged",
+		"$Destination",
+		"--version",
+		"NewGuid",
+	} {
+		if strings.Contains(s, gone) {
+			t.Errorf("install.ps1 must not contain %q", gone)
+		}
 	}
-	replacement := strings.Index(s, "[System.IO.File]::Replace($staged, $Destination, $bak)")
-	versionLookup := strings.Index(s, "$versionOutput = & $Destination --version")
-	markerWrite := strings.Index(s, `method  = "install script"`)
-	if replacement < 0 || versionLookup < 0 || markerWrite < 0 || replacement >= versionLookup || versionLookup >= markerWrite {
-		t.Fatalf("marker refresh must follow replacement: replacement=%d version=%d marker=%d", replacement, versionLookup, markerWrite)
+	swap := strings.Index(s, "Move-Item -LiteralPath $tmp -Destination $dest -Force")
+	version := strings.Index(s, "$v = Get-InstalledVersion $dest")
+	marker := strings.Index(s, "Write-InstallMarker $v")
+	if swap < 0 || version < 0 || marker < 0 || swap >= version || version >= marker {
+		t.Fatalf("marker refresh must follow swap and version check: swap=%d version=%d marker=%d", swap, version, marker)
 	}
 }
 
@@ -209,4 +249,150 @@ func TestReexecAfterSelfUpdateSkipsWhenGuarded(t *testing.T) {
 	t.Setenv(reexecEnvKey, "")
 	t.Setenv("TOKLESS_TEST", "1")
 	reexecAfterSelfUpdate()
+}
+
+func TestSwapBinaryReplacesTarget(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "tokless.exe")
+	download := exe + ".download"
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(download, []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := swapBinary(exe, download); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new" {
+		t.Fatalf("exe = %q, want new", got)
+	}
+	if _, err := os.Stat(download); !os.IsNotExist(err) {
+		t.Fatalf("download should be consumed, stat err = %v", err)
+	}
+}
+
+func TestSwapBinaryRollsBackOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "tokless.exe")
+	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := swapBinary(exe, exe+".download"); err == nil {
+		t.Fatal("want error for missing download")
+	}
+	got, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatalf("exe not restored: %v", err)
+	}
+	if string(got) != "old" {
+		t.Fatalf("exe = %q, want old", got)
+	}
+}
+
+func TestChecksumFor(t *testing.T) {
+	const sums = "aaaa  tokless-linux-x64\nb697  tokless-windows-x64.exe\n"
+	if got, ok := checksumFor(sums, "tokless-windows-x64.exe"); !ok || got != "b697" {
+		t.Fatalf("got %q ok=%v", got, ok)
+	}
+	if _, ok := checksumFor(sums, "tokless-windows-arm64.exe"); ok {
+		t.Fatal("unexpected match")
+	}
+}
+
+func TestRestorePrevious(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "tokless.exe")
+	old := fmt.Sprintf("%s.old.%d", exe, os.Getpid())
+	if err := os.WriteFile(old, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := restorePrevious(exe); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(exe)
+	if err != nil || string(got) != "old" {
+		t.Fatalf("restored %q, err %v", got, err)
+	}
+}
+
+// TestSwapBinaryKeepsExecutablePath: the swap must not move the running image aside.
+func TestSwapBinaryKeepsExecutablePath(t *testing.T) {
+	if os.Getenv("TOKLESS_SWAP_PROBE") == "1" {
+		exe, err := resolvedExecutable()
+		if err != nil {
+			fmt.Println("PROBE_EXECUTABLE_ERR", err)
+			os.Exit(11)
+		}
+		if err := os.WriteFile(exe+".download", []byte("new-content"), 0o755); err != nil {
+			fmt.Println("PROBE_WRITE_ERR", err)
+			os.Exit(12)
+		}
+		if err := swapBinary(exe, exe+".download"); err != nil {
+			fmt.Println("PROBE_SWAP_ERR", err)
+			os.Exit(13)
+		}
+		got, err := resolvedExecutable()
+		if err != nil || filepath.Clean(got) != filepath.Clean(exe) {
+			fmt.Println("PROBE_PATH_MISMATCH", got, err)
+			os.Exit(14)
+		}
+		if b, err := os.ReadFile(got); err != nil || string(b) != "new-content" {
+			fmt.Println("PROBE_CONTENT_MISMATCH", err)
+			os.Exit(15)
+		}
+		fmt.Println("PROBE_OK")
+		os.Exit(0)
+	}
+
+	src, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(t.TempDir(), "probe"+filepath.Ext(src))
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(probe, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(probe, "-test.run=TestSwapBinaryKeepsExecutablePath$")
+	cmd.Env = append(os.Environ(), "TOKLESS_SWAP_PROBE=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "PROBE_OK") {
+		t.Fatalf("probe failed: %v\n%s", err, out)
+	}
+}
+
+func TestRestorePreviousPlainOld(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "tokless.exe")
+	if err := os.WriteFile(exe+".old", []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := restorePrevious(exe); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(exe); err != nil || string(got) != "old" {
+		t.Fatalf("restored %q, err %v", got, err)
+	}
+}
+
+func TestVerifySHA256(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "blob")
+	if err := os.WriteFile(p, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const sum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+	if err := verifySHA256(p, sum); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySHA256(p, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("want checksum mismatch")
+	}
 }

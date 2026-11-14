@@ -230,27 +230,23 @@ func ctxHasOpenCode() bool {
 // --- Claude ---
 
 func ctxWireClaude(opts core.RunOpts) (bool, error) {
+	reason := agents.ClaudeMcpRefusal("context-mode")
 	if opts.DryRun {
+		if reason != "" {
+			util.L.Warn("[dry-run] Claude Code: context-mode would not be wired: " + reason)
+			return false, nil
+		}
 		util.L.Sub("[dry-run] would: claude mcp add context-mode -- context-mode")
 		return true, nil
 	}
-	spawn := util.ContextModeSpawnFor("claude")
-	if isTest() {
-		cp := util.ClaudeCodePaths()
-		_ = util.EnsureDir(cp.Dir)
-		cfg := loadOrdered(cp.GlobalJSON)
-		servers := getOrCreateMapT(cfg, "mcpServers")
-		entry := util.NewOrderedMap()
-		entry.Set("type", "stdio")
-		entry.Set("command", spawn.Command)
-		entry.Set("args", toAny(spawn.Args))
-		servers.Set("context-mode", entry)
-		_ = util.WriteFile(cp.GlobalJSON, util.StringifyJSON(cfg))
-		agents.AllowClaudeMcpTool("context-mode")
-		WriteOwner("claude", "context-mode")
-		return ctxVerifyClaude(), nil
+	if reason != "" {
+		util.L.Warn("Claude Code: context-mode not wired: " + reason)
+		return false, nil
 	}
-	mcpConfigure("claude", "context-mode")
+	if !mcpConfigure("claude", "context-mode") {
+		util.L.Warn("Claude Code: context-mode not wired: could not update ~/.claude.json")
+		return false, nil
+	}
 	agents.AllowClaudeMcpToolProjectLocal("context-mode")
 	WriteOwner("claude", "context-mode")
 	util.L.Sub(util.C.Dim("tip: to enable slash commands, type inside Claude Code: /plugin marketplace add mksglu/context-mode && /plugin install context-mode@context-mode"))
@@ -642,6 +638,7 @@ const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would add context-mode MCP and GEMINI.md for antigravity")
+		antigravityDryRunMcp("context-mode")
 		return true, nil
 	}
 	mcpConfigure("antigravity", "context-mode")

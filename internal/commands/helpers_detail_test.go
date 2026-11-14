@@ -2,6 +2,7 @@ package commands
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -32,5 +33,21 @@ func TestStripAnsi(t *testing.T) {
 
 	if got != want {
 		t.Errorf("stripAnsi(%q) = %q, want %q", input, got, want)
+	}
+}
+
+func TestPrintFailureDetailKeepsDecisiveLineAndDedupes(t *testing.T) {
+	logs := "first decisive line\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl10\nl10"
+	got := lastUniqueLines(logs, failureDetailLines)
+	if len(got) != 10 || got[0] != "first decisive line" || got[9] != "l10" {
+		t.Fatalf("lastUniqueLines = %v", got)
+	}
+	out := captureStdout(t, func() { printFailureDetail(map[string]string{"agent": logs}) })
+	if !strings.Contains(out, "first decisive line") {
+		t.Fatalf("decisive first line dropped:\n%s", out)
+	}
+	many := strings.Repeat("dup\n", 5) + "a\nb"
+	if got := lastUniqueLines(many, 12); !reflect.DeepEqual(got, []string{"dup", "a", "b"}) {
+		t.Fatalf("dedupe = %v", got)
 	}
 }

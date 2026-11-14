@@ -252,7 +252,7 @@ Where each tool lands. `mcp.json`-style shapes hold MCP server entries; instruct
 | Claude Code | `~/.claude.json` (+ `~/.claude/settings.json` for hooks, permissions) | `~/.claude/CLAUDE.md` |
 | OpenCode | `~/.config/opencode/opencode.json` (`mcp.*`, plugins) | `~/.config/opencode/AGENTS.md` |
 | Codex | `~/.codex/config.toml` (`[mcp_servers.*]`, hooks) | `~/.codex/AGENTS.md` |
-| Antigravity | `~/.gemini/antigravity/mcp_config.json` (+ `~/.gemini/settings.json` for hooks) | `~/.gemini/GEMINI.md` |
+| Antigravity | `~/.gemini/config/mcp_config.json` (+ `~/.gemini/config/hooks.json` for hooks) | `~/.gemini/GEMINI.md` |
 | GitHub Copilot | `~/.copilot/mcp-config.json` (+ `~/.copilot/settings.json`) | `~/.copilot/copilot-instructions.md` |
 | Factory Droid | `~/.factory/mcp.json` (+ `~/.factory/settings.json`) | `~/.factory/AGENTS.md` |
 | Pi | `~/.pi/agent/mcp.json` (+ `~/.pi/agent/settings.json`, extensions) | `~/.pi/agent/AGENTS.md` |

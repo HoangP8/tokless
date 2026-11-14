@@ -397,26 +397,7 @@ func kiloMcpMap(cfg *util.OrderedMap) (*util.OrderedMap, error) {
 }
 
 func hasJSONCComment(raw string) bool {
-	inString, escaped := false, false
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		if inString {
-			if escaped {
-				escaped = false
-			} else if c == '\\' {
-				escaped = true
-			} else if c == '"' {
-				inString = false
-			}
-			continue
-		}
-		if c == '"' {
-			inString = true
-		} else if c == '/' && i+1 < len(raw) && (raw[i+1] == '/' || raw[i+1] == '*') {
-			return true
-		}
-	}
-	return false
+	return util.HasJSONCComments(raw)
 }
 
 func kiloManagedMcpEntry(v any, command []string) bool {

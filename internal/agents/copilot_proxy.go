@@ -741,6 +741,9 @@ func configureCopilotVSCodeSettingsLocked() (bool, error) {
 		if next == raw {
 			return false, nil
 		}
+		if util.TryParseJsonc(next) == nil {
+			return false, os.ErrInvalid
+		}
 		if err := writeCopilotVSCodeFileLocked(path, next); err != nil {
 			return false, err
 		}
@@ -775,6 +778,9 @@ func configureCopilotVSCodeSettingsLocked() (bool, error) {
 		newline = ""
 	}
 	next := before + newline + strings.ReplaceAll(copilotVSCodeBlock(commaAdded), "\n", lineSep) + lineSep + raw[close:]
+	if util.TryParseJsonc(next) == nil {
+		return false, os.ErrInvalid
+	}
 	if err := writeCopilotVSCodeFileLocked(path, next); err != nil {
 		return false, err
 	}
