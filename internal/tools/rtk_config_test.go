@@ -447,8 +447,17 @@ func TestRtkManifestIsWrapped(t *testing.T) {
 
 func TestRtkHookWiredFalseInCleanHome(t *testing.T) {
 	rtkTestHome(t)
-	if rtkHookWired() {
-		t.Fatal("a verifier reports rtk wired in an empty home; cleanup would never run")
+	var wired []string
+	for id, verify := range rtk.VerifyFor {
+		if verify == nil {
+			continue
+		}
+		if p := verify(); p != nil && *p {
+			wired = append(wired, id)
+		}
+	}
+	if len(wired) > 0 {
+		t.Fatalf("verifiers report rtk wired in an empty home: %v", wired)
 	}
 }
 
