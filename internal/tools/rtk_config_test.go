@@ -457,6 +457,12 @@ func TestRtkHookWiredFalseInCleanHome(t *testing.T) {
 		}
 	}
 	if len(wired) > 0 {
+		v1, v2 := openCodeRtkPluginPath(), openCodeRtkV2PluginPath()
+		r1, _ := util.ReadFileSafe(v1)
+		r2, _ := util.ReadFileSafe(v2)
+		t.Logf("home=%q envHome=%q xdg=%q opencodeDir=%q", util.Home(), os.Getenv("HOME"), os.Getenv("XDG_CONFIG_HOME"), os.Getenv("OPENCODE_CONFIG_DIR"))
+		t.Logf("v1=%q exists=%v len=%d head=%q", v1, util.Exists(v1), len(r1), r1[:min(60, len(r1))])
+		t.Logf("v2=%q exists=%v len=%d head=%q", v2, util.Exists(v2), len(r2), r2[:min(60, len(r2))])
 		t.Fatalf("verifiers report rtk wired in an empty home: %v", wired)
 	}
 }
