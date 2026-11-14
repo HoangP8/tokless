@@ -713,3 +713,26 @@ func TestDoctorAgentRowsNoSelectedInstructionOmitsBranch(t *testing.T) {
 		t.Fatalf("no selected instruction tools should omit Instructions branch: %s", rows)
 	}
 }
+
+func TestDoctorAgentRowsExplainsRefusedClaudeMcpEntry(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	cfg := `{"mcpServers":{"context-mode":{"type":"stdio","command":"my-wrapper","args":["secret-token"]},"projectmem":{"type":"stdio","command":"my-wrapper","args":["secret-token"]}}}`
+	if err := util.WriteFile(util.ClaudeCodePaths().GlobalJSON, cfg); err != nil {
+		t.Fatal(err)
+	}
+	rows := stripDoctorANSI(strings.Join(doctorAgentRows(agentReport{id: "claude", label: "Claude", installed: true}), "\n"))
+	for _, id := range []string{"context-mode", "projectmem"} {
+		if !strings.Contains(rows, "mcpServers."+id+" is not a tokless-managed entry (command=my-wrapper)") {
+			t.Fatalf("%s refusal reason missing from doctor rows: %s", id, rows)
+		}
+	}
+	if strings.Contains(rows, "secret-token") {
+		t.Fatalf("doctor rows leak args: %s", rows)
+	}
+	// The reason belongs to the Claude row only.
+	rows = stripDoctorANSI(strings.Join(doctorAgentRows(agentReport{id: "kilo", label: "Kilo", installed: true}), "\n"))
+	if !strings.Contains(rows, "mcp.context-mode") || strings.Contains(rows, "not a tokless-managed entry") {
+		t.Fatalf("kilo row leaked claude refusal: %s", rows)
+	}
+}

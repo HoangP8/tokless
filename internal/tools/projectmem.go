@@ -755,6 +755,13 @@ func projectmemEnsureInstalled(opts core.RunOpts) (bool, error) {
 // projectmemConfigureMcp writes the MCP entry spawning through `tokless run-mcp --tool projectmem`.
 func projectmemConfigureMcp(agent string) bool {
 	if !mcpConfigure(agent, "projectmem") {
+		if agent == "claude" {
+			reason := agents.ClaudeMcpRefusal("projectmem")
+			if reason == "" {
+				reason = "could not update ~/.claude.json"
+			}
+			util.L.Warn("Claude Code: projectmem not wired: " + reason)
+		}
 		return false
 	}
 	if agent == "kilo" {
@@ -1225,7 +1232,15 @@ func claudeMcpBounded(toolID string) bool {
 			spawn := util.McpSpawnForAgent("claude", toolID)
 			cmd, _ := em.Get("command")
 			args, _ := em.Get("args")
-			return cmd == spawn.Command && mcpStrArrEq(args, spawn.Args)
+			if cmd == spawn.Command && mcpStrArrEq(args, spawn.Args) {
+				return true
+			}
+			list, _ := args.([]any)
+			strs := make([]string, len(list))
+			for i, a := range list {
+				strs[i], _ = a.(string)
+			}
+			return cmd == spawn.Command && agents.ClaudeMcpOwned(toolID, em) && util.ContextModeFlagsCurrent("claude", strs)
 		}
 	}
 	return false
@@ -1281,6 +1296,12 @@ func init() {
 		a := agent
 		projectmem.WireFor[a] = func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
+				if a == "claude" {
+					if reason := agents.ClaudeMcpRefusal("projectmem"); reason != "" {
+						util.L.Warn("[dry-run] Claude Code: projectmem would not be wired: " + reason)
+						return false, nil
+					}
+				}
 				util.L.Sub("[dry-run] would add projectmem MCP to " + a)
 				if a == "antigravity" {
 					antigravityDryRunMcp("projectmem")

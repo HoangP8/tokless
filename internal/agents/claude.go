@@ -11,33 +11,8 @@ import (
 	"github.com/HoangP8/tokless/internal/util"
 )
 
-// ConfigureClaudeMcp writes/updates an MCP stdio entry under ~/.claude.json.
-func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
-	p := util.ClaudeCodePaths()
-	_ = util.EnsureDir(p.Dir)
-	raw, exists := util.ReadFileSafe(p.GlobalJSON)
-	if !exists && util.Exists(p.GlobalJSON) {
-		return false, p.GlobalJSON
-	}
-	if util.HasJSONCComments(raw) {
-		return false, p.GlobalJSON
-	}
-	cfg := util.TryParseJsonc(raw)
-	if cfg == nil {
-		if strings.TrimSpace(raw) != "" {
-			return false, p.GlobalJSON
-		}
-		cfg = util.NewOrderedMap()
-	}
-	servers, ok := mapChild(cfg, "mcpServers")
-	if !ok {
-		if _, exists := cfg.Get("mcpServers"); exists {
-			return false, p.GlobalJSON
-		}
-		servers = util.NewOrderedMap()
-		cfg.Set("mcpServers", servers)
-	}
-
+// claudeMcpDesired is the mcpServers entry tokless writes for toolID.
+func claudeMcpDesired(toolID string) *util.OrderedMap {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
@@ -48,17 +23,110 @@ func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
 	desired.Set("type", "stdio")
 	desired.Set("command", spawn.Command)
 	desired.Set("args", toAnySlice(spawn.Args))
-	if existing, ok := servers.Get(toolID); ok {
-		if claudeMcpEqual(existing, desired) {
-			AllowClaudeMcpTool(toolID)
-			AllowClaudeMcpToolProjectLocal(toolID)
-			return false, p.GlobalJSON
+	return desired
+}
+
+// ClaudeMcpOwned reports whether existing is a tokless-written stdio entry for toolID,
+// whatever target path or tokless binary location it records.
+func ClaudeMcpOwned(toolID string, existing any) bool {
+	em, ok := existing.(*util.OrderedMap)
+	if !ok || (toolID != "context-mode" && toolID != "projectmem") {
+		return false
+	}
+	if t, has := em.Get("type"); has && t != "stdio" {
+		return false
+	}
+	cmd, _ := em.Get("command")
+	args, _ := em.Get("args")
+	list, _ := args.([]any)
+	c, _ := cmd.(string)
+	return kiloExpectedCommand(toolID, append([]string{c}, stringArgs(list)...))
+}
+
+// claudeMcpLoad parses ~/.claude.json and returns its mcpServers map (created in
+// memory when absent). A non-empty reason means tokless must not rewrite the file.
+func claudeMcpLoad() (cfg, servers *util.OrderedMap, reason string) {
+	file := util.ClaudeCodePaths().GlobalJSON
+	raw, exists := util.ReadFileSafe(file)
+	switch {
+	case !exists && util.Exists(file):
+		return nil, nil, "~/.claude.json is unreadable"
+	case util.HasJSONCComments(raw):
+		return nil, nil, "~/.claude.json has comments; tokless will not rewrite it"
+	}
+	cfg = util.TryParseJsonc(raw)
+	if cfg == nil && strings.TrimSpace(raw) != "" {
+		return nil, nil, "~/.claude.json is not valid JSON"
+	}
+	if cfg == nil {
+		cfg = util.NewOrderedMap()
+	} else if strings.TrimSpace(raw) == "null" { // parses to a map with no storage
+		return nil, nil, "~/.claude.json is not a JSON object"
+	}
+	servers, ok := mapChild(cfg, "mcpServers")
+	if !ok {
+		if _, has := cfg.Get("mcpServers"); has {
+			return nil, nil, "mcpServers in ~/.claude.json is not an object"
 		}
-		if !claudeMcpPreHostFlags(existing, desired) {
-			return false, p.GlobalJSON
+		servers = util.NewOrderedMap()
+		cfg.Set("mcpServers", servers)
+	}
+	return cfg, servers, ""
+}
+
+// ClaudeMcpRefusal returns "" when ConfigureClaudeMcp(toolID) would write or no-op,
+// else a one-line reason it refuses.
+func ClaudeMcpRefusal(toolID string) string {
+	_, servers, reason := claudeMcpLoad()
+	if reason != "" {
+		return reason
+	}
+	existing, has := servers.Get(toolID)
+	if !has || claudeMcpEqual(existing, claudeMcpDesired(toolID)) || ClaudeMcpOwned(toolID, existing) {
+		return ""
+	}
+	cmd := "unknown"
+	if em, ok := existing.(*util.OrderedMap); ok {
+		if c, ok := em.Get("command"); ok {
+			s, _ := c.(string)
+			cmd = filepath.Base(strings.ReplaceAll(s, "\\", "/"))
 		}
 	}
-	servers.Set(toolID, desired)
+	what := "is not a tokless-managed entry"
+	if kiloIsToklessCommand(cmd) {
+		what = "uses the tokless command with an unrecognised shape"
+	}
+	return "existing mcpServers." + toolID + " " + what + " (command=" + cmd + "); run `claude mcp remove " + toolID + "` (user scope) then `tokless`"
+}
+
+// ConfigureClaudeMcp writes/updates an MCP stdio entry under ~/.claude.json.
+func ConfigureClaudeMcp(toolID string) (changed bool, file string) {
+	p := util.ClaudeCodePaths()
+	_ = util.EnsureDir(p.Dir)
+	cfg, servers, reason := claudeMcpLoad()
+	if reason != "" {
+		return false, p.GlobalJSON
+	}
+
+	desired := claudeMcpDesired(toolID)
+	existing, has := servers.Get(toolID)
+	owned := ClaudeMcpOwned(toolID, existing)
+	switch {
+	case !has:
+		servers.Set(toolID, desired)
+	case claudeMcpEqual(existing, desired) || (owned && claudeMcpSpawnEqual(existing, desired)):
+		AllowClaudeMcpTool(toolID)
+		AllowClaudeMcpToolProjectLocal(toolID)
+		return false, p.GlobalJSON
+	case owned:
+		em := existing.(*util.OrderedMap)
+		for _, k := range []string{"command", "args"} {
+			v, _ := desired.Get(k)
+			em.Set(k, v)
+		}
+	default:
+		return false, p.GlobalJSON
+	}
 	if err := util.WriteFile(p.GlobalJSON, util.StringifyJSON(cfg)); err != nil {
 		return false, p.GlobalJSON
 	}
@@ -485,15 +553,7 @@ func RemoveClaudeMcp(toolID string) bool {
 			if servers, ok := cfg.Get("mcpServers"); ok {
 				if sm, ok := servers.(*util.OrderedMap); ok {
 					if existing, has := sm.Get(toolID); has {
-						spawn := util.McpSpawnForAgent("claude", toolID)
-						if toolID == "codegraph" {
-							spawn = util.WrapAutoIndex("claude", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-						}
-						desired := util.NewOrderedMap()
-						desired.Set("type", "stdio")
-						desired.Set("command", spawn.Command)
-						desired.Set("args", toAnySlice(spawn.Args))
-						if !claudeMcpEqual(existing, desired) && !claudeMcpPreHostFlags(existing, desired) {
+						if !claudeMcpEqual(existing, claudeMcpDesired(toolID)) && !ClaudeMcpOwned(toolID, existing) {
 							return removed
 						}
 						sm.Delete(toolID)
@@ -696,25 +756,8 @@ func ClaudeOAuthWired() bool {
 	return false
 }
 
-// claudeMcpEqual compares command/args/env by canonical JSON.
-// claudeMcpPreHostFlags matches a context-mode entry written before host flags existed.
-func claudeMcpPreHostFlags(existing any, desired *util.OrderedMap) bool {
-	args, _ := desired.Get("args")
-	list, _ := args.([]any)
-	legacy := util.StripContextModeFlags(stringArgs(list))
-	if len(legacy) == len(list) {
-		return false
-	}
-	old := util.NewOrderedMap()
-	for _, k := range desired.Keys() {
-		v, _ := desired.Get(k)
-		old.Set(k, v)
-	}
-	old.Set("args", toAnySlice(legacy))
-	return claudeMcpEqual(existing, old)
-}
-
-func claudeMcpEqual(existing any, desired *util.OrderedMap) bool {
+// claudeMcpSpawnEqual compares command/args by canonical JSON.
+func claudeMcpSpawnEqual(existing any, desired *util.OrderedMap) bool {
 	em, ok := existing.(*util.OrderedMap)
 	if !ok {
 		return false
@@ -726,9 +769,15 @@ func claudeMcpEqual(existing any, desired *util.OrderedMap) bool {
 	}
 	argsA, _ := em.Get("args")
 	argsB, _ := desired.Get("args")
-	if jsonStr(orEmptyArr(argsA)) != jsonStr(orEmptyArr(argsB)) {
+	return jsonStr(orEmptyArr(argsA)) == jsonStr(orEmptyArr(argsB))
+}
+
+// claudeMcpEqual compares command/args/env by canonical JSON.
+func claudeMcpEqual(existing any, desired *util.OrderedMap) bool {
+	if !claudeMcpSpawnEqual(existing, desired) {
 		return false
 	}
+	em := existing.(*util.OrderedMap)
 	envA, _ := em.Get("env")
 	envB, _ := desired.Get("env")
 	return jsonStr(orEmptyObj(envA)) == jsonStr(orEmptyObj(envB))
