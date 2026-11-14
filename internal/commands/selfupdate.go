@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,7 +21,6 @@ import (
 const owner = "HoangP8"
 const repo = "tokless"
 const installSh = "https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.sh"
-const installPs1 = "https://raw.githubusercontent.com/HoangP8/tokless/main/scripts/install.ps1"
 const selfUpdateRuleWidth = 52
 
 func RunSelfUpdate() int {
@@ -37,10 +38,6 @@ func RunSelfUpdate() int {
 	if ok, interrupted := runSelfUpdateWithStatus(latest); interrupted {
 		return 130
 	} else if ok {
-		if util.IsWin {
-			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " tokless update scheduled; run tokless again after this process exits")
-			return 0
-		}
 		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " tokless " + util.C.Gray("v"+local+" → v"+latest+" updated"))
 		return 0
 	}
@@ -66,10 +63,6 @@ func MaybeSelfUpdate(opts InitOptions) {
 		util.RestoreConsoleCP()
 		os.Exit(130)
 	} else if ok {
-		if util.IsWin {
-			util.L.Raw("  " + util.C.Yellow(util.Sym.Warn) + " tokless update scheduled; run tokless again after this process exits")
-			return
-		}
 		util.L.Raw("  " + util.C.Green(util.Sym.Check) + " tokless " + util.C.Gray("v"+local+" → v"+latest+" updated"))
 		reexecAfterSelfUpdate()
 	} else {
@@ -134,7 +127,7 @@ func runStatus(label string, fn func()) {
 // runSelfUpdateTo swaps the binary and refreshes install.json on success.
 func runSelfUpdateTo(latest string) (bool, bool) {
 	ok, interrupted := selfUpdateExec(latest)
-	if ok && !util.IsWin && os.Getenv("TOKLESS_TEST") != "1" {
+	if ok && os.Getenv("TOKLESS_TEST") != "1" {
 		util.RefreshInstallMarker(latest)
 	}
 	return ok, interrupted
@@ -146,37 +139,24 @@ func selfUpdateExec(latest string) (bool, bool) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if util.IsWin {
-		if shell := windowsPowerShell(); shell != "" {
-			exe, err := os.Executable()
-			if err != nil {
-				util.L.Err("Could not locate tokless executable for update.")
-				return false, false
-			}
-			r := util.Run(shell, []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm " + installPs1 + " | iex"}, util.RunOptions{Capture: false, Env: windowsSelfUpdateEnv(os.Getpid(), exe), Ctx: ctx})
-			if ctx.Err() != nil {
-				return false, true
-			}
-			if r.Code == 0 {
-				return true, false
-			}
-			util.L.Err("Windows update could not be scheduled or replacement failed.")
-		}
-		util.L.Raw("  " + util.C.Cyan("powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm "+installPs1+" | iex\""))
-		return false, false
-	}
-	if err := selfUpdateUnixDirect(ctx, latest); err == nil {
+	err := selfUpdateDirect(ctx, latest)
+	if err == nil {
 		return true, false
-	} else if ctx.Err() != nil {
-		return false, true
-	} else {
-		util.L.Err("Update failed.")
 	}
-	util.L.Raw("  " + util.C.Cyan("curl -fsSL "+installSh+" | bash"))
+	if ctx.Err() != nil {
+		return false, true
+	}
+	util.L.Err("Update failed: " + err.Error())
+	if util.IsWin {
+		util.L.Raw("  " + util.C.Cyan("Reinstall from https://github.com/"+owner+"/"+repo+"/releases/latest"))
+	} else {
+		util.L.Raw("  " + util.C.Cyan("curl -fsSL "+installSh+" | bash"))
+	}
 	return false, false
 }
 
-func selfUpdateUnixDirect(ctx context.Context, latest string) error {
+// selfUpdateDirect downloads, verifies, and swaps the release in place.
+func selfUpdateDirect(ctx context.Context, latest string) error {
 	asset, ok := toklessReleaseAsset()
 	if !ok {
 		return fmt.Errorf("unsupported platform")
@@ -188,23 +168,42 @@ func selfUpdateUnixDirect(ctx context.Context, latest string) error {
 	if real, err := filepath.EvalSymlinks(exe); err == nil && real != "" {
 		exe = real
 	}
-	dir := filepath.Dir(exe)
-	tmp, err := os.CreateTemp(dir, "tokless-update-*")
-	if err != nil {
+	base := fmt.Sprintf("https://github.com/%s/%s/releases/download/v%s", owner, repo, latest)
+	download := exe + ".download"
+	_ = os.Remove(download)
+	if err := downloadFile(ctx, base+"/"+asset, download); err != nil {
+		_ = os.Remove(download)
 		return err
 	}
-	tmpPath := tmp.Name()
-	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-	}()
-	url := fmt.Sprintf("https://github.com/%s/%s/releases/download/v%s/%s", owner, repo, latest, asset)
+	want, err := releaseChecksum(ctx, base+"/SHA256SUMS", asset)
+	if err != nil {
+		_ = os.Remove(download)
+		return err
+	}
+	if err := verifySHA256(download, want); err != nil {
+		_ = os.Remove(download)
+		return err
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(download, 0o755); err != nil {
+			_ = os.Remove(download)
+			return err
+		}
+	}
+	if err := swapBinary(exe, download); err != nil {
+		_ = os.Remove(download)
+		return err
+	}
+	return nil
+}
+
+func downloadFile(ctx context.Context, url, path string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "tokless-self-update")
-	resp, err := (&http.Client{Timeout: 45 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: 300 * time.Second}).Do(req)
 	if err != nil {
 		return err
 	}
@@ -212,19 +211,166 @@ func selfUpdateUnixDirect(ctx context.Context, latest string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("download status %s", resp.Status)
 	}
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		_ = f.Close()
 		return err
 	}
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
+	return f.Close()
+}
+
+func releaseChecksum(ctx context.Context, url, asset string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "tokless-self-update")
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("checksum status %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if sum, ok := checksumFor(string(body), asset); ok {
+		return sum, nil
+	}
+	return "", fmt.Errorf("checksum for %s not found", asset)
+}
+
+func checksumFor(body, asset string) (string, bool) {
+	for _, line := range strings.Split(body, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == asset {
+			return fields[0], true
+		}
+	}
+	return "", false
+}
+
+func verifySHA256(path, want string) error {
+	f, err := os.Open(path)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, exe); err != nil {
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
 		return err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, want) {
+		return fmt.Errorf("checksum mismatch: got %s", got)
 	}
 	return nil
+}
+
+// swapBinary replaces the running exe with the verified download.
+func swapBinary(exe, download string) error {
+	if runtime.GOOS != "windows" {
+		return os.Rename(download, exe)
+	}
+	old := exe + ".old"
+	removeOldBinaries(exe)
+	if _, err := os.Stat(old); err == nil {
+		old = fmt.Sprintf("%s.old.%d", exe, os.Getpid())
+		_ = os.Remove(old)
+	}
+	if err := renameRetry(exe, old); err != nil {
+		return err
+	}
+	if err := renameRetry(download, exe); err != nil {
+		if rerr := renameRetry(old, exe); rerr != nil {
+			return fmt.Errorf("%w (rollback failed: %v)", err, rerr)
+		}
+		return err
+	}
+	// Restore the backup if Defender removed the new image.
+	time.Sleep(time.Second)
+	if _, err := os.Stat(exe); err != nil {
+		if rerr := renameRetry(old, exe); rerr != nil {
+			return fmt.Errorf("new binary missing after swap (%v); restore failed: %v", err, rerr)
+		}
+		return fmt.Errorf("new binary missing after swap; previous version restored")
+	}
+	// Not removable while mapped; the next update cleans it.
+	_ = os.Remove(old)
+	return nil
+}
+
+// restorePrevious puts this process's backup back, else the first match.
+func restorePrevious(exe string) error {
+	if err := os.Rename(fmt.Sprintf("%s.old.%d", exe, os.Getpid()), exe); err == nil {
+		return nil
+	}
+	dir, base := filepath.Split(exe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	prefix := base + ".old"
+	var last error
+	for _, e := range entries {
+		if e.IsDir() || !hasOldPrefix(e.Name(), prefix) {
+			continue
+		}
+		if last = os.Rename(filepath.Join(dir, e.Name()), exe); last == nil {
+			return nil
+		}
+	}
+	if last == nil {
+		last = fmt.Errorf("previous binary not found")
+	}
+	return last
+}
+
+// hasOldPrefix matches update backups; Windows paths are case-insensitive.
+func hasOldPrefix(name, prefix string) bool {
+	if len(name) < len(prefix) {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(name[:len(prefix)], prefix)
+	}
+	return name[:len(prefix)] == prefix
+}
+
+// removeOldBinaries clears leftovers from earlier updates.
+func removeOldBinaries(exe string) {
+	dir, base := filepath.Split(exe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := base + ".old"
+	for _, e := range entries {
+		if !e.IsDir() && hasOldPrefix(e.Name(), prefix) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// renameRetry retries on Windows while antivirus may hold the file.
+func renameRetry(from, to string) error {
+	err := os.Rename(from, to)
+	if err == nil || runtime.GOOS != "windows" {
+		return err
+	}
+	for i := 0; i < 9; i++ {
+		time.Sleep(200 * time.Millisecond)
+		if err = os.Rename(from, to); err == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func toklessReleaseAsset() (string, bool) {
@@ -234,6 +380,11 @@ func toklessReleaseAsset() (string, bool) {
 		osPart = "linux"
 	case "darwin":
 		osPart = "darwin"
+	case "windows":
+		if runtime.GOARCH != "amd64" {
+			return "", false
+		}
+		return "tokless-windows-x64.exe", true
 	default:
 		return "", false
 	}
@@ -247,20 +398,6 @@ func toklessReleaseAsset() (string, bool) {
 		return "", false
 	}
 	return "tokless-" + osPart + "-" + archPart, true
-}
-
-func windowsSelfUpdateEnv(pid int, exe string) []string {
-	return []string{"CI=1", fmt.Sprintf("TOKLESS_SELF_UPDATE_PID=%d", pid), "TOKLESS_SELF_UPDATE_PATH=" + exe}
-}
-
-func windowsPowerShell() string {
-	if util.Which("pwsh") != "" {
-		return "pwsh"
-	}
-	if util.Which("powershell") != "" {
-		return "powershell"
-	}
-	return ""
 }
 
 func fetchLatestReleaseTag() string {
