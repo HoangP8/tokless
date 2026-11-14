@@ -390,6 +390,7 @@ func TestManagedHookCommandsClaude(t *testing.T) {
 func TestManagedRuntimeFiles(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 
 	op := util.OpenCodePathsResolved()
@@ -417,6 +418,7 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	binDir := t.TempDir()
 	suffix := ""
@@ -451,6 +453,7 @@ func TestManagedRuntimeFilesOpenCodeMixedInstall(t *testing.T) {
 func TestManagedRuntimeFilesOpenCodeVersion(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	plugins := util.OpenCodePathsResolved().PluginsDir
 	v2Path := filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
@@ -481,6 +484,7 @@ func TestManagedRuntimeFilesOpenCode2(t *testing.T) {
 	home := t.TempDir()
 	util.SetHomeOverride(home)
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Cleanup(func() { util.SetHomeOverride("") })
 	want := filepath.Join(util.OpenCodePathsV2().PluginsDir, "tokless-rtk-v2.ts")
 	files := managedRuntimeFiles("opencode2")
