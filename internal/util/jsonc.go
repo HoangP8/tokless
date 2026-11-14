@@ -2,8 +2,10 @@ package util
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"strings"
+	"unicode/utf16"
 )
 
 // OrderedMap preserves JSON object key order so we never reshuffle user config.
@@ -184,9 +186,35 @@ func stripComments(s string) string {
 	return string(out)
 }
 
+// NormalizeJSONText strips a UTF-8 BOM and decodes UTF-16 text from Windows editors.
+func NormalizeJSONText(s string) string {
+	raw := []byte(s)
+	switch {
+	case bytes.HasPrefix(raw, []byte{0xEF, 0xBB, 0xBF}):
+		return s[3:]
+	case bytes.HasPrefix(raw, []byte{0xFF, 0xFE}):
+		return decodeUTF16(raw[2:], binary.LittleEndian)
+	case bytes.HasPrefix(raw, []byte{0xFE, 0xFF}):
+		return decodeUTF16(raw[2:], binary.BigEndian)
+	case len(raw) >= 4 && raw[1] == 0 && raw[3] == 0:
+		return decodeUTF16(raw, binary.LittleEndian)
+	case len(raw) >= 4 && raw[0] == 0 && raw[2] == 0:
+		return decodeUTF16(raw, binary.BigEndian)
+	}
+	return s
+}
+
+func decodeUTF16(b []byte, order binary.ByteOrder) string {
+	u := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		u = append(u, order.Uint16(b[i:]))
+	}
+	return string(utf16.Decode(u))
+}
+
 // ParseJsonc parses JSON-with-comments into an ordered map.
 func ParseJsonc(text string) (*OrderedMap, error) {
-	stripped := stripComments(text)
+	stripped := stripComments(NormalizeJSONText(text))
 	m := NewOrderedMap()
 	if strings.TrimSpace(stripped) == "" {
 		return m, nil
@@ -208,6 +236,7 @@ func TryParseJsonc(text string) *OrderedMap {
 
 // HasJSONCComments reports comment markers outside JSON strings.
 func HasJSONCComments(raw string) bool {
+	raw = NormalizeJSONText(raw)
 	inString, escaped := false, false
 	for i := 0; i < len(raw); i++ {
 		c := raw[i]

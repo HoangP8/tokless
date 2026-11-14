@@ -43,7 +43,7 @@ func toolConfigLocation(agentID, toolID string) (path, key string) {
 		path = util.CursorGlobalMcpPath()
 		key = "mcpServers." + toolID
 	case "antigravity":
-		path = util.AntigravityPathsResolved().McpConfig
+		path = util.AntigravityPathsResolved().McpConfigCLI
 		key = "mcpServers." + toolID
 	case "copilot":
 		path = util.CopilotPathsResolved().McpConfig

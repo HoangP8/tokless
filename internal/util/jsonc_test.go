@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestParseJsoncPreservesStrings(t *testing.T) {
@@ -260,5 +261,96 @@ func TestHasJSONCComments(t *testing.T) {
 	}
 	if !HasJSONCComments("{\"url\":\"https://example.test/a\" // comment\n}") {
 		t.Fatal("expected comment marker outside string")
+	}
+}
+
+func utf16Bytes(s string, bigEndian bool, bom bool) string {
+	var out []byte
+	put := func(u uint16) {
+		if bigEndian {
+			out = append(out, byte(u>>8), byte(u))
+		} else {
+			out = append(out, byte(u), byte(u>>8))
+		}
+	}
+	if bom {
+		put(0xFEFF)
+	}
+	for _, u := range utf16.Encode([]rune(s)) {
+		put(u)
+	}
+	return string(out)
+}
+
+func TestParseJsoncNormalizesEncodings(t *testing.T) {
+	const doc = `{"a":"b"} `
+	cases := map[string]string{
+		"utf8 bom":      "\xEF\xBB\xBF" + doc,
+		"utf16le bom":   utf16Bytes(doc, false, true),
+		"utf16be bom":   utf16Bytes(doc, true, true),
+		"utf16le nobom": utf16Bytes(doc, false, false),
+		"utf16be nobom": utf16Bytes(doc, true, false),
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := ParseJsonc(input)
+			if err != nil {
+				t.Fatalf("ParseJsonc: %v", err)
+			}
+			if v, _ := cfg.Get("a"); v != "b" {
+				t.Fatalf("a = %v, want b", v)
+			}
+		})
+	}
+}
+
+func TestParseJsoncEmptyAndBomOnly(t *testing.T) {
+	for name, input := range map[string]string{
+		"empty":         "",
+		"utf8 bom":      "\xEF\xBB\xBF",
+		"utf16le bom":   "\xFF\xFE",
+		"utf16be bom":   "\xFE\xFF",
+		"odd utf16 bom": "\xFF\xFE{",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := ParseJsonc(input)
+			if err != nil {
+				t.Fatalf("ParseJsonc: %v", err)
+			}
+			if cfg.Len() != 0 {
+				t.Fatalf("want empty map, got %d keys", cfg.Len())
+			}
+		})
+	}
+}
+
+func TestParseJsoncOddLengthUTF16DoesNotPanic(t *testing.T) {
+	input := utf16Bytes(`{"a":1}`, false, true) + "\x00"
+	cfg, err := ParseJsonc(input)
+	if err != nil {
+		t.Fatalf("ParseJsonc: %v", err)
+	}
+	if _, ok := cfg.Get("a"); !ok {
+		t.Fatal("expected key a")
+	}
+}
+
+func TestParseJsoncKeepsFEFFInsideString(t *testing.T) {
+	fe := string(rune(0xFEFF))
+	cfg, err := ParseJsonc("\xEF\xBB\xBF{\"a\":\"x" + fe + "y\"}")
+	if err != nil {
+		t.Fatalf("ParseJsonc: %v", err)
+	}
+	if v, _ := cfg.Get("a"); v != "x"+fe+"y" {
+		t.Fatalf("a = %q, want embedded U+FEFF preserved", v)
+	}
+}
+
+func TestHasJSONCCommentsUTF16(t *testing.T) {
+	if !HasJSONCComments(utf16Bytes("{\"a\":1 // c\n}", false, true)) {
+		t.Fatal("expected comment in UTF-16 input")
+	}
+	if HasJSONCComments(utf16Bytes(`{"a":"//x"}`, true, true)) {
+		t.Fatal("string marker in UTF-16 input must not count")
 	}
 }

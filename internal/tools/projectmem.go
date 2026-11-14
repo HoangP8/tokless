@@ -1282,6 +1282,9 @@ func init() {
 		projectmem.WireFor[a] = func(opts core.RunOpts) (bool, error) {
 			if opts.DryRun {
 				util.L.Sub("[dry-run] would add projectmem MCP to " + a)
+				if a == "antigravity" {
+					antigravityDryRunMcp("projectmem")
+				}
 				return true, nil
 			}
 			if !projectmemConfigureMcp(a) || !projectmemInstallSessionPush(a) {

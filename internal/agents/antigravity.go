@@ -12,12 +12,20 @@ import (
 
 var errNoStableTokless = errors.New("cannot resolve a stable tokless executable; refusing to persist an empty hook command")
 
+// antigravityMcpPrimaryFile is the config Antigravity reads.
+func antigravityMcpPrimaryFile() string {
+	return util.AntigravityPathsResolved().McpConfigCLI
+}
+
+// AntigravityMcpConfigPath exposes the path the writer targets.
+func AntigravityMcpConfigPath() string { return antigravityMcpPrimaryFile() }
+
+func antigravityMcpMirrorFile() string {
+	return filepath.Join(util.Home(), ".gemini", "antigravity-cli", "mcp_config.json")
+}
+
 func antigravityMcpConfigFiles() []string {
-	p := util.AntigravityPathsResolved()
-	return []string{
-		p.McpConfigCLI,
-		filepath.Join(util.Home(), ".gemini", "antigravity-cli", "mcp_config.json"),
-	}
+	return []string{antigravityMcpPrimaryFile(), antigravityMcpMirrorFile()}
 }
 
 func antigravityLegacyMcpFiles() []string {
@@ -881,128 +889,125 @@ func antigravityPermissionManaged(entry, settingsFile string) bool {
 	return false
 }
 
-// ConfigureAntigravityMcp upserts mcpServers.<tool> into agy's shared and
-// CLI-specific configs.
-func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
+// AntigravityMcpEntry builds the mcpServers.<toolID> entry tokless writes.
+func AntigravityMcpEntry(toolID string) *util.OrderedMap {
 	var spawn util.McpSpawn
 	if toolID == "codegraph" {
 		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
 	} else {
 		spawn = util.McpSpawnForAgent("antigravity", toolID)
 	}
-	allConfigured := true
-	for _, f := range antigravityMcpConfigFiles() {
-		raw, exists := util.ReadFileSafe(f)
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			if exists && strings.TrimSpace(raw) != "" {
-				util.L.Err("couldn't parse Antigravity MCP config " + f + "; leaving it unchanged")
-				allConfigured = false
-				continue
-			}
-			cfg = util.NewOrderedMap()
+	entry := util.NewOrderedMap()
+	entry.Set("command", spawn.Command)
+	if len(spawn.Args) > 0 {
+		entry.Set("args", spawn.Args)
+	}
+	entry.Set("trust", true)
+	return entry
+}
+
+// upsertAntigravityMcp merges entry into one MCP config file.
+func upsertAntigravityMcp(f, toolID string, entry *util.OrderedMap) (wrote, ok bool) {
+	raw, read := util.ReadFileSafe(f)
+	if !read && util.Exists(f) {
+		util.L.Err("couldn't read Antigravity MCP config " + f + "; leaving it unchanged")
+		return false, false
+	}
+	cfg, err := util.ParseJsonc(raw)
+	if err != nil {
+		util.L.Err("couldn't parse Antigravity MCP config " + f + ": " + err.Error() + "; leaving it unchanged")
+		return false, false
+	}
+	servers, isMap := mapChild(cfg, "mcpServers")
+	if !isMap {
+		if _, has := cfg.Get("mcpServers"); has {
+			util.L.Err("Antigravity MCP config " + f + ": mcpServers is not an object; leaving it unchanged")
+			return false, false
 		}
-		servers, ok := mapChild(cfg, "mcpServers")
-		if !ok {
-			if _, exists := cfg.Get("mcpServers"); exists {
-				allConfigured = false
-				continue
-			}
-			servers = util.NewOrderedMap()
-			cfg.Set("mcpServers", servers)
+		servers = util.NewOrderedMap()
+		cfg.Set("mcpServers", servers)
+	}
+	if existing, has := servers.Get(toolID); has {
+		if jsonEqual(existing, entry) && util.NormalizeJSONText(raw) == raw {
+			return false, true
 		}
-		entry := util.NewOrderedMap()
-		entry.Set("command", spawn.Command)
-		if len(spawn.Args) > 0 {
-			entry.Set("args", spawn.Args)
-		}
-		entry.Set("trust", true)
-		if existing, ok := servers.Get(toolID); ok {
-			if jsonEqual(existing, entry) {
-				continue
-			}
-			if !antigravityMcpManaged(toolID, existing) {
-				allConfigured = false
-				continue
-			}
-		}
-		servers.Set(toolID, entry)
-		if next := util.StringifyJSON(cfg); next != raw {
-			if err := util.WriteFile(f, next); err != nil {
-				util.L.Err("couldn't write Antigravity MCP config " + f + ": " + err.Error())
-				allConfigured = false
-				continue
-			}
-			changed = true
-			file = f
+		if !antigravityMcpManaged(toolID, existing) {
+			util.L.Err("Antigravity MCP config " + f + ": mcpServers." + toolID + " is not managed by tokless; leaving it unchanged")
+			return false, false
 		}
 	}
+	servers.Set(toolID, entry)
+	if next := util.StringifyJSON(cfg); next != raw {
+		if err := util.WriteFile(f, next); err != nil {
+			util.L.Err("couldn't write Antigravity MCP config " + f + ": " + err.Error())
+			return false, false
+		}
+		return true, true
+	}
+	return false, true
+}
+
+// ConfigureAntigravityMcp writes the canonical config, then mirrors it. Only
+// the canonical file decides success; the mirror never vetoes.
+func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
+	entry := AntigravityMcpEntry(toolID)
+	f := antigravityMcpPrimaryFile()
+	changed, allConfigured := upsertAntigravityMcp(f, toolID, entry)
+	if changed {
+		file = f
+	}
 	if allConfigured {
+		upsertAntigravityMcp(antigravityMcpMirrorFile(), toolID, entry)
 		if toolID == "codegraph" {
 			RemoveAntigravityCodegraphToolDefs()
 		}
 		removeAntigravityMcpFromFiles(toolID, antigravityLegacyMcpFiles())
-	}
-	if allConfigured {
 		AllowAntigravityEntry("mcp(" + toolID + "/*)")
 	}
 	return changed, file
 }
 
-// AntigravityMcpBounded reports whether every supported MCP config holds the tokless-bounded entry for toolID.
-func AntigravityMcpBounded(toolID string) bool {
-	files := antigravityMcpConfigFiles()
-	if len(files) == 0 {
-		return false
+// antigravityMcpServers returns the canonical config's mcpServers map.
+func antigravityMcpServers() (*util.OrderedMap, bool) {
+	raw, ok := util.ReadFileSafe(antigravityMcpPrimaryFile())
+	if !ok {
+		return nil, false
 	}
-	for _, f := range files {
-		raw, ok := util.ReadFileSafe(f)
-		if !ok {
-			return false
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			return false
-		}
-		s, ok := cfg.Get("mcpServers")
-		sm, isMap := s.(*util.OrderedMap)
-		if !ok || !isMap {
-			return false
-		}
-		existing, found := sm.Get(toolID)
-		if !found || !antigravityMcpMatches(toolID, existing, false) {
-			return false
-		}
+	cfg := util.TryParseJsonc(raw)
+	if cfg == nil {
+		return nil, false
 	}
-	return true
+	s, ok := cfg.Get("mcpServers")
+	sm, isMap := s.(*util.OrderedMap)
+	if !ok || !isMap {
+		return nil, false
+	}
+	return sm, true
 }
 
-// AntigravityProjectmemMcpBounded reports whether every supported MCP config holds the tokless-bounded projectmem entry.
+// AntigravityMcpBounded reports whether the canonical config holds tokless's entry for toolID.
+func AntigravityMcpBounded(toolID string) bool {
+	sm, ok := antigravityMcpServers()
+	if !ok {
+		return false
+	}
+	existing, found := sm.Get(toolID)
+	return found && antigravityMcpMatches(toolID, existing, false)
+}
+
+// AntigravityProjectmemMcpBounded reports whether the canonical config holds the projectmem entry.
 func AntigravityProjectmemMcpBounded() bool {
 	return AntigravityMcpBounded("projectmem")
 }
 
-// AntigravityMcpHas reports whether at least one supported global MCP config
-// registers the tool. Unreadable or malformed files are skipped.
+// AntigravityMcpHas reports whether the canonical config registers the tool.
 func AntigravityMcpHas(toolID string) bool {
-	for _, f := range antigravityMcpConfigFiles() {
-		raw, ok := util.ReadFileSafe(f)
-		if !ok {
-			continue
-		}
-		cfg := util.TryParseJsonc(raw)
-		if cfg == nil {
-			continue
-		}
-		if s, ok := cfg.Get("mcpServers"); ok {
-			if sm, ok := s.(*util.OrderedMap); ok {
-				if _, found := sm.Get(toolID); found {
-					return true
-				}
-			}
-		}
+	sm, ok := antigravityMcpServers()
+	if !ok {
+		return false
 	}
-	return false
+	_, found := sm.Get(toolID)
+	return found
 }
 
 func agyKnownBinDirs() []string {
@@ -1229,11 +1234,43 @@ func removeAntigravityMcpFromFiles(toolID string, files []string) {
 	}
 }
 
-// antigravityMcpManaged accepts the current entry and, for context-mode, the pre-host-flag shape.
+// antigravityMcpManaged accepts tokless entries, including a stale command path.
 func antigravityMcpManaged(toolID string, existing any) bool {
-	return antigravityMcpMatches(toolID, existing, true)
+	if antigravityMcpMatches(toolID, existing, true) {
+		return true
+	}
+	em, ok := existing.(*util.OrderedMap)
+	if !ok {
+		return false
+	}
+	command, _ := em.Get("command")
+	cmd, ok := command.(string)
+	if !ok {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(strings.ReplaceAll(cmd, `\`, "/")))
+	if base != "tokless" && base != "tokless.exe" && !strings.HasPrefix(base, "tokless-") {
+		return false
+	}
+	args, _ := em.Get("args")
+	arr, ok := args.([]any)
+	if !ok || len(arr) == 0 {
+		return false
+	}
+	first, _ := arr[0].(string)
+	if first != "run-mcp" {
+		return false
+	}
+	if len(arr) >= 3 {
+		if flag, _ := arr[1].(string); flag == "--tool" {
+			target, _ := arr[2].(string)
+			return target == toolID
+		}
+	}
+	return true
 }
 
+// antigravityMcpMatches requires the exact command and args; trust is not checked.
 func antigravityMcpMatches(toolID string, existing any, legacyOK bool) bool {
 	em, ok := existing.(*util.OrderedMap)
 	if !ok {
@@ -1241,15 +1278,14 @@ func antigravityMcpMatches(toolID string, existing any, legacyOK bool) bool {
 	}
 	command, _ := em.Get("command")
 	args, _ := em.Get("args")
-	trust, _ := em.Get("trust")
-	spawn := util.McpSpawnForAgent("antigravity", toolID)
-	if toolID == "codegraph" {
-		spawn = util.WrapAutoIndex("antigravity", util.PickMcpSpawn("codegraph", "serve", "--mcp"))
-	}
-	if command != spawn.Command || trust != true {
+	want := AntigravityMcpEntry(toolID)
+	wantCommand, _ := want.Get("command")
+	wantArgs, _ := want.Get("args")
+	spawnArgs, _ := wantArgs.([]string)
+	if command != wantCommand {
 		return false
 	}
-	return argsEq(args, spawn.Args) || legacyOK && toolID == "context-mode" && argsEq(args, util.StripContextModeFlags(spawn.Args))
+	return argsEq(args, spawnArgs) || legacyOK && toolID == "context-mode" && argsEq(args, util.StripContextModeFlags(spawnArgs))
 }
 
 // --- projectmem SessionStart hook ---

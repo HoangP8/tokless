@@ -118,9 +118,11 @@ func itoa(n int) string {
 
 func joinComma(ss []string) string { return strings.Join(ss, ", ") }
 
+const failureDetailLines = 12
+
 func printFailureDetail(logs map[string]string) {
 	for label, out := range logs {
-		lines := lastNonEmptyLines(out, 4)
+		lines := lastUniqueLines(out, failureDetailLines)
 		if len(lines) == 0 {
 			continue
 		}
@@ -136,6 +138,23 @@ func treeSub(msg string) {
 	util.TreeLeaf(util.C.Gray(util.Sym.Bullet) + " " + msg)
 }
 
+// lastUniqueLines keeps the last n distinct non-empty lines, in original order.
+func lastUniqueLines(s string, n int) []string {
+	lines := lastNonEmptyLines(s, -1)
+	seen := map[string]bool{}
+	var keep []string
+	for i := len(lines) - 1; i >= 0 && len(keep) < n; i-- {
+		if !seen[lines[i]] {
+			seen[lines[i]] = true
+			keep = append(keep, lines[i])
+		}
+	}
+	for i, j := 0, len(keep)-1; i < j; i, j = i+1, j-1 {
+		keep[i], keep[j] = keep[j], keep[i]
+	}
+	return keep
+}
+
 func lastNonEmptyLines(s string, n int) []string {
 	var keep []string
 	for _, ln := range strings.Split(s, "\n") {
@@ -143,7 +162,7 @@ func lastNonEmptyLines(s string, n int) []string {
 			keep = append(keep, t)
 		}
 	}
-	if len(keep) > n {
+	if n >= 0 && len(keep) > n {
 		keep = keep[len(keep)-n:]
 	}
 	return keep

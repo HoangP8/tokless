@@ -642,6 +642,7 @@ const ctxGeminiMarker = "context-mode — MANDATORY routing rules"
 func ctxWireAntigravity(opts core.RunOpts) (bool, error) {
 	if opts.DryRun {
 		util.L.Sub("[dry-run] would add context-mode MCP and GEMINI.md for antigravity")
+		antigravityDryRunMcp("context-mode")
 		return true, nil
 	}
 	mcpConfigure("antigravity", "context-mode")

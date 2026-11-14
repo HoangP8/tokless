@@ -1,8 +1,11 @@
 package tools
 
 import (
+	"encoding/json"
+
 	"github.com/HoangP8/tokless/internal/agents"
 	"github.com/HoangP8/tokless/internal/core"
+	"github.com/HoangP8/tokless/internal/util"
 )
 
 // mcpAdapter returns the MCP adapter for an agent, or nil when unknown.
@@ -11,6 +14,12 @@ func mcpAdapter(agentID string) core.McpAdapter {
 		return a.Mcp
 	}
 	return agents.McpAdapterFor(agentID)
+}
+
+// antigravityDryRunMcp logs the payload a real run would write.
+func antigravityDryRunMcp(toolID string) {
+	payload, _ := json.Marshal(agents.AntigravityMcpEntry(toolID))
+	util.L.Info("[dry-run] would set mcpServers." + toolID + " in " + agents.AntigravityMcpConfigPath() + ": " + string(payload))
 }
 
 // mcpConfigure wires toolID for agentID. Unknown agents are a no-op success.

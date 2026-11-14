@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -403,8 +404,225 @@ func TestConfigureAntigravityMcpPreservesMalformedConfigAndLegacyEntry(t *testin
 	if !strings.Contains(string(raw), `"codegraph"`) {
 		t.Fatalf("legacy fallback was removed after partial configure: %s", raw)
 	}
-	if !AntigravityMcpHas("codegraph") {
-		t.Fatal("AntigravityMcpHas should find codegraph despite malformed CLI config")
+	if AntigravityMcpHas("codegraph") {
+		t.Fatal("malformed canonical config must not count as wired")
+	}
+	if util.Exists(filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")) {
+		t.Fatal("mirror file must not be created")
+	}
+}
+
+func agyTestSetup(t *testing.T) (home string, primary string, mirror string) {
+	t.Helper()
+	home = t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	primary = util.AntigravityPathsResolved().McpConfigCLI
+	mirror = filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")
+	if err := os.MkdirAll(filepath.Dir(primary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return home, primary, mirror
+}
+
+func TestConfigureAntigravityMcpUTF8BOMPrimary(t *testing.T) {
+	_, primary, _ := agyTestSetup(t)
+	_ = os.WriteFile(primary, []byte("\xEF\xBB\xBF"+`{"mcpServers":{"user-server":{"command":"keepme"}}}`), 0o644)
+
+	changed, _ := ConfigureAntigravityMcp("codegraph")
+	if !changed {
+		t.Fatal("expected write")
+	}
+	if !AntigravityMcpBounded("codegraph") {
+		t.Fatal("codegraph should be wired in BOM-prefixed canonical config")
+	}
+	raw, _ := os.ReadFile(primary)
+	if !strings.Contains(string(raw), `"keepme"`) {
+		t.Fatalf("user server lost:\n%s", raw)
+	}
+	if changed, _ := ConfigureAntigravityMcp("codegraph"); changed {
+		t.Fatal("second configure must write nothing")
+	}
+}
+
+func TestConfigureAntigravityMcpNormalizesBOMWithEqualEntry(t *testing.T) {
+	_, primary, _ := agyTestSetup(t)
+	_ = os.WriteFile(primary, []byte(`{}`), 0o644)
+	if changed, _ := ConfigureAntigravityMcp("codegraph"); !changed {
+		t.Fatal("expected initial write")
+	}
+	raw, _ := os.ReadFile(primary)
+	_ = os.WriteFile(primary, append([]byte{0xEF, 0xBB, 0xBF}, raw...), 0o644)
+	if !AntigravityMcpBounded("codegraph") {
+		t.Fatal("BOM-prefixed config with the right entry must verify")
+	}
+	if changed, _ := ConfigureAntigravityMcp("codegraph"); !changed {
+		t.Fatal("an equal entry in a BOM file must be re-encoded once")
+	}
+	got, _ := os.ReadFile(primary)
+	if bytes.HasPrefix(got, []byte{0xEF, 0xBB, 0xBF}) {
+		t.Fatal("BOM was not stripped")
+	}
+}
+
+func TestConfigureAntigravityMcpLogsParseError(t *testing.T) {
+	_, primary, _ := agyTestSetup(t)
+	_ = os.WriteFile(primary, []byte(`{"mcpServers":`), 0o644)
+
+	out, _ := util.CaptureLogs(func() error {
+		ConfigureAntigravityMcp("codegraph")
+		return nil
+	})
+	if !strings.Contains(out, "couldn't parse Antigravity MCP config") || !strings.Contains(out, primary) {
+		t.Fatalf("parse failure must name the file, got:\n%s", out)
+	}
+}
+
+func TestConfigureAntigravityMcpBadMirrorDoesNotVetoWiring(t *testing.T) {
+	_, primary, mirror := agyTestSetup(t)
+	_ = os.WriteFile(primary, []byte(`{}`), 0o644)
+	_ = os.MkdirAll(filepath.Dir(mirror), 0o755)
+	_ = os.WriteFile(mirror, []byte(`{invalid`), 0o644)
+
+	ConfigureAntigravityMcp("codegraph")
+	if !AntigravityMcpBounded("codegraph") {
+		t.Fatal("primary match must be enough")
+	}
+	if raw, _ := os.ReadFile(mirror); string(raw) != `{invalid` {
+		t.Fatalf("bad mirror modified: %q", raw)
+	}
+	if raw, _ := os.ReadFile(antigravitySettingsFiles()[0]); !strings.Contains(string(raw), `mcp(codegraph/*)`) {
+		t.Fatalf("permissions allow rule missing despite bad mirror:\n%s", raw)
+	}
+}
+
+func TestConfigureAntigravityMcpAlwaysSyncsMirror(t *testing.T) {
+	_, primary, mirror := agyTestSetup(t)
+	_ = os.WriteFile(primary, []byte(`{}`), 0o644)
+	ConfigureAntigravityMcp("codegraph")
+	raw, err := os.ReadFile(mirror)
+	if err != nil {
+		t.Fatalf("mirror not created on a clean home: %v", err)
+	}
+	if !strings.Contains(string(raw), `"codegraph"`) {
+		t.Fatalf("mirror missing the entry:\n%s", raw)
+	}
+	_ = os.WriteFile(mirror, []byte(`{"mcpServers":{"u":{"command":"x"}}}`), 0o644)
+	ConfigureAntigravityMcp("context-mode")
+	raw, _ = os.ReadFile(mirror)
+	if !strings.Contains(string(raw), `"context-mode"`) || !strings.Contains(string(raw), `"u"`) {
+		t.Fatalf("existing mirror not synced:\n%s", raw)
+	}
+}
+
+func TestConfigureAntigravityMcpAdoptsStaleToklessPath(t *testing.T) {
+	_, primary, _ := agyTestSetup(t)
+	_ = os.WriteFile(primary, []byte(`{"mcpServers":{"projectmem":{"command":"C:\\old\\bin\\tokless.exe","args":["run-mcp","--tool","projectmem","pjm-mcp"]}}}`), 0o644)
+	if AntigravityMcpBounded("projectmem") {
+		t.Fatal("stale path must not verify")
+	}
+	if changed, _ := ConfigureAntigravityMcp("projectmem"); !changed {
+		t.Fatal("stale tokless entry should be rewritten")
+	}
+	if !AntigravityMcpBounded("projectmem") {
+		t.Fatal("rewritten entry should verify")
+	}
+	raw, _ := os.ReadFile(primary)
+	if !strings.Contains(string(raw), `"trust": true`) || strings.Contains(string(raw), `C:\\old`) {
+		t.Fatalf("entry not refreshed:\n%s", raw)
+	}
+}
+
+func TestCopilotVSCodeUTF16SettingsNotCorrupted(t *testing.T) {
+	home := t.TempDir()
+	util.SetHomeOverride(home)
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
+	ext := filepath.Join(home, ".vscode", "extensions", "github.copilot-chat-1.0.0")
+	if err := os.MkdirAll(ext, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := copilotVSCodeSettingsFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	u16 := []byte{0xFF, 0xFE}
+	for _, c := range []byte(`{"editor.fontSize":14}`) {
+		u16 = append(u16, c, 0)
+	}
+	if err := os.WriteFile(path, u16, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := configureCopilotVSCodeSettingsLocked(); err == nil {
+		t.Fatal("UTF-16 settings must be rejected, not spliced")
+	}
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, u16) {
+		t.Fatalf("UTF-16 settings modified:\n%q", got)
+	}
+}
+
+func TestConfigureAntigravityMcpUnreadablePrimaryNotClobbered(t *testing.T) {
+	_, primary, _ := agyTestSetup(t)
+	const body = `{"mcpServers":{"pencil":{"command":"keepme"}}}`
+	_ = os.WriteFile(primary, []byte(body), 0o600)
+	if err := os.Chmod(primary, 0o000); err != nil {
+		t.Skipf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(primary, 0o600) })
+	if _, err := os.ReadFile(primary); err == nil {
+		t.Skip("file is still readable (running as root)")
+	}
+
+	ConfigureAntigravityMcp("codegraph")
+	_ = os.Chmod(primary, 0o600)
+	raw, _ := os.ReadFile(primary)
+	if string(raw) != body {
+		t.Fatalf("unreadable config was overwritten:\n%s", raw)
+	}
+}
+
+func TestConfigureAntigravityMcpRefusesForeignEntries(t *testing.T) {
+	for name, entry := range map[string]string{
+		"pjm":               `{"command":"pjm","args":["mcp"]}`,
+		"tokless no proxy":  `{"command":"tokless","args":["--version"]}`,
+		"tokless no args":   `{"command":"tokless"}`,
+		"wrong tool target": `{"command":"tokless","args":["run-mcp","--tool","codegraph","x"]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, primary, _ := agyTestSetup(t)
+			body := `{"mcpServers":{"projectmem":` + entry + `}}`
+			_ = os.WriteFile(primary, []byte(body), 0o644)
+			out, _ := util.CaptureLogs(func() error {
+				if changed, _ := ConfigureAntigravityMcp("projectmem"); changed {
+					t.Fatal("foreign entry must not be rewritten")
+				}
+				return nil
+			})
+			if !strings.Contains(out, "mcpServers.projectmem") || !strings.Contains(out, primary) {
+				t.Fatalf("refusal must name the file and key, got:\n%s", out)
+			}
+			if AntigravityMcpBounded("projectmem") {
+				t.Fatal("foreign entry must not verify")
+			}
+			if raw, _ := os.ReadFile(primary); string(raw) != body {
+				t.Fatalf("foreign entry modified: %s", raw)
+			}
+		})
+	}
+}
+
+func TestAntigravityProjectmemEntryIsBoundedProxy(t *testing.T) {
+	entry := AntigravityMcpEntry("projectmem")
+	args, _ := entry.Get("args")
+	got, _ := args.([]string)
+	if len(got) < 4 || got[0] != "run-mcp" || got[1] != "--tool" || got[2] != "projectmem" {
+		t.Fatalf("projectmem must route through run-mcp --tool projectmem <inner>, got %v", got)
+	}
+	if trust, _ := entry.Get("trust"); trust != true {
+		t.Fatal("new entries keep trust: true")
 	}
 }
 
@@ -427,13 +645,13 @@ func TestAntigravityMcpHasAnySemantics(t *testing.T) {
 		t.Fatal("should be true when shared config has the tool")
 	}
 
-	// Case 3: Shared is malformed, CLI has tool → true
+	// Case 3: Canonical is malformed, mirror has tool → false (canonical only)
 	_ = os.WriteFile(p.McpConfigCLI, []byte(`{invalid`), 0o644)
 	cliMcp := filepath.Join(home, ".gemini", "antigravity-cli", "mcp_config.json")
 	_ = os.MkdirAll(filepath.Dir(cliMcp), 0o755)
 	_ = os.WriteFile(cliMcp, []byte(`{"mcpServers":{"codegraph":{"command":"cg"}}}`), 0o644)
-	if !AntigravityMcpHas("codegraph") {
-		t.Fatal("should be true when CLI config has the tool despite malformed shared config")
+	if AntigravityMcpHas("codegraph") {
+		t.Fatal("mirror alone must not count as wired")
 	}
 
 	// Case 4: Both malformed → false

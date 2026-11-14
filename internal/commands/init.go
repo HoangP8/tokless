@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -503,6 +504,7 @@ func RunInit(opts InitOptions) int {
 		util.PinToklessPersisted(persistedExe)
 		defer util.PinToklessPersisted("")
 	}
+	dryRunLogs := map[string]string{}
 	wireBar := util.NewSectionProgress("Agents")
 	wireBar.Start(len(wireIDs))
 	for _, agentID := range wireIDs {
@@ -568,6 +570,9 @@ func RunInit(opts InitOptions) int {
 			wireBar.Fail("tokless executable removed")
 			break
 		}
+		if opts.DryRun {
+			dryRunLogs[agentID] = wireOut
+		}
 		if len(failed) == 0 {
 			wireBar.Complete("")
 		} else {
@@ -578,6 +583,18 @@ func RunInit(opts InitOptions) int {
 	}
 	wireBar.Done("")
 	util.SetQuiet(false)
+	if opts.DryRun {
+		for _, id := range wireIDs {
+			if failures[id] != nil {
+				continue
+			}
+			for _, ln := range lastNonEmptyLines(dryRunLogs[id], -1) {
+				if strings.Contains(ln, "[dry-run]") {
+					util.TreeLeaf(ln)
+				}
+			}
+		}
+	}
 	rollbackFailed := false
 	if (len(failures) > 0 || binaryGone) && len(wireChanges) > 0 {
 		for i := len(wireChanges) - 1; i >= 0; i-- {

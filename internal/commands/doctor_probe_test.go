@@ -781,3 +781,23 @@ func writeExit0(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+func TestAntigravityDoctorPathIsCanonicalAndProbed(t *testing.T) {
+	util.SetHomeOverride(t.TempDir())
+	t.Cleanup(func() { util.SetHomeOverride("") })
+	canonical := util.AntigravityPathsResolved().McpConfigCLI
+	path, key := toolConfigLocation("antigravity", "codegraph")
+	if path != canonical || key != "mcpServers.codegraph" {
+		t.Fatalf("toolConfigLocation = (%q, %q), want canonical %q", path, key, canonical)
+	}
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"mcpServers":{"codegraph":{"command":"/opt/tokless","args":["run-mcp","--agent","antigravity","/opt/codegraph","serve","--mcp"]}}}`
+	if err := os.WriteFile(canonical, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if spawns := managedMcpSpawns("antigravity"); len(spawns) != 1 {
+		t.Fatalf("managedMcpSpawns must read the path doctor displays; got %+v", spawns)
+	}
+}
