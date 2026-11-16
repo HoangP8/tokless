@@ -961,10 +961,31 @@ func ConfigureAntigravityMcp(toolID string) (changed bool, file string) {
 		if toolID == "codegraph" {
 			RemoveAntigravityCodegraphToolDefs()
 		}
-		removeAntigravityMcpFromFiles(toolID, antigravityLegacyMcpFiles())
+		removeAntigravityMcpFromFiles(toolID, dropAliasedFiles(antigravityLegacyMcpFiles(), antigravityMcpConfigFiles()...))
 		AllowAntigravityEntry("mcp(" + toolID + "/*)")
 	}
 	return changed, file
+}
+
+// dropAliasedFiles drops files that are the same file as any target.
+func dropAliasedFiles(files []string, targets ...string) []string {
+	var keep []string
+	for _, f := range files {
+		fi, err := os.Stat(f)
+		aliased := false
+		if err == nil {
+			for _, t := range targets {
+				if ti, terr := os.Stat(t); terr == nil && os.SameFile(fi, ti) {
+					aliased = true
+					break
+				}
+			}
+		}
+		if !aliased {
+			keep = append(keep, f)
+		}
+	}
+	return keep
 }
 
 // antigravityMcpServers returns the canonical config's mcpServers map.

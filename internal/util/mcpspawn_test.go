@@ -98,6 +98,9 @@ func TestPickMcpSpawnWindowsCmdShim(t *testing.T) {
 	}
 
 	// 3. binary absent → npx fallback, npx itself is a .cmd shim → wrapped.
+	origPrefix := npmPrefix
+	npmPrefix = func() string { return "" }
+	defer func() { npmPrefix = origPrefix }()
 	npxDir := t.TempDir()
 	os.WriteFile(filepath.Join(npxDir, "npx.cmd"), []byte("dummy"), 0755)
 	os.WriteFile(filepath.Join(npxDir, "npx.CMD"), []byte("dummy"), 0755)

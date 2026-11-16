@@ -325,6 +325,20 @@ func ResolveCodegraphBin() string {
 			return p
 		}
 	}
+	for _, prefix := range []string{npmPrefix(), userLocalNpmPrefix()} {
+		if prefix == "" {
+			continue
+		}
+		dir := npmGlobalBinDir(prefix, IsWin)
+		p := filepath.Join(dir, "codegraph")
+		if IsWin {
+			p += ".cmd"
+		}
+		if Exists(p) && CodegraphBinaryHealthy(p) {
+			PrependProcessPath(dir)
+			return p
+		}
+	}
 	return ""
 }
 

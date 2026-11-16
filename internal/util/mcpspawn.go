@@ -26,6 +26,15 @@ var pkgForBin = map[string]string{
 	"codegraph":    "@colbymchenry/codegraph",
 }
 
+// whichNpmGlobal finds bin on PATH, else in the npm global bin dir (custom prefix not on PATH).
+func whichNpmGlobal(bin string) string {
+	if p := Which(bin); p != "" {
+		return p
+	}
+	EnsureNpmGlobalBinOnPath()
+	return Which(bin)
+}
+
 // PickMcpSpawn prefers a real binary on PATH, else falls back to npx --no-install.
 func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 	if extraArgs == nil {
@@ -42,7 +51,7 @@ func PickMcpSpawn(bin string, extraArgs ...string) McpSpawn {
 			spawn = wrapCmdShim(McpSpawn{Command: spawnCommand("pjm-mcp", p), Args: extraArgs})
 		}
 		return WrapBoundedTool("projectmem", spawn)
-	} else if p := Which(bin); p != "" {
+	} else if p := whichNpmGlobal(bin); p != "" {
 		spawn = wrapCmdShim(McpSpawn{Command: spawnCommand(bin, p), Args: extraArgs})
 		if bin == "context-mode" {
 			return WrapContextMode(spawn)
