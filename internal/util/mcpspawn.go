@@ -31,8 +31,11 @@ func whichNpmGlobal(bin string) string {
 	if p := Which(bin); p != "" {
 		return p
 	}
-	EnsureNpmGlobalBinOnPath()
-	return Which(bin)
+	prefix := npmPrefix()
+	if prefix == "" {
+		return ""
+	}
+	return FindBinary(bin, []string{npmGlobalBinDir(prefix, IsWin)})
 }
 
 // PickMcpSpawn prefers a real binary on PATH, else falls back to npx --no-install.
