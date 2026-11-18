@@ -245,3 +245,32 @@ func TestDshNoPluginBlock(t *testing.T) {
 		t.Fatalf("DetectProxy(dsh) = %v, want unconfigured", got)
 	}
 }
+
+// TestDshRtkPluginHidesWindowsConsole guards issue #70 for the dsh rewrite spawn.
+func TestDshRtkPluginHidesWindowsConsole(t *testing.T) {
+	src := dshRtkPluginSource("/usr/local/bin/tokless")
+	if !strings.Contains(src, `spawnSync(TOKLESS_BIN, ["rtk-rewrite", "--", args.command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true })`) {
+		t.Fatalf("dsh rtk spawn lacks windowsHide:\n%s", src)
+	}
+}
+
+// TestRefreshDshRtkPluginRewritesStaleWiredOnly guards the issue #70 update migration for dsh.
+func TestRefreshDshRtkPluginRewritesStaleWiredOnly(t *testing.T) {
+	dshProxyTestHome(t)
+	exe := "/usr/local/bin/tokless"
+	RefreshDshRtkPlugin(exe)
+	if util.Exists(dshRtkPluginFile()) {
+		t.Fatal("refresh created an unwired plugin")
+	}
+	_ = os.MkdirAll(filepath.Dir(dshPatchFile()), 0o755)
+	_ = util.WriteFile(dshPatchFile(), dshProxySeed)
+	if _, _, err := ConfigureDshRtk(exe); err != nil {
+		t.Fatal(err)
+	}
+	want := dshRtkPluginSource(exe)
+	_ = util.WriteFile(dshRtkPluginFile(), strings.ReplaceAll(want, ", windowsHide: true", ""))
+	RefreshDshRtkPlugin(exe)
+	if raw, _ := util.ReadFileSafe(dshRtkPluginFile()); raw != want {
+		t.Fatalf("stale plugin not refreshed:\n%s", raw)
+	}
+}

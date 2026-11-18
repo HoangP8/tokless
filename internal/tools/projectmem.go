@@ -784,7 +784,7 @@ export default function (pi: any) {
     sent = true
     try {
       const cwd = event?.systemPromptOptions?.cwd ?? process.cwd()
-      const content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd, input: "", encoding: "utf8", timeout: 15000 }).trim()
+      const content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd, input: "", encoding: "utf8", timeout: 15000, windowsHide: true }).trim()
       if (content) return { message: { customType: "projectmem", content, display: false } }
     } catch {}
   })
@@ -804,7 +804,7 @@ const server = async ({ directory }: any) => ({
     let content = cache.get(key)
     if (content === undefined) {
       try {
-        content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd: directory ?? process.cwd(), input: "", encoding: "utf8", timeout: 15000 }).trim()
+        content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd: directory ?? process.cwd(), input: "", encoding: "utf8", timeout: 15000, windowsHide: true }).trim()
       } catch {
         content = ""
       }
@@ -828,7 +828,7 @@ export default { id: "projectmem-context", async setup(ctx: any) {
     const key = event?.sessionID ?? "no-session"
     let content = cache.get(key)
     if (content === undefined) {
-      try { content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd: process.cwd(), input: "", encoding: "utf8", timeout: 15000 }).trim() }
+      try { content = execFileSync(HOOK, ["projectmem-hook", "text"], { cwd: process.cwd(), input: "", encoding: "utf8", timeout: 15000, windowsHide: true }).trim() }
       catch { content = "" }
       cache.set(key, content)
     }
@@ -868,14 +868,7 @@ func writeProjectmemExtension(agent string) bool {
 		return false
 	}
 	_ = os.Remove(filepath.Join(filepath.Dir(path), "tokless-projectmem.ts"))
-	tmpl := piProjectmemExtension
-	switch agent {
-	case "kilo", "opencode":
-		tmpl = kiloProjectmemPlugin
-	case "opencode2":
-		tmpl = openCodeProjectmemV2Plugin
-	}
-	if util.WriteFile(path, fmt.Sprintf(tmpl, strconv.Quote(exe))) != nil {
+	if util.WriteFile(path, projectmemExtensionContent(agent, exe)) != nil {
 		return false
 	}
 	if agent == "opencode" {
@@ -885,6 +878,18 @@ func writeProjectmemExtension(agent string) bool {
 		_ = os.Remove(filepath.Join(filepath.Dir(path), openCodeProjectmemV1File))
 	}
 	return true
+}
+
+// projectmemExtensionContent renders the projectmem extension for agent.
+func projectmemExtensionContent(agent, exe string) string {
+	tmpl := piProjectmemExtension
+	switch agent {
+	case "kilo", "opencode":
+		tmpl = kiloProjectmemPlugin
+	case "opencode2":
+		tmpl = openCodeProjectmemV2Plugin
+	}
+	return fmt.Sprintf(tmpl, strconv.Quote(exe))
 }
 
 // openCodeV2PluginsDirIsSeparate reports whether v2 has its own plugins dir; a shared dir's files belong to v1.

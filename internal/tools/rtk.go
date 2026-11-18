@@ -142,7 +142,7 @@ export default function (pi: ExtensionAPI) {
         resolve(value)
       }
       try {
-        const child = spawn(TOKLESS, ["rtk-hook", "omp"], { stdio: ["pipe", "pipe", "ignore"] })
+        const child = spawn(TOKLESS, ["rtk-hook", "omp"], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true })
         let output = ""
         child.stdout.setEncoding("utf8")
         child.stdout.on("data", (chunk) => { output += chunk })
@@ -396,7 +396,7 @@ func clineRtkHookScript(exe string) string {
 		return "#!/usr/bin/env node\n// " + clineRtkMarker + "\n" +
 			"// stdio inherit streams stdin/stdout straight through — no buffering, no re-encoding.\n" +
 			"const { spawnSync } = require(\"child_process\");\n" +
-			"const r = spawnSync(" + strconv.Quote(exe) + ", [\"rtk-hook\", \"cline\"], { stdio: \"inherit\" });\n" +
+			"const r = spawnSync(" + strconv.Quote(exe) + ", [\"rtk-hook\", \"cline\"], { stdio: \"inherit\", windowsHide: true });\n" +
 			"process.exit(typeof r.status === \"number\" ? r.status : 0);\n"
 	}
 	return "#!/bin/sh\n# " + clineRtkMarker + "\nexec " + util.ShQuote(exe) + " rtk-hook cline\n"
@@ -515,7 +515,7 @@ export const ToklessRtkPlugin = async () => ({
     const command = output?.args?.command
     if (typeof command !== "string") return
     const rewritten = await new Promise<string>((resolve) => {
-      const child = spawn(TOKLESS_BIN, ["rtk-rewrite", "--", command], { stdio: ["ignore", "pipe", "ignore"] })
+      const child = spawn(TOKLESS_BIN, ["rtk-rewrite", "--", command], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
       let stdout = ""
       child.stdout.setEncoding("utf8")
       child.stdout.on("data", (chunk) => { stdout += chunk })
@@ -595,7 +595,7 @@ export default { id: "tokless-rtk", async setup(ctx: any) {
     try {
       const { spawn } = await import("node:child_process")
       const rewritten = await new Promise<string>((resolve) => {
-        const child = spawn(TOKLESS_BIN, ["rtk-rewrite", "--", command], { stdio: ["ignore", "pipe", "ignore"] })
+        const child = spawn(TOKLESS_BIN, ["rtk-rewrite", "--", command], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
         let stdout = ""
         child.stdout.setEncoding("utf8")
         child.stdout.on("data", (chunk) => { stdout += chunk })
@@ -1144,7 +1144,7 @@ export default function (amp: any) {
     if (typeof command !== "string" || command.length === 0) return
     try {
       const { spawnSync } = await import("node:child_process")
-      const r = spawnSync(TOKLESS_BIN, ["rtk-rewrite", "--", command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      const r = spawnSync(TOKLESS_BIN, ["rtk-rewrite", "--", command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
       if (r.status !== 0 || typeof r.stdout !== "string") return
       const rewritten = r.stdout.trim()
       if (!rewritten || rewritten === command) return

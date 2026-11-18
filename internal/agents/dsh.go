@@ -775,7 +775,7 @@ async function apply(ctx) {
     }
     try {
       const { spawnSync } = await import("node:child_process")
-      const r = spawnSync(TOKLESS_BIN, ["rtk-rewrite", "--", args.command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      const r = spawnSync(TOKLESS_BIN, ["rtk-rewrite", "--", args.command], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
       if (r.status === 0 && typeof r.stdout === "string") {
         const rewritten = r.stdout.trim()
         if (rewritten && rewritten !== args.command) {
@@ -808,6 +808,19 @@ func DshRtkWired() bool {
 		return false
 	}
 	return strings.Contains(raw, fmt.Sprintf("id: %s", dshRtkPluginName)) && util.Exists(dshRtkPluginFile())
+}
+
+// RefreshDshRtkPlugin rewrites a wired dsh RTK plugin whose content drifted from the current template.
+func RefreshDshRtkPlugin(exe string) {
+	if exe == "" || !DshRtkWired() {
+		return
+	}
+	want := dshRtkPluginSource(exe)
+	if cur, ok := util.ReadFileSafe(dshRtkPluginFile()); ok && cur != want {
+		if err := util.WriteFile(dshRtkPluginFile(), want); err != nil {
+			util.L.Debug("plugin refresh failed: " + filepath.Base(dshRtkPluginFile()))
+		}
+	}
 }
 
 // DshBridgeWired reports whether the hooks-claude-code bridge row

@@ -171,6 +171,9 @@ func RunUpdate(opts InitOptions) int {
 			}
 		}
 	}
+	if !scoped {
+		toolsPkg.RefreshManagedPlugins()
+	}
 
 	if len(changed) == 0 {
 		toolsPkg.ConfigureInstructionConflicts(true)
