@@ -339,7 +339,7 @@ func enableProxyAutostartOS() (err error) {
 	if err := runSchtasks("/run", "/tn", proxyAutostartTask); err != nil {
 		return fmt.Errorf("initial start of %s: %w", proxyAutostartTask, err)
 	}
-	deadline := time.Now().Add(proxyReadyTimeout)
+	deadline := time.Now().Add(headroomProxyReadyTimeout)
 	for time.Now().Before(deadline) {
 		running, stateErr := scheduledTaskRunning()
 		if stateErr != nil {

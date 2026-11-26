@@ -221,7 +221,7 @@ func enableProxyAutostartOS() (err error) {
 	if err := exec.Command("systemctl", "--user", "enable", "--now", proxyAutostartUnit).Run(); err != nil {
 		return fmt.Errorf("enable %s: %w", proxyAutostartUnit, err)
 	}
-	deadline := proxyNow().Add(proxyReadyTimeout)
+	deadline := proxyNow().Add(headroomProxyReadyTimeout)
 	for proxyNow().Before(deadline) {
 		if ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			break

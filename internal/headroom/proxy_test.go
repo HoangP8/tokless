@@ -525,9 +525,10 @@ func TestPersistProxyRuntimeProviderClearing(t *testing.T) {
 	}
 }
 
-func TestPersistProxyRuntimeGeminiTargetClearing(t *testing.T) {
+func TestPersistProxyRuntimeTargetClearing(t *testing.T) {
 	isolateProxyOps(t)
 	proxyTestBin(t)
+	unsetEnvForTest(t, "CLOUDCODE_TARGET_API_URL")
 	t.Setenv("TOKLESS_HEADROOM_GEMINI_URL", "https://gemini.example.test")
 	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "https://cloudcode.example.test")
 	if err := persistProxyRuntime(8787); err != nil {
@@ -537,11 +538,14 @@ func TestPersistProxyRuntimeGeminiTargetClearing(t *testing.T) {
 	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "")
 	gemini, cloudcode := ProxyUpstreamGeminiURLs()
 	if gemini != "" || cloudcode != "" {
-		t.Fatalf("explicitly cleared Gemini targets = %q, %q", gemini, cloudcode)
+		t.Fatalf("explicitly cleared upstream targets = %q, %q", gemini, cloudcode)
 	}
 	args := strings.Join(proxyArgs(8787), " ")
-	if strings.Contains(args, "--gemini-api-url") || strings.Contains(args, "--cloudcode-api-url") {
-		t.Fatalf("cleared targets remained in args: %s", args)
+	if strings.Contains(args, "--gemini-api-url") {
+		t.Fatalf("cleared Gemini target remained in args: %s", args)
+	}
+	if !strings.Contains(args, "--cloudcode-api-url "+defaultCloudCodeTargetURL) {
+		t.Fatalf("cleared Cloud Code target must fall back to the default: %s", args)
 	}
 }
 
@@ -612,12 +616,32 @@ func TestAcquireProxyStartLockStealsStale(t *testing.T) {
 	if err := os.WriteFile(lock, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chtimes(lock, time.Unix(200, 0), time.Unix(200, 0)); err != nil {
+	if err := os.Chtimes(lock, time.Unix(100, 0), time.Unix(100, 0)); err != nil {
 		t.Fatal(err)
 	}
 	release, err := acquireProxyStartLock(func() time.Time { return now })
 	if err != nil {
 		t.Fatalf("stale lock not stolen: %v", err)
+	}
+	release()
+	if util.Exists(lock) {
+		t.Fatal("lock file left behind after release")
+	}
+}
+
+func TestAcquireProxyStartLockStealsDeadHolder(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	proxyGone = func(*os.Process) bool { return true }
+	now := time.Unix(300, 0)
+	clock := func() time.Time { now = now.Add(time.Second); return now }
+	lock := proxyStartLock()
+	if err := os.WriteFile(lock, []byte("424242-1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireProxyStartLock(clock)
+	if err != nil {
+		t.Fatalf("lock held by dead process not stolen: %v", err)
 	}
 	release()
 	if util.Exists(lock) {
@@ -650,7 +674,7 @@ func TestStartProxyReadinessTimeoutRollsBack(t *testing.T) {
 	proxyGone = func(*os.Process) bool { return killed }
 	now := time.Unix(100, 0)
 	proxyNow = func() time.Time { return now }
-	proxySleep = func(time.Duration) { now = now.Add(proxyReadyTimeout) }
+	proxySleep = func(time.Duration) { now = now.Add(headroomProxyReadyTimeout) }
 
 	err := StartProxy()
 	if err == nil || !strings.Contains(err.Error(), "did not become ready") {
@@ -748,7 +772,7 @@ func TestStartProxyReadinessRollbackIgnoresChangedIdentity(t *testing.T) {
 	proxyWait = func(*os.Process) error { waited = true; return nil }
 	now := time.Unix(100, 0)
 	proxyNow = func() time.Time { return now }
-	proxySleep = func(time.Duration) { now = now.Add(proxyReadyTimeout) }
+	proxySleep = func(time.Duration) { now = now.Add(headroomProxyReadyTimeout) }
 
 	err := StartProxy()
 	if err == nil || !strings.Contains(err.Error(), "did not become ready") {
@@ -1613,6 +1637,360 @@ func TestStartProxyRestartsSupervisedDaemonWhenAllowlistChanges(t *testing.T) {
 	}
 	if !wrote {
 		t.Fatalf("expected new ownership record to be written with updated allowlist")
+	}
+}
+
+func TestProxyArgsPinDefaultCloudCodeTarget(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL")
+
+	args := proxyArgs(8787)
+	if !proxyArgsContains(args, "--cloudcode-api-url") || !proxyArgsContains(args, defaultCloudCodeTargetURL) {
+		t.Fatalf("default proxy args do not pin the Cloud Code upstream: %v", args)
+	}
+	if err := persistProxyRuntime(8787); err != nil {
+		t.Fatal(err)
+	}
+	if st, ok := util.ReadProxyRuntime(); !ok || st.CloudCodeURL != "" {
+		t.Fatalf("default Cloud Code target must not be persisted: %+v (ok=%v)", st, ok)
+	}
+
+	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "https://custom.cloudcode")
+	args = proxyArgs(8787)
+	if !proxyArgsContains(args, "https://custom.cloudcode") || proxyArgsContains(args, defaultCloudCodeTargetURL) {
+		t.Fatalf("explicit Cloud Code target ignored: %v", args)
+	}
+
+	t.Setenv("CLOUDCODE_TARGET_API_URL", "https://native.cloudcode")
+	args = proxyArgs(8787)
+	if !proxyArgsContains(args, "https://custom.cloudcode") || proxyArgsContains(args, "https://native.cloudcode") {
+		t.Fatalf("tokless Cloud Code target must beat the headroom-native env: %v", args)
+	}
+
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL")
+	args = proxyArgs(8787)
+	if !proxyArgsContains(args, "https://native.cloudcode") {
+		t.Fatalf("headroom-native Cloud Code env was not honored: %v", args)
+	}
+}
+
+func TestProxyArgsUsePersistedCloudCodeTarget(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL")
+	if err := util.SaveHeadroomProxyRuntime(util.ProxyRuntime{
+		Port:         8787,
+		AnthropicURL: "https://stored.anthropic",
+		OpenAIURL:    "https://stored.openai",
+		CloudCodeURL: "https://stored.cloudcode",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	args := proxyArgsFromRuntime(8787)
+	if !proxyArgsContains(args, "https://stored.cloudcode") || proxyArgsContains(args, defaultCloudCodeTargetURL) {
+		t.Fatalf("persisted Cloud Code target ignored: %v", args)
+	}
+}
+
+func TestStartProxyRestartsDaemonMissingCloudCodeDefault(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL")
+	pidFile, _ := proxyFiles()
+	want := proxyArgs(8787)
+	if len(want) < 2 || want[len(want)-2] != "--cloudcode-api-url" || want[len(want)-1] != defaultCloudCodeTargetURL {
+		t.Fatalf("proxy args do not end with the Cloud Code default: %v", want)
+	}
+	legacy := want[:len(want)-2]
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 5385, Executable: bin, Args: legacy, Start: "start"}); err != nil {
+		t.Fatal(err)
+	}
+	live := true
+	killed, spawned := false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case 5385:
+			return processIdentityInfo{Executable: bin, Args: legacy, Start: "start"}, nil
+		case 5386:
+			return processIdentityInfo{Executable: bin, Args: want, Start: "start"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 5385 {
+			killed = true
+			live = false
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		live = true
+		spawned = true
+		cmd.Process = &os.Process{Pid: 5386}
+		return nil
+	}
+	proxyWrite = func(string, proxyOwnership) error { return nil }
+	if err := StartProxy(); err != nil {
+		t.Fatalf("StartProxy with a pre-default daemon failed: %v", err)
+	}
+	if !killed || !spawned {
+		t.Fatalf("pre-default daemon was not replaced: killed=%v spawned=%v", killed, spawned)
+	}
+}
+
+func TestStartProxyRestartsSupervisedDaemonMissingCloudCodeDefault(t *testing.T) {
+	requireProcessIdentity(t)
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL")
+	want := proxyArgs(8787)
+	legacy := want[:len(want)-2]
+	if err := writeProxySupervisedState(5382, bin, legacy, nil, "start"); err != nil {
+		t.Fatal(err)
+	}
+	live := true
+	killed, spawned := false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case 5382:
+			return processIdentityInfo{Executable: bin, Args: legacy, Start: "start"}, nil
+		case 5383:
+			return processIdentityInfo{Executable: bin, Args: want, Start: "start"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 5382 {
+			killed = true
+			live = false
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		live = true
+		spawned = true
+		cmd.Process = &os.Process{Pid: 5383}
+		return nil
+	}
+	proxyWrite = func(string, proxyOwnership) error { return nil }
+	if err := StartProxy(); err != nil {
+		t.Fatalf("StartProxy with a pre-default supervised proxy failed: %v", err)
+	}
+	if !killed || !spawned {
+		t.Fatalf("pre-default supervised proxy was not replaced: killed=%v spawned=%v", killed, spawned)
+	}
+}
+
+func TestProxyArgsExplicitEmptyMatchesSupervisedRuntime(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	unsetEnvForTest(t, "CLOUDCODE_TARGET_API_URL")
+	t.Setenv("TOKLESS_HEADROOM_CLOUDCODE_URL", "")
+	spawn := proxyArgs(8787)
+	if err := persistProxyRuntime(8787); err != nil {
+		t.Fatal(err)
+	}
+	interactive := proxyArgsFromRuntime(8787)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL") // systemd UnsetEnvironment / launchd / schtasks
+	supervised := proxyArgsFromRuntime(8787)
+	if !equalStrings(spawn, supervised) || !equalStrings(interactive, supervised) {
+		t.Fatalf("explicit-empty Cloud Code diverges:\nspawn=%v\ninteractive=%v\nsupervised=%v", spawn, interactive, supervised)
+	}
+}
+
+func TestProxyArgsNativeEnvMatchesSupervisedRuntime(t *testing.T) {
+	isolateProxyOps(t)
+	proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL")
+	t.Setenv("CLOUDCODE_TARGET_API_URL", "https://corp.cloudcode")
+	spawn := proxyArgs(8787)
+	if !proxyArgsContains(spawn, "https://corp.cloudcode") {
+		t.Fatalf("headroom-native Cloud Code env was not honored: %v", spawn)
+	}
+	if err := persistProxyRuntime(8787); err != nil {
+		t.Fatal(err)
+	}
+	interactive := proxyArgsFromRuntime(8787)
+	unsetEnvForTest(t, "CLOUDCODE_TARGET_API_URL")
+	supervised := proxyArgsFromRuntime(8787)
+	if !equalStrings(interactive, supervised) {
+		t.Fatalf("native-env Cloud Code diverges:\nspawn=%v\ninteractive=%v\nsupervised=%v", spawn, interactive, supervised)
+	}
+	if !proxyArgsContains(supervised, "https://corp.cloudcode") {
+		t.Fatalf("persisted native Cloud Code target missing from supervised args: %v", supervised)
+	}
+}
+
+func TestStartProxyRestartsLegacyDaemonWithNativeTarget(t *testing.T) {
+	isolateProxyOps(t)
+	util.SetHomeOverride(t.TempDir())
+	bin := proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL")
+	t.Setenv("CLOUDCODE_TARGET_API_URL", "https://corp.cloudcode")
+	pidFile, _ := proxyFiles()
+	want := proxyArgs(8787)
+	legacy := withoutCloudCodeFlag(want)
+	if !proxyArgsContains(want, "https://corp.cloudcode") || proxyArgsContains(legacy, "--cloudcode-api-url") {
+		t.Fatalf("test setup argv = %v / %v", want, legacy)
+	}
+	if err := writeProxyOwnership(pidFile, proxyOwnership{PID: 7001, Executable: bin, Args: legacy, Start: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	live := true
+	killed, spawned := false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch pid {
+		case 7001:
+			return processIdentityInfo{Executable: bin, Args: legacy, Start: "s"}, nil
+		case 7002:
+			return processIdentityInfo{Executable: bin, Args: want, Start: "s"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 7001 {
+			killed, live = true, false
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		spawned, live = true, true
+		cmd.Process = &os.Process{Pid: 7002}
+		return nil
+	}
+	proxyWrite = func(string, proxyOwnership) error { return nil }
+	if err := StartProxy(); err != nil {
+		t.Fatalf("legacy daemon with native env after upgrade: %v", err)
+	}
+	if !killed || !spawned {
+		t.Fatalf("legacy daemon with native target was not replaced: killed=%v spawned=%v", killed, spawned)
+	}
+}
+
+func TestStartProxyAdoptsLegacyOrphan(t *testing.T) {
+	requireProcessIdentity(t)
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL")
+	want := proxyArgs(8787)
+	legacy := withoutCloudCodeFlag(want)
+	proxyLiveZProbe = func(time.Duration) bool { return true }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 7101, true }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		if pid == 7101 {
+			return processIdentityInfo{Executable: bin, Args: legacy, Start: "s"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyProcessEnv = func(int) map[string]string {
+		return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": headroomAllowedBaseURLs()}
+	}
+	proxyWrite = func(string, proxyOwnership) error { return nil }
+	if err := StartProxy(); err != nil {
+		t.Fatalf("legacy orphan no longer adoptable: %v", err)
+	}
+}
+
+func TestStartProxyAdoptsThenRestartsLegacyOrphan(t *testing.T) {
+	requireProcessIdentity(t)
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL")
+	want := proxyArgs(8787)
+	legacy := withoutCloudCodeFlag(want)
+	live, killed, spawned := true, false, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 7101, live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch {
+		case pid == 7101 && !killed:
+			return processIdentityInfo{Executable: bin, Args: legacy, Start: "s"}, nil
+		case pid == 7102:
+			return processIdentityInfo{Executable: bin, Args: want, Start: "s"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyProcessEnv = func(int) map[string]string {
+		return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": headroomAllowedBaseURLs()}
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 7101 {
+			killed, live = true, false
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		spawned, live = true, true
+		if !equalStrings(cmd.Args[len(cmd.Args)-len(want):], want) {
+			t.Fatalf("respawn args = %v", cmd.Args)
+		}
+		cmd.Process = &os.Process{Pid: 7102}
+		return nil
+	}
+	if err := StartProxy(); err != nil {
+		t.Fatal(err)
+	}
+	if !killed || !spawned {
+		t.Fatalf("legacy orphan kept reduced model list: killed=%v spawned=%v", killed, spawned)
+	}
+}
+
+func TestStartProxyAdoptRestartKeepsRuntime(t *testing.T) {
+	requireProcessIdentity(t)
+	isolateProxyOps(t)
+	bin := proxyTestBin(t)
+	unsetEnvForTest(t, "TOKLESS_HEADROOM_CLOUDCODE_URL", "CLOUDCODE_TARGET_API_URL", "TOKLESS_HEADROOM_ANTHROPIC_URL", "TOKLESS_HEADROOM_OPENAI_URL", "TOKLESS_HEADROOM_GEMINI_URL", "TOKLESS_PROXY_PROVIDER")
+	if err := util.SaveHeadroomProxyRuntime(util.ProxyRuntime{Port: 8787, AnthropicURL: "https://a.corp.test", OpenAIURL: "https://o.corp.test", Provider: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	want := proxyArgs(8787)
+	legacy := withoutCloudCodeFlag(want)
+	live, killed := true, false
+	proxyLiveZProbe = func(time.Duration) bool { return live }
+	proxyServingPIDProbe = func(time.Duration) (int, bool) { return 7101, live }
+	proxyIdentity = func(pid int) (processIdentityInfo, error) {
+		switch {
+		case pid == 7101 && !killed:
+			return processIdentityInfo{Executable: bin, Args: legacy, Start: "s"}, nil
+		case pid == 7102:
+			return processIdentityInfo{Executable: bin, Args: want, Start: "s"}, nil
+		}
+		return processIdentityInfo{}, errors.New("unexpected pid")
+	}
+	proxyProcessEnv = func(int) map[string]string {
+		return map[string]string{"HEADROOM_ALLOWED_BASE_URLS": headroomAllowedBaseURLs()}
+	}
+	proxyKill = func(p *os.Process) error {
+		if p.Pid == 7101 {
+			killed, live = true, false
+		}
+		return nil
+	}
+	proxyGone = func(*os.Process) bool { return true }
+	proxySpawn = func(cmd *exec.Cmd) error {
+		live = true
+		cmd.Process = &os.Process{Pid: 7102}
+		return nil
+	}
+	if err := StartProxy(); err != nil {
+		t.Fatal(err)
+	}
+	st, ok := util.ReadProxyRuntime()
+	if !ok || st.AnthropicURL != "https://a.corp.test" || st.OpenAIURL != "https://o.corp.test" || st.Provider != "p1" {
+		t.Fatalf("runtime after adopt-restart = %+v (spawned %v)", st, want)
+	}
+	if !proxyArgsMatchRecorded(8787) {
+		t.Fatalf("next StartProxy would refuse: recorded argv no longer matches runtime argv %v", proxyArgsFromRuntime(8787))
 	}
 }
 

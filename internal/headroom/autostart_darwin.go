@@ -174,7 +174,7 @@ func enableProxyAutostartOS() (err error) {
 	if err := exec.Command("launchctl", "enable", domain()+"/"+proxyAutostartLabel).Run(); err != nil {
 		return fmt.Errorf("launchctl enable %s: %w", proxyAutostartLabel, err)
 	}
-	deadline := proxyNow().Add(proxyReadyTimeout)
+	deadline := proxyNow().Add(headroomProxyReadyTimeout)
 	for proxyNow().Before(deadline) {
 		if ProxyRunning() && proxySupervisedArgsMatch(proxyPortFromRuntime()) {
 			break

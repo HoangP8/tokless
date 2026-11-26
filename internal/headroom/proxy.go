@@ -20,13 +20,16 @@ import (
 )
 
 const (
-	proxyReadyTimeout         = 15 * time.Second
+	proxyReadyTimeout = 15 * time.Second
+	// Headroom 0.45 preloads compressors before binding; cold starts exceed 15s.
+	headroomProxyReadyTimeout = 60 * time.Second
 	proxyStopTimeout          = 5 * time.Second
 	proxyProbeTimeout         = 2 * time.Second
 	proxyPollInterval         = 300 * time.Millisecond
 	proxyIdentityTimeout      = 2 * time.Second
 	proxyStartLockWait        = 30 * time.Second
-	proxyStartLockStale       = 60 * time.Second
+	// Age backstop above a live hold; a dead holder is taken over at once.
+	proxyStartLockStale       = 2 * headroomProxyReadyTimeout
 	defaultAnthropicTargetURL = "https://api.anthropic.com"
 	defaultOpenAITargetURL    = "https://api.openai.com"
 )
@@ -92,9 +95,8 @@ func ProxyUpstreamURLs() (anthropic, openai string) {
 	return realUpstreamURLs()
 }
 
-// ProxyUpstreamGeminiURLs returns optional upstream overrides for the Gemini
-// (`--gemini-api-url`) and CloudCode (`--cloudcode-api-url`) provider routes,
-// which tokless wires only when the environment pins them.
+// ProxyUpstreamGeminiURLs returns upstream overrides for the Gemini
+// (`--gemini-api-url`) and CloudCode (`--cloudcode-api-url`) provider routes.
 func ProxyUpstreamGeminiURLs() (gemini, cloudcode string) {
 	if value, set := os.LookupEnv("TOKLESS_HEADROOM_GEMINI_URL"); set {
 		gemini = strings.TrimSpace(value)
@@ -103,11 +105,16 @@ func ProxyUpstreamGeminiURLs() (gemini, cloudcode string) {
 	}
 	if value, set := os.LookupEnv("TOKLESS_HEADROOM_CLOUDCODE_URL"); set {
 		cloudcode = strings.TrimSpace(value)
+	} else if value := strings.TrimSpace(os.Getenv("CLOUDCODE_TARGET_API_URL")); value != "" {
+		cloudcode = value
 	} else if st, ok := util.ReadProxyRuntime(); ok {
 		cloudcode = st.CloudCodeURL
 	}
 	return
 }
+
+// defaultCloudCodeTargetURL is the Cloud Code upstream that lists every Antigravity model.
+const defaultCloudCodeTargetURL = "https://daily-cloudcode-pa.googleapis.com"
 
 func proxyArgs(port int) []string {
 	anthropic, openai := ProxyUpstreamURLs()
@@ -129,12 +136,13 @@ func proxyArgsForURLs(port int, anthropic, openai, gemini, cloudcode string) []s
 	if gemini != "" {
 		args = append(args, "--gemini-api-url", gemini)
 	}
-	if cloudcode != "" {
-		args = append(args, "--cloudcode-api-url", cloudcode)
+	if cloudcode == "" {
+		cloudcode = defaultCloudCodeTargetURL
 	}
-	return args
+	return append(args, "--cloudcode-api-url", cloudcode)
 }
 
+// proxyArgsFromRuntime rebuilds argv from the persisted runtime alone, not the environment.
 func proxyArgsFromRuntime(port int) []string {
 	if st, ok := util.ReadProxyRuntime(); ok {
 		if strings.TrimSpace(st.AnthropicURL) != "" && strings.TrimSpace(st.OpenAIURL) != "" {
@@ -475,7 +483,8 @@ func adoptCompatibleProxy(port int) bool {
 	if err != nil {
 		return false
 	}
-	if !identity.matches(ResolveHeadroomBin(), proxyArgs(port)) {
+	bin, want := ResolveHeadroomBin(), proxyArgs(port)
+	if !identity.matches(bin, want) && !identity.matches(bin, withoutCloudCodeFlag(want)) {
 		return false
 	}
 	allowed := headroomAllowedBaseURLs()
@@ -671,7 +680,7 @@ func acquireProxyLock(path string, now func() time.Time) (func(), error) {
 		if !os.IsExist(err) {
 			return nil, err
 		}
-		if st, serr := os.Stat(path); serr == nil && now().Sub(st.ModTime()) > proxyStartLockStale {
+		if st, serr := os.Stat(path); serr == nil && (now().Sub(st.ModTime()) > proxyStartLockStale || lockHolderGone(path)) {
 			stale := fmt.Sprintf("%s.stale.%d", path, now().UnixNano())
 			if os.Rename(path, stale) == nil {
 				_ = os.Remove(stale)
@@ -683,6 +692,20 @@ func acquireProxyLock(path string, now func() time.Time) (func(), error) {
 		}
 		proxySleep(proxyPollInterval)
 	}
+}
+
+// lockHolderGone reports whether the lock token's process has exited.
+func lockHolderGone(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	pidText, _, ok := strings.Cut(string(raw), "-")
+	if !ok {
+		return false
+	}
+	pid, err := strconv.Atoi(pidText)
+	return err == nil && pid > 0 && proxyGone(&os.Process{Pid: pid})
 }
 
 // proxyArgsMatchRecorded reports whether the persisted ownership record (when
@@ -702,10 +725,46 @@ func proxyArgsMatchRecorded(port int) bool {
 		return false
 	}
 	want := proxyArgsFromRuntime(port)
-	if equalStrings(record.Args, want) {
+	return argsHaveSuffix(record.Args, want)
+}
+
+// withoutCloudCodeFlag strips the trailing --cloudcode-api-url pair.
+func withoutCloudCodeFlag(args []string) []string { return args[:len(args)-2] }
+
+// argsHaveSuffix reports whether have ends with want; records may carry a launcher prefix.
+func argsHaveSuffix(have, want []string) bool {
+	if equalStrings(have, want) {
 		return true
 	}
-	return len(record.Args) > len(want) && equalStrings(record.Args[len(record.Args)-len(want):], want)
+	return len(have) > len(want) && equalStrings(have[len(have)-len(want):], want)
+}
+
+// proxyCloudCodeDefaultPending reports a live proxy started before tokless pinned Cloud Code.
+func proxyCloudCodeDefaultPending(port int) bool {
+	legacy := withoutCloudCodeFlag(proxyArgsFromRuntime(port))
+	pidFile, _ := proxyFiles()
+	if raw, ok := util.ReadFileSafe(pidFile); ok {
+		var record proxyOwnership
+		if json.Unmarshal([]byte(raw), &record) == nil && record.PID > 0 && record.Executable != "" && record.Start != "" && argsHaveSuffix(record.Args, legacy) {
+			if identity, err := proxyIdentity(record.PID); err == nil && identity.matchesRecord(record) {
+				return true
+			}
+		}
+	}
+	raw, ok := util.ReadFileSafe(proxySupervisedFile())
+	if !ok {
+		return false
+	}
+	var state proxySupervisedState
+	if json.Unmarshal([]byte(raw), &state) != nil || state.PID <= 0 || state.Executable == "" || state.Start == "" || !argsHaveSuffix(state.Args, legacy) {
+		return false
+	}
+	checkArgs := state.Args
+	if len(state.ManagerArgs) > 0 {
+		checkArgs = state.ManagerArgs
+	}
+	identity, err := proxyIdentity(state.PID)
+	return err == nil && identity.Start == state.Start && identity.matches(state.Executable, checkArgs)
 }
 
 func proxyAllowedBaseURLsMatchRecorded() bool {
@@ -799,17 +858,21 @@ func StartProxy() error {
 		}
 	}()
 	cleanupLegacyRouteState()
-	if applyCloudCodePatch() {
+	port := ProxyPort()
+	staleCloudCode := proxyCloudCodeDefaultPending(port)
+	if staleCloudCode {
+		util.L.Sub("headroom proxy needs the Cloud Code upstream — restarting proxy")
+	}
+	if applyCloudCodePatch() || staleCloudCode {
 		if err := stopProxySupervisorForPatch(); err != nil {
-			return fmt.Errorf("stop proxy supervisor for patch: %w", err)
+			return fmt.Errorf("stop proxy supervisor for restart: %w", err)
 		}
 		if proxyOwnedProcessLive() || ProxyRunning() {
 			if err := stopHeadroomDaemonForHandoff(); err != nil {
-				return fmt.Errorf("restart proxy after patch: %w", err)
+				return fmt.Errorf("restart proxy: %w", err)
 			}
 		}
 	}
-	port := ProxyPort()
 	args := proxyArgs(port)
 	pidFile, _ := proxyFiles()
 	stopRequested, err := proxyStopRequested()
@@ -837,8 +900,12 @@ func StartProxy() error {
 			byokStarted = false
 			return nil
 		}
+		stopDaemon := stopHeadroomDaemon
 		if !owned {
-			if adoptCompatibleProxy(port) {
+			if !adoptCompatibleProxy(port) {
+				return fmt.Errorf("headroom proxy is running without tokless ownership — refusing to replace")
+			}
+			if !proxyCloudCodeDefaultPending(port) {
 				if err := persistProxyRuntime(port); err != nil {
 					return fmt.Errorf("headroom proxy runtime record: %w", err)
 				}
@@ -846,13 +913,14 @@ func StartProxy() error {
 				byokStarted = false
 				return nil
 			}
-			return fmt.Errorf("headroom proxy is running without tokless ownership — refusing to replace")
-		}
-		if !argsMatch {
+			util.L.Sub("headroom proxy needs the Cloud Code upstream — restarting proxy")
+			stopDaemon = stopHeadroomDaemonForHandoff
+		} else if !argsMatch {
 			return fmt.Errorf("headroom proxy is running with stale arguments — refusing to replace")
+		} else {
+			util.L.Sub("headroom proxy allowlist updated — restarting proxy")
 		}
-		util.L.Sub("headroom proxy allowlist updated — restarting proxy")
-		if err := stopHeadroomDaemon(); err != nil {
+		if err := stopDaemon(); err != nil {
 			return fmt.Errorf("stopping stale headroom proxy: %w", err)
 		}
 		cleanupLegacyRouteState()
@@ -901,7 +969,7 @@ func StartProxy() error {
 		return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy ownership record: %w", err))
 	}
 	util.L.Sub("headroom proxy on " + ProxyURL() + " (semantic cache off; log: " + logFile + ")")
-	deadline := proxyNow().Add(proxyReadyTimeout)
+	deadline := proxyNow().Add(headroomProxyReadyTimeout)
 	for proxyNow().Before(deadline) {
 		current, identityErr := proxyIdentity(pid)
 		if proxyLiveZProbe(proxyProbeTimeout) && identityErr == nil && current.Start == identity.Start && current.matches(bin, args) {
@@ -925,7 +993,7 @@ func StartProxy() error {
 		}
 		proxySleep(proxyPollInterval)
 	}
-	return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy did not become ready within %s — see %s", proxyReadyTimeout, logFile))
+	return rollbackProxyWithIdentity(cmd.Process, pidFile, &identity, fmt.Errorf("headroom proxy did not become ready within %s — see %s", headroomProxyReadyTimeout, logFile))
 }
 
 func cleanupUnverifiedChild(proc *os.Process, cause error) error {
